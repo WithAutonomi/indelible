@@ -337,13 +337,126 @@ All settings stored in DB, changeable at runtime without restart.
 - Published to container registry
 
 ### 13.3 Required External Services
-- **PostgreSQL** (14+)
 - **antd daemon** (running and accessible)
+- **PostgreSQL** (14+) — only if opting out of default SQLite
 
 ### 13.4 Data Directory
 - Temp upload storage (configurable path)
 - Log files (daily rotation)
+- SQLite database file (when using default DB)
 - Cleaned up on completion/failure
+
+### 13.5 Domain Setup & Reverse Proxy
+
+Indelible does not handle TLS/SSL directly. Companies place a reverse proxy in front of it — the standard pattern for all self-hosted enterprise applications (GitLab, Grafana, Mattermost, etc.).
+
+**Typical network path:**
+```
+Users → https://files.acme.com → Reverse Proxy (TLS) → localhost:8080 (Indelible)
+```
+
+**Company steps:**
+1. Create DNS A record pointing their chosen domain (e.g. `files.acme.com`) to the server IP
+2. Configure a reverse proxy with TLS termination
+3. Set `cors_allowed_origins` in Indelible to match the domain
+
+**Supported reverse proxies (documented with examples):**
+
+**Caddy** (simplest — automatic Let's Encrypt TLS):
+```
+files.acme.com {
+    reverse_proxy localhost:8080
+}
+```
+
+**Nginx:**
+```nginx
+server {
+    listen 443 ssl;
+    server_name files.acme.com;
+    ssl_certificate     /etc/ssl/files.acme.com.crt;
+    ssl_certificate_key /etc/ssl/files.acme.com.key;
+    client_max_body_size 10g;
+
+    location / {
+        proxy_pass http://localhost:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+**Corporate load balancers:** F5, AWS ALB, Azure App Gateway, Kubernetes ingress — Indelible is added as a backend target like any other internal service.
+
+**Indelible requirements for proxy support:**
+- Respects `X-Forwarded-For` and `X-Forwarded-Proto` headers for correct IP logging and HTTPS detection
+- `--trusted-proxies` flag or config option to specify trusted proxy CIDR ranges (prevents header spoofing)
+- Health endpoint (`/health`) for load balancer health checks
+
+### 13.6 Typical Deployment Walkthrough
+
+**Minimal (single binary, SQLite, smallest setup):**
+```bash
+# 1. Download
+curl -LO https://releases.autonomi.com/indelible/latest/indelible-linux-amd64
+chmod +x indelible-linux-amd64
+
+# 2. Run (SQLite default, port 8080)
+./indelible-linux-amd64 --antd-url http://localhost:8080
+
+# 3. Open browser, register first user (auto-admin), configure from dashboard
+```
+
+**Production (behind Caddy, SQLite or PostgreSQL):**
+```bash
+# 1. Install indelible binary + Caddy + antd daemon on server
+
+# 2. Configure indelible
+cat > indelible.toml <<EOF
+port = 8080
+antd_url = "http://localhost:8081"
+data_dir = "/var/lib/indelible"
+cors_allowed_origins = ["https://files.acme.com"]
+trusted_proxies = ["127.0.0.1/32"]
+EOF
+
+# 3. Configure Caddy
+echo 'files.acme.com { reverse_proxy localhost:8080 }' > /etc/caddy/Caddyfile
+
+# 4. Create DNS A record: files.acme.com → server IP
+
+# 5. Start services
+systemctl start antd
+systemctl start indelible
+systemctl start caddy
+
+# 6. Open https://files.acme.com, register admin, configure SSO/wallets/permissions
+```
+
+**Docker Compose:**
+```yaml
+services:
+  indelible:
+    image: autonomi/indelible:latest
+    ports:
+      - "8080:8080"
+    volumes:
+      - indelible-data:/data
+    environment:
+      INDELIBLE_ANTD_URL: http://antd:8081
+      INDELIBLE_CORS_ORIGINS: https://files.acme.com
+      INDELIBLE_TRUSTED_PROXIES: 172.16.0.0/12
+
+  antd:
+    image: autonomi/antd:latest
+    ports:
+      - "8081:8081"
+
+volumes:
+  indelible-data:
+```
 
 ---
 
