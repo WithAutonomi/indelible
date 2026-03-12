@@ -71,11 +71,7 @@ func DeleteCollection(db *sql.DB) http.HandlerFunc                    { return s
 func AddToCollection(db *sql.DB) http.HandlerFunc                     { return stub("POST /collections/{id}/files") }
 func RemoveFromCollection(db *sql.DB) http.HandlerFunc                { return stub("DELETE /collections/{id}/files/{uploadId}") }
 
-// --- Tokens ---
-
-func CreateToken(db *sql.DB, cfg *config.Config) http.HandlerFunc { return stub("POST /tokens") }
-func ListTokens(db *sql.DB) http.HandlerFunc                      { return stub("GET /tokens") }
-func RevokeToken(db *sql.DB) http.HandlerFunc                     { return stub("DELETE /tokens/{id}") }
+// Token handlers are in tokens.go
 
 // --- Notifications ---
 
@@ -86,10 +82,7 @@ func UpdateNotificationPrefs(db *sql.DB) http.HandlerFunc { return stub("PUT /no
 
 // Admin group handlers are in admin_groups.go
 
-// --- Admin: Tokens ---
-
-func AdminListAllTokens(db *sql.DB) http.HandlerFunc     { return stub("GET /admin/tokens") }
-func AdminBulkRevokeTokens(db *sql.DB) http.HandlerFunc  { return stub("DELETE /admin/tokens/bulk") }
+// Admin token handlers are in tokens.go
 
 // --- Admin: Wallets ---
 
