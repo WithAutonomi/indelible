@@ -13,8 +13,11 @@
 - Go binary embeds Vue 3 SPA via `go:embed`
 - Single process serves API + static frontend + background workers
 - Configuration via environment variables and/or config file (TOML/YAML)
-- Requires only external PostgreSQL (or embedded SQLite for single-user mode?)
+- **Database:** SQLite by default (zero-config, embedded), PostgreSQL for production scale
+  - SQLite: `--db sqlite:///var/indelible/data.db` (or default path in data dir)
+  - PostgreSQL: `--db postgres://user:pass@host/indelible`
 - Connects to `antd` daemon over REST for all network operations
+- Single-org model: one instance per company deployment
 
 ### 1.2 Network Layer (Delegated to antd)
 All Autonomi network operations go through the antd daemon via `antd-go` SDK:
@@ -372,27 +375,35 @@ All settings stored in DB, changeable at runtime without restart.
 ### Removed / Simplified
 - No direct Autonomi crate dependency (delegated to antd)
 - No Autonomi Bridge trait (antd abstracts this)
-- No compile-time SQL (use Go ORM or migration tool instead)
+- No compile-time SQL (use Go DB abstraction supporting both PostgreSQL and SQLite)
 
 ### New Capabilities Enabled by ant-sdk
 - Access to all 8 data primitives (v1 only used Data for file uploads)
-- Potential for: mutable config storage via Scratchpads, audit trails via Graph Entries, encrypted metadata via Vaults
+- File-focused initially, with future extension path to vaults and archives
 - Cost estimation across all primitive types (not just files)
 
 ### Architecture Changes
 - Go single binary vs Rust + separate Nginx
 - Embedded frontend vs separate Docker service
 - antd REST client vs embedded autonomi crate
-- Potentially simpler deployment (single binary + PostgreSQL)
+- Dual database support: PostgreSQL (enterprise) + SQLite (zero-config)
+- Single-org model: one instance per company, company manages own DNS/routing
 
 ---
 
-## Open Questions
+## Decisions Made
 
-1. **SQLite option?** — Should we support SQLite for small/single-user deployments (no external PostgreSQL needed)?
-2. **Email delivery** — v1 used webhooks for password resets. Should v2 have built-in SMTP support?
-3. **File browser** — Should the UI support browsing network data beyond just uploads (e.g., pointer resolution, archive inspection)?
-4. **Multi-tenant** — Should we support multiple organizations in a single instance, or keep it single-org?
-5. **Expanded primitives** — Should the API expose non-file operations (pointers, scratchpads, etc.) to end users, or keep it file-focused?
-6. **Backup/restore** — v1 had export/import. Should v2 add scheduled backups?
-7. **API versioning** — Start with `/api/v1/` and plan for future versions?
+1. **Database: PostgreSQL + SQLite dual support.** SQLite is the zero-config default (embedded in binary, true single-file deployment). PostgreSQL is recommended for production/scale (10+ concurrent users, 100K+ uploads). Schema differences managed via dialect-specific migrations (~10% of SQL diverges on arrays, JSONB, indexes).
+
+2. **Notifications: Webhook-only (same as v1).** No built-in SMTP. Password reset and upload events fire webhooks — the deploying company hooks into their own email/notification system. Keeps the binary simple and avoids SMTP configuration complexity.
+
+3. **Scope: File-focused.** API exposes file upload/download and cost estimation. Does not expose raw pointers, scratchpads, registers, graph entries to end users. Future extension path to **vaults** (encrypted private storage) and **archives** (browsable file collections).
+
+4. **Tenancy: Single-org.** One indelible instance per company. The company installs it, configures their DNS, manages their own users/groups/tokens. No multi-tenant isolation layer needed.
+
+---
+
+## Remaining Open Questions
+
+1. **Backup/restore** — v1 had export/import. Should v2 add scheduled backups?
+2. **API versioning** — Start with `/api/v1/` and plan for future versions?
