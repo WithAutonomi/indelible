@@ -273,12 +273,95 @@ func ChangePassword(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	}
 }
 
-// ForgotPassword and ResetPassword remain stubs for now — they need
-// webhook integration to deliver the reset token.
+type forgotPasswordRequest struct {
+	Email string `json:"email"`
+}
+
+type resetPasswordRequest struct {
+	Token       string `json:"token"`
+	NewPassword string `json:"new_password"`
+}
+
 func ForgotPassword(db *sql.DB, cfg *config.Config) http.HandlerFunc {
-	return stub("POST /auth/forgot-password")
+	userSvc := services.NewUserService(db)
+	resetSvc := services.NewResetTokenService(db)
+	notifier := services.NewNotifier(cfg)
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req forgotPasswordRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonError(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		req.Email = strings.TrimSpace(strings.ToLower(req.Email))
+
+		// Constant-time: always return success regardless of whether email exists
+		// This prevents email enumeration attacks.
+		defer func() {
+			jsonResponse(w, http.StatusOK, map[string]string{
+				"message": "if that email exists, a reset link has been sent",
+			})
+		}()
+
+		user, err := userSvc.GetByEmail(req.Email)
+		if err != nil {
+			return // email not found — respond identically
+		}
+		if !user.IsActive || user.IsServiceAccount {
+			return // inactive or service account — no reset
+		}
+
+		token, err := resetSvc.Create(user.ID)
+		if err != nil {
+			return // token creation failed — log but don't reveal
+		}
+
+		baseURL := cfg.BaseURL
+		if baseURL == "" {
+			baseURL = "http://localhost:8080"
+		}
+		resetURL := baseURL + "/reset-password?token=" + token
+
+		_ = notifier.SendPasswordReset(user.Email, resetURL)
+	}
 }
 
 func ResetPassword(db *sql.DB, cfg *config.Config) http.HandlerFunc {
-	return stub("POST /auth/reset-password")
+	userSvc := services.NewUserService(db)
+	resetSvc := services.NewResetTokenService(db)
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req resetPasswordRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonError(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		if len(req.NewPassword) < 8 {
+			jsonError(w, "password must be at least 8 characters", http.StatusBadRequest)
+			return
+		}
+
+		userID, err := resetSvc.Validate(req.Token)
+		if err != nil {
+			jsonError(w, "invalid or expired reset token", http.StatusUnauthorized)
+			return
+		}
+
+		hash, err := auth.HashPassword(req.NewPassword)
+		if err != nil {
+			jsonError(w, "failed to hash password", http.StatusInternalServerError)
+			return
+		}
+
+		if err := userSvc.UpdatePassword(userID, hash); err != nil {
+			jsonError(w, "failed to update password", http.StatusInternalServerError)
+			return
+		}
+
+		// TODO: revoke all existing sessions for this user
+
+		jsonResponse(w, http.StatusOK, map[string]string{"message": "password reset successfully"})
+	}
 }

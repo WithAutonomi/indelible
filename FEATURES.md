@@ -41,9 +41,10 @@ No mutable network primitives (pointers, scratchpads, registers, graph entries) 
 ### 2.2 Password Reset
 - Request reset via email address
 - Constant-time response regardless of email existence (prevents enumeration)
-- One-time use reset tokens with 1-hour TTL
+- One-time use reset tokens (32 random bytes, hex-encoded) with 1-hour TTL
+- Reset link sent via SMTP (configurable, falls back to log warning if SMTP not configured)
 - Completing reset revokes all existing sessions
-- Webhook notification on reset request (configurable)
+- Service accounts and inactive users cannot request resets
 
 ### 2.3 Email Verification
 - Verification tokens with configurable TTL
@@ -517,7 +518,7 @@ volumes:
 
 1. **Database: PostgreSQL + SQLite dual support.** SQLite is the zero-config default (embedded in binary, true single-file deployment). PostgreSQL is recommended for production/scale (10+ concurrent users, 100K+ uploads). Schema differences managed via dialect-specific migrations (~10% of SQL diverges on arrays, JSONB, indexes).
 
-2. **Notifications: Webhook-only (same as v1).** No built-in SMTP. Password reset and upload events fire webhooks — the deploying company hooks into their own email/notification system. Keeps the binary simple and avoids SMTP configuration complexity.
+2. **Transactional email: Built-in SMTP.** Lightweight SMTP support (Go stdlib `net/smtp`) for transactional emails only: password reset and email verification. Configured via `[smtp]` block in TOML or `INDELIBLE_SMTP_*` env vars. Upload events and system notifications still use webhooks. Future: webhook-based notification delivery as alternative to SMTP for companies that prefer custom routing (see fast-follow FC-16).
 
 3. **Scope: Immutable files only.** API exposes file upload/download and cost estimation using immutable data types only. No mutable network primitives (pointers, scratchpads, registers, graph entries) are used. Future extension path to **vaults** (encrypted private storage) and **archives** (browsable file collections).
 
@@ -600,6 +601,9 @@ Authenticator app as second login factor. Enforceable by policy (all users, admi
 
 **FC-8: IP Allowlisting**
 Restrict API/dashboard access to specific IP ranges or CIDR blocks. Global and per-API-token. Common security questionnaire item.
+
+**FC-16: Webhook-Based Notification Delivery**
+Alternative to SMTP for transactional emails (password reset, email verification). Companies that route notifications through their own systems (Slack, PagerDuty, custom HTTP endpoints) can configure a webhook URL instead of SMTP. The Notifier interface is already stubbed (`WebhookNotifier` in `internal/services/email.go`) — implementation needs webhook URL config, payload format, and retry logic.
 
 ---
 

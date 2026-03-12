@@ -26,3 +26,16 @@ cors_allowed_origins = ["http://localhost:5173"]
 
 # Trusted proxy CIDR ranges (for X-Forwarded-For header trust)
 trusted_proxies = ["127.0.0.1/32"]
+
+# External URL (used in password reset links, email verification links)
+# base_url = "https://files.acme.com"
+
+# SMTP configuration for transactional emails (password reset, email verification)
+# If not configured, reset tokens are logged but not delivered.
+[smtp]
+# host = "smtp.acme.com"
+# port = 587
+# username = ""
+# password = ""
+# from = "noreply@acme.com"
+# use_tls = true
