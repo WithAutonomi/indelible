@@ -84,14 +84,7 @@ func UpdateNotificationPrefs(db *sql.DB) http.HandlerFunc { return stub("PUT /no
 
 // Admin user handlers are in admin_users.go
 
-// --- Admin: Groups ---
-
-func AdminListGroups(db *sql.DB) http.HandlerFunc               { return stub("GET /admin/groups") }
-func AdminCreateGroup(db *sql.DB) http.HandlerFunc              { return stub("POST /admin/groups") }
-func AdminUpdateGroup(db *sql.DB) http.HandlerFunc              { return stub("PUT /admin/groups/{id}") }
-func AdminDeleteGroup(db *sql.DB) http.HandlerFunc              { return stub("DELETE /admin/groups/{id}") }
-func AdminAddGroupMember(db *sql.DB) http.HandlerFunc           { return stub("POST /admin/groups/{id}/members") }
-func AdminRemoveGroupMember(db *sql.DB) http.HandlerFunc        { return stub("DELETE /admin/groups/{id}/members/{userId}") }
+// Admin group handlers are in admin_groups.go
 
 // --- Admin: Tokens ---
 
