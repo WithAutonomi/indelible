@@ -77,7 +77,19 @@ No mutable network primitives (pointers, scratchpads, registers, graph entries) 
 - Soft delete (preserves upload history, prevents cascade data loss)
 - Last login tracking
 
-### 3.2 Permission Model
+### 3.2 Service Accounts
+Non-human accounts for CI pipelines, integrations, and shared team use.
+
+- Flagged as `is_service_account = true` on the users table
+- No password, no login, no SSO — exist only to own API tokens
+- Created and managed by admins via dashboard or API
+- Have their own permissions (direct or group-inherited), same model as regular users
+- Have their own upload restrictions (file size, file types)
+- Tokens owned by a service account survive employee departures
+- Visible in admin user management with clear service account indicator
+- Soft delete supported (revokes all owned tokens on deactivation)
+
+### 3.3 Permission Model
 Three permission levels: **read**, **write**, **admin**
 
 **Assignment methods:**
@@ -91,7 +103,7 @@ Three permission levels: **read**, **write**, **admin**
 - System prevents removing the last admin
 - Warning on group changes that would orphan users (can force override)
 
-### 3.3 Groups
+### 3.4 Groups
 - Named groups with description
 - Each group grants a single permission level (read, write, or admin)
 - Active/inactive toggle
@@ -115,9 +127,12 @@ Three permission levels: **read**, **write**, **admin**
 
 ### 4.2 Token Lifecycle
 - **Creation:** regular users get read/write tokens only; admins can create admin tokens
+- **Ownership:** tokens owned by the creating user or by a service account
+- **Service account tokens:** created by admins against a service account, survive employee departures
 - **Default expiry:** system-configurable (default 90 days)
 - **Revocation:** soft-delete (sets revoked flag), logged with reason and who revoked
 - **Bulk revocation:** admin can revoke multiple tokens in one request
+- **Auto-revocation:** all tokens revoked when owning user/service account is deactivated
 - **Cannot unrevoke:** create a new token instead
 - **Retained in DB:** for audit trail even after revocation
 
