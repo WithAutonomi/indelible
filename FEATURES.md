@@ -516,57 +516,141 @@ volumes:
 
 ---
 
-## Features Under Consideration
+## Additional v2 Scope (promoted from consideration)
 
-The following features are not in the initial build but are being evaluated for inclusion based on enterprise archival storage standards and modern SaaS expectations.
+The following features were evaluated against enterprise archival standards and promoted into the v2 build.
 
-### High Impact
+### Metadata, Search & Organisation (FC-1 + FC-7)
+File metadata and virtual folder structure, stored in the local database (not on the network).
 
-**FC-1: Metadata Tagging & Search**
-Custom key-value tags on uploaded files (e.g., `department:legal`, `project:alpha`, `retention:7yr`). Full-text search across filenames and tags. Without this, the system is an unsearchable bucket at scale. Tags stored in local DB, not on the network. Required for compliance officers to locate files by criteria.
+**Tagging:**
+- Custom key-value tags on uploaded files (e.g., `department:legal`, `project:alpha`, `client:acme`)
+- Tags assigned at upload time (via UI or API) and editable after upload
+- Stored in local DB as a `file_tags` table, indexed for fast lookup
+
+**Search:**
+- Full-text search across filenames and tag values
+- Filter by: tag key/value, uploader, date range, file type, folder/collection
+- SQL-backed — works on both SQLite (FTS5) and PostgreSQL (tsvector)
+
+**Virtual Folders / Collections:**
+- Logical grouping of files into folders or collections (database-only, not on network)
+- Hierarchical folder structure (parent/child) for organising uploads
+- Supports bulk operations: bulk tag, bulk legal hold
+- Required for dashboard usability at scale — "Case #12345", "Q1 Tax Docs"
+- `collections` table with `collection_files` join table
+
+### File Integrity Verification & Chain of Custody (FC-3)
+Indelible's key differentiator — cryptographic proof of immutability.
+
+Autonomi is content-addressed: the upload address IS a hash of the content. Same bytes always produce the same address. Indelible surfaces this to users as a trust layer.
+
+**Verify endpoint** (`GET /api/v2/uploads/{id}/verify`):
+- Re-downloads file from network
+- Confirms returned data hashes to the stored content address
+- Returns pass/fail with verification timestamp
+- Verification event logged to audit trail
+
+**Chain of custody report** (`GET /api/v2/uploads/{id}/custody`):
+- Pulls from existing audit logs
+- Shows: who uploaded, when, from what IP, via which token, content address, file size
+- All subsequent access events (downloads, verifications, tag changes)
+- Exportable as JSON or PDF
+
+**Upload receipt:**
+- Generated on completion: filename, size, content address, timestamp, uploader identity
+- Stored alongside upload record
+- Downloadable as signed receipt document
+
+### Legal Hold (FC-4)
+Protects local metadata from modification or cleanup during litigation.
+
+Files on the Autonomi network are already permanent and immutable. Legal hold protects the **local layer** — the datamaps, filenames, tags, and audit records that make those files findable and usable. Without this metadata, files exist on the network but are effectively lost.
+
+**Creating a hold:**
+- Admin creates hold with: name, reason, scope
+- Scope options: by specific files, by user, by tag, by date range, or combination
+- All matching upload records, metadata, tags, and associated audit logs are frozen
+
+**What "frozen" means:**
+- Cannot be deleted or modified by any process (including retention cleanup)
+- Cannot be bulk-edited or re-tagged
+- Visually flagged in dashboard (hold indicator)
+- Hold persists until explicitly released by an admin
+
+**What it does NOT do:**
+- Does not affect the network (files are already permanent)
+- Does not prevent new uploads
+- Does not restrict user access to download held files
+
+**Audit:**
+- Creating, modifying, and releasing holds are audit events
+- Hold history preserved permanently
+
+**Implementation:** `legal_holds` table + `legal_hold_files` join table. All DB cleanup processes check holds before acting.
+
+### Storage Quotas (FC-6)
+Configurable, default off. Prevents runaway spend.
+
+- Quotas per user, per group, per department, and system-wide
+- Expressed in bytes (total uploaded data)
+- Checked before accepting new uploads — rejected if quota would be exceeded
+- Cumulative tracking from upload records (completed uploads only)
+- Admin dashboard shows quota usage per entity
+- Configurable: disabled by default, can be enabled and set per entity
+
+### Server Disk Space Alerting (FC-11)
+Monitors temp upload directory and data directory for disk fullness.
+
+- Configurable warning threshold (default 80%) and critical threshold (default 95%)
+- Periodic check (configurable interval, default 5 minutes)
+- Warning threshold: fires webhook notification
+- Critical threshold: fires webhook + optionally pauses accepting new uploads
+- Paused state visible in dashboard and health endpoint
+- Auto-resumes when disk usage drops below warning threshold
+- Essential because the upload queue writes files to local disk before network upload — disk-full causes silent failures
+
+### Per-User Notification Preferences (FC-15)
+Configurable per-user event subscriptions. Essential for larger deployments where system-wide webhooks create noise.
+
+- Each user configures which events they receive: upload completed, upload failed, permission changes, system alerts
+- Delivery via per-user webhook URL (company connects to their notification system)
+- Digest mode: aggregate events into daily/weekly summary instead of real-time
+- Admin can set organisation-wide defaults; users can override
+- Integrates with existing webhook infrastructure
+
+---
+
+## Features — Fast Follow (post-launch updates)
 
 **FC-2: Multi-Factor Authentication (TOTP)**
-Time-based one-time password (authenticator app) as a second factor for dashboard login. Enforceable by policy (all users, admin-only, or optional). Baseline requirement for SOC 2, ISO 27001, and virtually every enterprise security questionnaire. TOTP first, WebAuthn/FIDO2 as future addition.
-
-**FC-3: File Integrity Verification & Chain of Custody**
-Store SHA-256 hash at upload time. Provide a verification endpoint that re-downloads from network and confirms hash match. Generate chain-of-custody reports showing: who uploaded, when, from what IP, with what hash, and all subsequent access events. Natural competitive advantage for immutable storage — turns "trust us" into cryptographic proof.
-
-**FC-4: Legal Hold**
-Place holds on files (or sets of files by tag/user/date range) that prevent associated metadata, audit logs, and access records from being modified or purged by retention policies. Required by regulated industries (finance, healthcare, legal) during litigation. Files on the network are already immutable; legal hold protects the local metadata layer.
-
-**FC-5: Shared Links with Controls**
-Generate shareable download links for files with: password protection, expiration time, download count limits. Allows sharing with external parties (auditors, clients) without creating system accounts. All access logged for audit trail. Prevents users working around the system by downloading and re-sharing via email.
-
-### Medium Impact
-
-**FC-6: Storage Quotas**
-Configurable storage limits per user, per group, per department, and system-wide. Current spec has per-file size limits but no aggregate quota. Prevents runaway spend from a single user or integration consuming the entire wallet balance. Can be expressed in bytes or in ANT cost.
-
-**FC-7: Virtual Folders / Collections**
-Logical grouping of files into folders or collections in the database (not on the network). Enables "Case #12345" or "Q1 Tax Docs" organisation. Supports bulk operations: bulk download (ZIP), bulk tag, bulk legal hold. Without this, the file list is flat and unusable for humans at scale.
+Authenticator app as second login factor. Enforceable by policy (all users, admin-only, optional). Baseline for SOC 2/ISO 27001. TOTP first, WebAuthn/FIDO2 later. Lower priority for launch because smaller first customers will primarily use SSO.
 
 **FC-8: IP Allowlisting**
-Restrict API and/or dashboard access to specific IP ranges or CIDR blocks. Configurable globally and per API token. Common security questionnaire requirement. Ensures leaked API tokens are useless from outside the corporate network.
+Restrict API/dashboard access to specific IP ranges or CIDR blocks. Global and per-API-token. Common security questionnaire item.
+
+---
+
+## Features — Backlog (customer-driven)
+
+**FC-5: Shared Links with Controls**
+Password-protected, expiring, download-limited shareable links for external parties. Backlogged because downloading from Autonomi requires a client — the sharing mechanism needs design work around how external recipients actually retrieve files.
 
 **FC-9: Virus / Malware Scanning (Pluggable)**
-Scan uploaded files before storing on the network. Pluggable architecture: ClamAV (open-source, self-hosted) via TCP socket, or generic webhook-based scanning interface. Optional and disabled by default. Critical because files on Autonomi are permanent — storing malware cannot be undone.
+ClamAV or webhook-based file scanning before network upload. Optional. Important because network storage is permanent, but adds deployment complexity.
 
 **FC-10: Scheduled Compliance Reports**
-Pre-built report templates (storage usage, access audit, cost allocation, user activity) exportable as PDF/CSV. On-demand or scheduled (daily/weekly/monthly). Delivered via existing webhook infrastructure. Data already exists in analytics and audit tables.
-
-**FC-11: Server Disk Space Alerting**
-Monitor the server's temp upload directory and data directory for disk fullness. Configurable warning threshold (e.g., 80%) and critical threshold (e.g., 95%). Fires webhook notification when thresholds breached. Optionally pauses accepting new uploads at critical threshold to prevent disk-full crashes. Important because the upload queue writes files to local disk before network upload.
-
-### Lower Priority
+PDF/CSV report templates delivered on schedule via webhooks. Data already exists in analytics tables.
 
 **FC-12: SCIM 2.0 Provisioning**
-Automated user lifecycle management via SCIM protocol. Identity providers (Okta, Azure AD/Entra) automatically create, update, and deactivate Indelible accounts when employees join or leave. Prevents stale access from departed employees. Significant implementation scope (full SCIM 2.0 REST API).
+Auto-provision/deprovision users from identity providers (Okta, Azure AD/Entra). High effort, only relevant at 100+ employees.
 
 **FC-13: Content Classification Labels**
-Manual or rule-based classification of files by sensitivity (Public, Internal, Confidential, Restricted). Policies enforce rules per classification (e.g., Restricted files cannot be shared via link). Prerequisite for data loss prevention (DLP) policies.
+Sensitivity levels (Public/Internal/Confidential/Restricted) with policy enforcement. Depends on tagging (FC-1) being mature.
+
+---
+
+## Dropped Features
 
 **FC-14: Retention Policies with Minimum Hold**
-Define policies guaranteeing file metadata records are preserved for minimum periods (e.g., 7 years for financial records). Proactive and class-based, unlike legal hold which is reactive and per-case. Protects against accidental metadata purge.
-
-**FC-15: Per-User Notification Preferences**
-Individual users subscribe to specific event types. Digest mode (daily/weekly summary) instead of real-time. Extends the existing system-wide webhook to per-user granularity.
+Dropped. Autonomi is permanent storage — data cannot expire or be deleted from the network. The only local data subject to retention is logs, which already have configurable retention. Legal hold (FC-4) covers the compliance case for preserving local metadata. A separate retention policy mechanism solves a problem that doesn't exist on a perpetual storage network.
