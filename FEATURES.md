@@ -405,8 +405,4 @@ All settings stored in DB, changeable at runtime without restart.
 
 6. **API versioning: `/api/v2/`** — aligns with Autonomi network versioning.
 
----
-
-## Remaining Open Questions
-
-1. **Backup/restore scope** — Options: (A) no in-app backup, document "copy .db file", (B) settings-only export/import for config migration between instances, (C) full export like v1. Recommend B.
+7. **Backup/restore: Settings-only export/import.** In-app export covers system config, webhook config, OIDC config, and group definitions — enough to replicate an instance's configuration. Full database backup (SQLite file copy or pg_dump) is the deploying company's responsibility, documented in ops guide.
