@@ -325,7 +325,7 @@ All settings stored in DB, changeable at runtime without restart.
 
 ### 12.3 API Documentation
 - OpenAPI/Swagger auto-generated and served from the binary
-- Versioned API paths (`/api/v1/...`)
+- Versioned API paths (`/api/v2/...`)
 
 ---
 
@@ -401,9 +401,12 @@ All settings stored in DB, changeable at runtime without restart.
 
 4. **Tenancy: Single-org.** One indelible instance per company. The company installs it, configures their DNS, manages their own users/groups/tokens. No multi-tenant isolation layer needed.
 
+5. **Default database: SQLite.** SQLite is the default for initial customers (smaller deployments). PostgreSQL available for scale. SQLite file copy serves as full backup.
+
+6. **API versioning: `/api/v2/`** — aligns with Autonomi network versioning.
+
 ---
 
 ## Remaining Open Questions
 
-1. **Backup/restore** — v1 had export/import. Should v2 add scheduled backups?
-2. **API versioning** — Start with `/api/v1/` and plan for future versions?
+1. **Backup/restore scope** — Options: (A) no in-app backup, document "copy .db file", (B) settings-only export/import for config migration between instances, (C) full export like v1. Recommend B.
