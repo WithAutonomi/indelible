@@ -540,55 +540,6 @@ File metadata and virtual folder structure, stored in the local database (not on
 - Required for dashboard usability at scale — "Case #12345", "Q1 Tax Docs"
 - `collections` table with `collection_files` join table
 
-### File Integrity Verification & Chain of Custody (FC-3)
-Indelible's key differentiator — cryptographic proof of immutability.
-
-Autonomi is content-addressed: the upload address IS a hash of the content. Same bytes always produce the same address. Indelible surfaces this to users as a trust layer.
-
-**Verify endpoint** (`GET /api/v2/uploads/{id}/verify`):
-- Re-downloads file from network
-- Confirms returned data hashes to the stored content address
-- Returns pass/fail with verification timestamp
-- Verification event logged to audit trail
-
-**Chain of custody report** (`GET /api/v2/uploads/{id}/custody`):
-- Pulls from existing audit logs
-- Shows: who uploaded, when, from what IP, via which token, content address, file size
-- All subsequent access events (downloads, verifications, tag changes)
-- Exportable as JSON or PDF
-
-**Upload receipt:**
-- Generated on completion: filename, size, content address, timestamp, uploader identity
-- Stored alongside upload record
-- Downloadable as signed receipt document
-
-### Legal Hold (FC-4)
-Protects local metadata from modification or cleanup during litigation.
-
-Files on the Autonomi network are already permanent and immutable. Legal hold protects the **local layer** — the datamaps, filenames, tags, and audit records that make those files findable and usable. Without this metadata, files exist on the network but are effectively lost.
-
-**Creating a hold:**
-- Admin creates hold with: name, reason, scope
-- Scope options: by specific files, by user, by tag, by date range, or combination
-- All matching upload records, metadata, tags, and associated audit logs are frozen
-
-**What "frozen" means:**
-- Cannot be deleted or modified by any process (including retention cleanup)
-- Cannot be bulk-edited or re-tagged
-- Visually flagged in dashboard (hold indicator)
-- Hold persists until explicitly released by an admin
-
-**What it does NOT do:**
-- Does not affect the network (files are already permanent)
-- Does not prevent new uploads
-- Does not restrict user access to download held files
-
-**Audit:**
-- Creating, modifying, and releasing holds are audit events
-- Hold history preserved permanently
-
-**Implementation:** `legal_holds` table + `legal_hold_files` join table. All DB cleanup processes check holds before acting.
-
 ### Storage Quotas (FC-6)
 Configurable, default off. Prevents runaway spend.
 
@@ -622,6 +573,12 @@ Configurable per-user event subscriptions. Essential for larger deployments wher
 ---
 
 ## Features — Fast Follow (post-launch updates)
+
+**FC-3: File Integrity Verification & Chain of Custody**
+Indelible's key differentiator — cryptographic proof of immutability. Autonomi is content-addressed: the upload address IS a hash of the content. Includes: verification endpoint (re-download and confirm hash), chain-of-custody reports (full upload and access history from audit logs), and signed upload receipts. Low effort — the hard crypto is done by the network; we surface it.
+
+**FC-4: Legal Hold**
+Freeze file metadata, tags, and audit records from modification or cleanup during litigation. Files on the network are already permanent; legal hold protects the local metadata layer. Admin creates holds scoped by files, users, tags, or date ranges. Held records cannot be deleted, modified, or re-tagged until released. Implementation: `legal_holds` + `legal_hold_files` tables, cleanup processes check holds before acting.
 
 **FC-2: Multi-Factor Authentication (TOTP)**
 Authenticator app as second login factor. Enforceable by policy (all users, admin-only, optional). Baseline for SOC 2/ISO 27001. TOTP first, WebAuthn/FIDO2 later. Lower priority for launch because smaller first customers will primarily use SSO.
