@@ -82,14 +82,7 @@ func RevokeToken(db *sql.DB) http.HandlerFunc                     { return stub(
 func GetNotificationPrefs(db *sql.DB) http.HandlerFunc    { return stub("GET /notifications/preferences") }
 func UpdateNotificationPrefs(db *sql.DB) http.HandlerFunc { return stub("PUT /notifications/preferences") }
 
-// --- Admin: Users ---
-
-func AdminListUsers(db *sql.DB) http.HandlerFunc           { return stub("GET /admin/users") }
-func AdminGetUser(db *sql.DB) http.HandlerFunc             { return stub("GET /admin/users/{id}") }
-func AdminUpdateUser(db *sql.DB) http.HandlerFunc          { return stub("PUT /admin/users/{id}") }
-func AdminDeleteUser(db *sql.DB) http.HandlerFunc          { return stub("DELETE /admin/users/{id}") }
-func AdminCreateServiceAccount(db *sql.DB) http.HandlerFunc { return stub("POST /admin/users/service-accounts") }
-func AdminSetPermissions(db *sql.DB) http.HandlerFunc      { return stub("PUT /admin/users/{id}/permissions") }
+// Admin user handlers are in admin_users.go
 
 // --- Admin: Groups ---
 

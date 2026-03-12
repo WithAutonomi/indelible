@@ -60,6 +60,24 @@ func (s *UserService) Create(email, passwordHash, firstName, lastName string) (*
 	return s.GetByID(id)
 }
 
+// CreateServiceAccount inserts a service account (no password, can't login).
+func (s *UserService) CreateServiceAccount(email, firstName, lastName string) (*User, error) {
+	var id int64
+	err := s.db.QueryRow(
+		`INSERT INTO users (email, first_name, last_name, is_service_account)
+		 VALUES (?, ?, ?, 1)
+		 RETURNING id`,
+		email, firstName, lastName,
+	).Scan(&id)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return nil, ErrEmailTaken
+		}
+		return nil, err
+	}
+	return s.GetByID(id)
+}
+
 // GetByID retrieves a user by ID (excluding soft-deleted).
 func (s *UserService) GetByID(id int64) (*User, error) {
 	u := &User{}
