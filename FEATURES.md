@@ -20,17 +20,11 @@
 - Single-org model: one instance per company deployment
 
 ### 1.2 Network Layer (Delegated to antd)
-All Autonomi network operations go through the antd daemon via `antd-go` SDK:
+All Autonomi network operations go through the antd daemon via `antd-go` SDK. Indelible uses **immutable data types only**:
 - **Data** — immutable public/private blob storage
 - **Files/Dirs** — file and directory upload/download with archive manifests
-- **Pointers** — mutable references (used internally for version tracking)
-- **Scratchpads** — versioned mutable state
-- **Registers** — 32-byte mutable values
-- **Vaults** — private encrypted key-value storage
-- **Graph Entries** — append-only DAG nodes (used for audit trails)
-- **Chunks** — low-level content-addressed blocks
 
-Cost estimation, wallet payment, and deduplication are handled transparently by antd.
+No mutable network primitives (pointers, scratchpads, registers, graph entries) are used. Cost estimation, wallet payment, and deduplication are handled transparently by antd.
 
 ---
 
@@ -378,9 +372,9 @@ All settings stored in DB, changeable at runtime without restart.
 - No compile-time SQL (use Go DB abstraction supporting both PostgreSQL and SQLite)
 
 ### New Capabilities Enabled by ant-sdk
-- Access to all 8 data primitives (v1 only used Data for file uploads)
-- File-focused initially, with future extension path to vaults and archives
-- Cost estimation across all primitive types (not just files)
+- Clean separation from network layer via antd daemon
+- Immutable data and file operations only (no mutable primitives)
+- Future extension path to vaults and archives
 
 ### Architecture Changes
 - Go single binary vs Rust + separate Nginx
@@ -397,7 +391,7 @@ All settings stored in DB, changeable at runtime without restart.
 
 2. **Notifications: Webhook-only (same as v1).** No built-in SMTP. Password reset and upload events fire webhooks — the deploying company hooks into their own email/notification system. Keeps the binary simple and avoids SMTP configuration complexity.
 
-3. **Scope: File-focused.** API exposes file upload/download and cost estimation. Does not expose raw pointers, scratchpads, registers, graph entries to end users. Future extension path to **vaults** (encrypted private storage) and **archives** (browsable file collections).
+3. **Scope: Immutable files only.** API exposes file upload/download and cost estimation using immutable data types only. No mutable network primitives (pointers, scratchpads, registers, graph entries) are used. Future extension path to **vaults** (encrypted private storage) and **archives** (browsable file collections).
 
 4. **Tenancy: Single-org.** One indelible instance per company. The company installs it, configures their DNS, manages their own users/groups/tokens. No multi-tenant isolation layer needed.
 
