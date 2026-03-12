@@ -1,0 +1,42 @@
+# Binaries
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Go
+vendor/
+
+# Node
+web/node_modules/
+web/dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment / secrets
+.env
+*.pem
+*.key
+
+# Data
+*.db
+*.db-shm
+*.db-wal
+data/
+
+# Air (hot reload)
+tmp/
+
+# sqlc generated (optional — some teams commit these)
+# internal/database/sqlitedb/
+# internal/database/pgdb/

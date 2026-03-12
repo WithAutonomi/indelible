@@ -1,0 +1,173 @@
+package handlers
+
+import (
+	"database/sql"
+	"io/fs"
+	"net/http"
+
+	"github.com/go-chi/chi/v5"
+	chimw "github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
+
+	"github.com/maidsafe/indelible/internal/config"
+	"github.com/maidsafe/indelible/internal/middleware"
+	"github.com/maidsafe/indelible/web"
+)
+
+// NewRouter builds the application router with all routes registered.
+func NewRouter(cfg *config.Config, db *sql.DB) http.Handler {
+	r := chi.NewRouter()
+
+	// Global middleware
+	r.Use(chimw.RequestID)
+	r.Use(chimw.RealIP)
+	r.Use(chimw.Logger)
+	r.Use(chimw.Recoverer)
+	r.Use(chimw.Compress(5))
+
+	// CORS
+	r.Use(cors.Handler(cors.Options{
+		AllowedOrigins:   cfg.CORSOrigins,
+		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
+		ExposedHeaders:   []string{"Link"},
+		AllowCredentials: true,
+		MaxAge:           300,
+	}))
+
+	// Health check (no auth)
+	r.Get("/health", Health(db, cfg))
+
+	// API v2 routes
+	r.Route("/api/v2", func(r chi.Router) {
+		// Public auth routes
+		r.Group(func(r chi.Router) {
+			r.Post("/auth/login", Login(db, cfg))
+			r.Post("/auth/register", Register(db, cfg))
+			r.Post("/auth/forgot-password", ForgotPassword(db, cfg))
+			r.Post("/auth/reset-password", ResetPassword(db, cfg))
+		})
+
+		// Authenticated routes
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.Authenticate(db, cfg))
+
+			// Profile
+			r.Get("/me", GetProfile(db))
+			r.Put("/me", UpdateProfile(db))
+			r.Put("/me/password", ChangePassword(db, cfg))
+
+			// Uploads
+			r.Post("/uploads", CreateUpload(db, cfg))
+			r.Get("/uploads", ListUploads(db))
+			r.Get("/uploads/{id}", GetUpload(db))
+			r.Post("/uploads/quote", QuoteUpload(db, cfg))
+			r.Get("/uploads/{id}/download", DownloadUpload(db, cfg))
+
+			// Tags
+			r.Put("/uploads/{id}/tags", UpdateTags(db))
+			r.Get("/tags/search", SearchByTags(db))
+
+			// Collections
+			r.Post("/collections", CreateCollection(db))
+			r.Get("/collections", ListCollections(db))
+			r.Get("/collections/{id}", GetCollection(db))
+			r.Put("/collections/{id}", UpdateCollection(db))
+			r.Delete("/collections/{id}", DeleteCollection(db))
+			r.Post("/collections/{id}/files", AddToCollection(db))
+			r.Delete("/collections/{id}/files/{uploadId}", RemoveFromCollection(db))
+
+			// API tokens (own)
+			r.Post("/tokens", CreateToken(db, cfg))
+			r.Get("/tokens", ListTokens(db))
+			r.Delete("/tokens/{id}", RevokeToken(db))
+
+			// Notification preferences
+			r.Get("/notifications/preferences", GetNotificationPrefs(db))
+			r.Put("/notifications/preferences", UpdateNotificationPrefs(db))
+		})
+
+		// Admin routes
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.Authenticate(db, cfg))
+			r.Use(middleware.RequireAdmin(db))
+
+			// User management
+			r.Get("/admin/users", AdminListUsers(db))
+			r.Get("/admin/users/{id}", AdminGetUser(db))
+			r.Put("/admin/users/{id}", AdminUpdateUser(db))
+			r.Delete("/admin/users/{id}", AdminDeleteUser(db))
+			r.Post("/admin/users/service-accounts", AdminCreateServiceAccount(db))
+			r.Put("/admin/users/{id}/permissions", AdminSetPermissions(db))
+
+			// Group management
+			r.Get("/admin/groups", AdminListGroups(db))
+			r.Post("/admin/groups", AdminCreateGroup(db))
+			r.Put("/admin/groups/{id}", AdminUpdateGroup(db))
+			r.Delete("/admin/groups/{id}", AdminDeleteGroup(db))
+			r.Post("/admin/groups/{id}/members", AdminAddGroupMember(db))
+			r.Delete("/admin/groups/{id}/members/{userId}", AdminRemoveGroupMember(db))
+
+			// Token management (all tokens)
+			r.Get("/admin/tokens", AdminListAllTokens(db))
+			r.Delete("/admin/tokens/bulk", AdminBulkRevokeTokens(db))
+
+			// Wallet management
+			r.Get("/admin/wallets", AdminListWallets(db))
+			r.Post("/admin/wallets", AdminCreateWallet(db))
+			r.Put("/admin/wallets/{id}/default", AdminSetDefaultWallet(db))
+
+			// System settings
+			r.Get("/admin/settings", AdminGetSettings(db))
+			r.Patch("/admin/settings", AdminUpdateSettings(db))
+			r.Get("/admin/settings/export", AdminExportSettings(db))
+			r.Post("/admin/settings/import", AdminImportSettings(db))
+
+			// Webhooks
+			r.Get("/admin/webhooks", AdminGetWebhooks(db))
+			r.Post("/admin/webhooks", AdminCreateWebhook(db))
+			r.Put("/admin/webhooks/{id}", AdminUpdateWebhook(db))
+			r.Delete("/admin/webhooks/{id}", AdminDeleteWebhook(db))
+
+			// OIDC providers
+			r.Get("/admin/oidc/providers", AdminListOIDCProviders(db))
+			r.Post("/admin/oidc/providers", AdminCreateOIDCProvider(db))
+			r.Put("/admin/oidc/providers/{id}", AdminUpdateOIDCProvider(db))
+			r.Delete("/admin/oidc/providers/{id}", AdminDeleteOIDCProvider(db))
+
+			// Analytics
+			r.Get("/admin/analytics/uploads", AdminUploadAnalytics(db))
+			r.Get("/admin/analytics/tokens", AdminTokenAnalytics(db))
+			r.Get("/admin/analytics/costs", AdminCostAnalytics(db))
+
+			// Logs
+			r.Get("/admin/logs/audit", AdminAuditLogs(db))
+			r.Get("/admin/logs/system", AdminSystemLogs(db))
+			r.Get("/admin/logs/user", AdminUserLogs(db))
+
+			// Quotas
+			r.Get("/admin/quotas", AdminListQuotas(db))
+			r.Post("/admin/quotas", AdminCreateQuota(db))
+			r.Put("/admin/quotas/{id}", AdminUpdateQuota(db))
+			r.Delete("/admin/quotas/{id}", AdminDeleteQuota(db))
+		})
+	})
+
+	// Serve embedded Vue SPA for all other routes
+	spa, err := fs.Sub(web.StaticFS, "dist")
+	if err != nil {
+		panic("embedded frontend not found: " + err.Error())
+	}
+	fileServer := http.FileServer(http.FS(spa))
+	r.Handle("/*", spaHandler(fileServer))
+
+	return r
+}
+
+// spaHandler serves static files, falling back to index.html for SPA routing.
+func spaHandler(next http.Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Try to serve the static file; if not found, serve index.html
+		next.ServeHTTP(w, r)
+	}
+}

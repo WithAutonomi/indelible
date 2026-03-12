@@ -1,0 +1,17 @@
+version: "2"
+sql:
+  - engine: "sqlite"
+    queries: "internal/database/queries/sqlite/"
+    schema: "internal/database/migrations/sqlite/"
+    gen:
+      go:
+        package: "sqlitedb"
+        out: "internal/database/sqlitedb"
+
+  - engine: "postgresql"
+    queries: "internal/database/queries/postgres/"
+    schema: "internal/database/migrations/postgres/"
+    gen:
+      go:
+        package: "pgdb"
+        out: "internal/database/pgdb"

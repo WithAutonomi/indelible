@@ -1,0 +1,28 @@
+# Indelible configuration
+# All values can be overridden with INDELIBLE_ prefixed environment variables.
+
+# Server port
+port = 8080
+
+# Database URL
+# SQLite (default): "sqlite:///var/lib/indelible/data.db"
+# PostgreSQL:       "postgres://user:pass@localhost:5432/indelible?sslmode=disable"
+db_url = "sqlite:///var/lib/indelible/data.db"
+
+# antd daemon URL
+antd_url = "http://localhost:8081"
+
+# Data directory (temp uploads, logs, SQLite DB)
+data_dir = "/var/lib/indelible"
+
+# JWT signing secret (required — generate with: openssl rand -hex 32)
+jwt_secret = ""
+
+# Debug mode (verbose logging)
+debug = false
+
+# CORS allowed origins
+cors_allowed_origins = ["http://localhost:5173"]
+
+# Trusted proxy CIDR ranges (for X-Forwarded-For header trust)
+trusted_proxies = ["127.0.0.1/32"]
