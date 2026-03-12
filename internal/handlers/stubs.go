@@ -46,15 +46,7 @@ func Health(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 
 // Auth, Profile handlers are in auth.go
 
-// --- Uploads ---
-
-func CreateUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc  { return stub("POST /uploads") }
-func ListUploads(db *sql.DB) http.HandlerFunc                       { return stub("GET /uploads") }
-func GetUpload(db *sql.DB) http.HandlerFunc                         { return stub("GET /uploads/{id}") }
-func QuoteUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc   { return stub("POST /uploads/quote") }
-func DownloadUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
-	return stub("GET /uploads/{id}/download")
-}
+// Upload handlers are in uploads.go
 
 // --- Tags ---
 

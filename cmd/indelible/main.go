@@ -14,6 +14,7 @@ import (
 	"github.com/maidsafe/indelible/internal/config"
 	"github.com/maidsafe/indelible/internal/database"
 	"github.com/maidsafe/indelible/internal/handlers"
+	"github.com/maidsafe/indelible/internal/worker"
 )
 
 var version = "dev"
@@ -65,6 +66,11 @@ func main() {
 
 	// Build router
 	router := handlers.NewRouter(cfg, db)
+
+	// Start upload worker
+	uploadWorker := worker.NewUploadWorker(db, cfg)
+	uploadWorker.Start()
+	defer uploadWorker.Stop()
 
 	// Start server
 	srv := &http.Server{

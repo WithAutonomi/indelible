@@ -8,10 +8,13 @@ require (
 	github.com/go-chi/cors v1.2.2
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/lib/pq v1.11.2
+	github.com/maidsafe/ant-sdk/antd-go v0.0.0
 	github.com/pressly/goose/v3 v3.27.0
 	golang.org/x/crypto v0.48.0
 	modernc.org/sqlite v1.46.1
 )
+
+replace github.com/maidsafe/ant-sdk/antd-go => ../ant-sdk/antd-go
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
