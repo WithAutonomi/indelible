@@ -44,24 +44,7 @@ func Health(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	}
 }
 
-// --- Auth ---
-
-func Login(db *sql.DB, cfg *config.Config) http.HandlerFunc       { return stub("POST /auth/login") }
-func Register(db *sql.DB, cfg *config.Config) http.HandlerFunc    { return stub("POST /auth/register") }
-func ForgotPassword(db *sql.DB, cfg *config.Config) http.HandlerFunc {
-	return stub("POST /auth/forgot-password")
-}
-func ResetPassword(db *sql.DB, cfg *config.Config) http.HandlerFunc {
-	return stub("POST /auth/reset-password")
-}
-
-// --- Profile ---
-
-func GetProfile(db *sql.DB) http.HandlerFunc    { return stub("GET /me") }
-func UpdateProfile(db *sql.DB) http.HandlerFunc  { return stub("PUT /me") }
-func ChangePassword(db *sql.DB, cfg *config.Config) http.HandlerFunc {
-	return stub("PUT /me/password")
-}
+// Auth, Profile handlers are in auth.go
 
 // --- Uploads ---
 

@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/maidsafe/indelible/internal/auth"
 	"github.com/maidsafe/indelible/internal/config"
+	"github.com/maidsafe/indelible/internal/services"
 )
 
 type contextKey string
@@ -19,6 +21,8 @@ const (
 
 // Authenticate validates JWT session tokens or API bearer tokens.
 func Authenticate(db *sql.DB, cfg *config.Config) func(http.Handler) http.Handler {
+	userSvc := services.NewUserService(db)
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := r.Header.Get("Authorization")
@@ -27,26 +31,48 @@ func Authenticate(db *sql.DB, cfg *config.Config) func(http.Handler) http.Handle
 				return
 			}
 
-			token := strings.TrimPrefix(authHeader, "Bearer ")
-			if token == authHeader {
+			tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
+			if tokenStr == authHeader {
 				http.Error(w, `{"error":"invalid authorization format"}`, http.StatusUnauthorized)
 				return
 			}
 
-			// TODO: Try JWT first, then API token lookup
-			// For now, placeholder that passes through
-			ctx := context.WithValue(r.Context(), UserIDKey, int64(0))
-			ctx = context.WithValue(ctx, AuthMethodKey, "jwt")
-			next.ServeHTTP(w, r.WithContext(ctx))
+			// Try JWT first
+			claims, err := auth.ValidateToken(cfg.JWTSecret, tokenStr)
+			if err == nil {
+				// Verify user still exists and is active
+				user, err := userSvc.GetByID(claims.UserID)
+				if err != nil || !user.IsActive {
+					http.Error(w, `{"error":"user not found or inactive"}`, http.StatusUnauthorized)
+					return
+				}
+
+				ctx := context.WithValue(r.Context(), UserIDKey, claims.UserID)
+				ctx = context.WithValue(ctx, AuthMethodKey, "jwt")
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+
+			// TODO: Try API token lookup (bcrypt compare against token_hash)
+			// This will be implemented in Phase 2 (API Tokens)
+
+			http.Error(w, `{"error":"invalid or expired token"}`, http.StatusUnauthorized)
 		})
 	}
 }
 
 // RequireAdmin checks that the authenticated user has admin permissions.
 func RequireAdmin(db *sql.DB) func(http.Handler) http.Handler {
+	permSvc := services.NewPermissionService(db)
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// TODO: Check effective permissions for user from context
+			userID := GetUserID(r.Context())
+			isAdmin, err := permSvc.IsAdmin(userID)
+			if err != nil || !isAdmin {
+				http.Error(w, `{"error":"admin access required"}`, http.StatusForbidden)
+				return
+			}
 			next.ServeHTTP(w, r)
 		})
 	}
