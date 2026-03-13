@@ -67,10 +67,18 @@ func main() {
 	// Build router
 	router := handlers.NewRouter(cfg, db)
 
-	// Start upload worker
+	// Start background workers
 	uploadWorker := worker.NewUploadWorker(db, cfg)
 	uploadWorker.Start()
 	defer uploadWorker.Stop()
+
+	logRetentionWorker := worker.NewLogRetentionWorker(db)
+	logRetentionWorker.Start()
+	defer logRetentionWorker.Stop()
+
+	diskAlertWorker := worker.NewDiskAlertWorker(db, cfg)
+	diskAlertWorker.Start()
+	defer diskAlertWorker.Stop()
 
 	// Start server
 	srv := &http.Server{

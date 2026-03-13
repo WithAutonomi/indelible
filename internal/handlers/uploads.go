@@ -83,6 +83,7 @@ func toUploadResponse(u *services.Upload) uploadResponse {
 // CreateUpload handles multipart file upload, saves to temp, and queues for processing.
 func CreateUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	uploadSvc := services.NewUploadService(db)
+	quotaSvc := services.NewQuotaService(db)
 	maxUploadSize := int64(10 << 30) // 10 GB default
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -148,6 +149,13 @@ func CreateUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		if err != nil {
 			os.Remove(tempPath)
 			jsonError(w, "failed to save file", http.StatusInternalServerError)
+			return
+		}
+
+		// Check quota before accepting upload
+		if err := quotaSvc.CheckUserQuota(userID, written); err != nil {
+			os.Remove(tempPath)
+			jsonError(w, "quota exceeded: "+err.Error(), http.StatusForbidden)
 			return
 		}
 

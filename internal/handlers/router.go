@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"io/fs"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
@@ -40,9 +41,12 @@ func NewRouter(cfg *config.Config, db *sql.DB) http.Handler {
 
 	// API v2 routes
 	r.Route("/api/v2", func(r chi.Router) {
-		// Public auth routes
+		// Maintenance mode (exempt: health, admin routes)
+		r.Use(middleware.MaintenanceMode(db))
+
+		// Public auth routes (with rate limiting on login)
 		r.Group(func(r chi.Router) {
-			r.Post("/auth/login", Login(db, cfg))
+			r.With(middleware.RateLimit(5, 60*time.Second)).Post("/auth/login", Login(db, cfg))
 			r.Post("/auth/register", Register(db, cfg))
 			r.Post("/auth/forgot-password", ForgotPassword(db, cfg))
 			r.Post("/auth/reset-password", ResetPassword(db, cfg))

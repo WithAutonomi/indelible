@@ -21,6 +21,7 @@ type UploadWorker struct {
 	uploadSvc  *services.UploadService
 	txnSvc     *services.TransactionService
 	walletSvc  *services.WalletService
+	webhookSvc *services.WebhookDeliveryService
 	antdClient *antd.Client
 	cfg        *config.Config
 	wg         sync.WaitGroup
@@ -33,6 +34,7 @@ func NewUploadWorker(db *sql.DB, cfg *config.Config) *UploadWorker {
 		uploadSvc:  services.NewUploadService(db),
 		txnSvc:     services.NewTransactionService(db),
 		walletSvc:  services.NewWalletService(db, cfg.WalletEncryptionKey),
+		webhookSvc: services.NewWebhookDeliveryService(db),
 		antdClient: antd.NewClient(cfg.AntdURL),
 		cfg:        cfg,
 	}
@@ -108,10 +110,14 @@ func (w *UploadWorker) processNext(ctx context.Context) {
 	if err := w.processUpload(ctx, upload); err != nil {
 		slog.Error("upload failed", "uuid", upload.UUID, "error", err)
 		w.uploadSvc.MarkFailed(upload.ID, err.Error())
+		upload.Status = "failed"
+		w.webhookSvc.FireUploadEvent("failed", upload)
 		w.cleanupTempFile(upload)
 		return
 	}
 
+	upload.Status = "completed"
+	w.webhookSvc.FireUploadEvent("completed", upload)
 	w.cleanupTempFile(upload)
 }
 
