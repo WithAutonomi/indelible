@@ -48,20 +48,9 @@ func Health(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 
 // Upload handlers are in uploads.go
 
-// --- Tags ---
+// Tag handlers are in tags.go
 
-func UpdateTags(db *sql.DB) http.HandlerFunc  { return stub("PUT /uploads/{id}/tags") }
-func SearchByTags(db *sql.DB) http.HandlerFunc { return stub("GET /tags/search") }
-
-// --- Collections ---
-
-func CreateCollection(db *sql.DB) http.HandlerFunc                    { return stub("POST /collections") }
-func ListCollections(db *sql.DB) http.HandlerFunc                     { return stub("GET /collections") }
-func GetCollection(db *sql.DB) http.HandlerFunc                       { return stub("GET /collections/{id}") }
-func UpdateCollection(db *sql.DB) http.HandlerFunc                    { return stub("PUT /collections/{id}") }
-func DeleteCollection(db *sql.DB) http.HandlerFunc                    { return stub("DELETE /collections/{id}") }
-func AddToCollection(db *sql.DB) http.HandlerFunc                     { return stub("POST /collections/{id}/files") }
-func RemoveFromCollection(db *sql.DB) http.HandlerFunc                { return stub("DELETE /collections/{id}/files/{uploadId}") }
+// Collection handlers are in collections.go
 
 // Token handlers are in tokens.go
 
