@@ -26,8 +26,11 @@ const navItems = computed(() => {
   if (auth.isAdmin) {
     items.push(
       { label: 'Users', icon: 'pi pi-users', to: '/admin/users' },
+      { label: 'Wallets', icon: 'pi pi-wallet', to: '/admin/wallets' },
+      { label: 'Quotas', icon: 'pi pi-gauge', to: '/admin/quotas' },
       { label: 'Settings', icon: 'pi pi-cog', to: '/admin/settings' },
       { label: 'Analytics', icon: 'pi pi-chart-bar', to: '/admin/analytics' },
+      { label: 'Logs', icon: 'pi pi-list', to: '/admin/logs' },
     )
   }
   return items
@@ -61,10 +64,10 @@ const navItems = computed(() => {
           <div class="w-8 h-8 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-sm font-medium">
             {{ auth.user?.first_name?.[0] }}{{ auth.user?.last_name?.[0] }}
           </div>
-          <div class="flex-1 min-w-0">
+          <router-link to="/profile" class="flex-1 min-w-0 hover:opacity-80">
             <p class="text-sm font-medium text-gray-700 truncate">{{ userName }}</p>
             <p class="text-xs text-gray-400 truncate">{{ auth.user?.email }}</p>
-          </div>
+          </router-link>
           <button @click="logout" class="text-gray-400 hover:text-gray-600" title="Logout">
             <i class="pi pi-sign-out"></i>
           </button>

@@ -52,6 +52,8 @@ async function handleLogin() {
 
       <p class="text-center text-sm text-gray-500">
         No account? <router-link to="/register" class="text-blue-600 hover:underline">Register</router-link>
+        <br />
+        <router-link to="/forgot-password" class="text-blue-600 hover:underline">Forgot password?</router-link>
       </p>
     </div>
   </div>

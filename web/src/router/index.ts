@@ -17,6 +17,18 @@ const router = createRouter({
       meta: { guest: true },
     },
     {
+      path: '/forgot-password',
+      name: 'forgot-password',
+      component: () => import('../views/auth/ForgotPasswordView.vue'),
+      meta: { guest: true },
+    },
+    {
+      path: '/reset-password',
+      name: 'reset-password',
+      component: () => import('../views/auth/ResetPasswordView.vue'),
+      meta: { guest: true },
+    },
+    {
       path: '/',
       name: 'dashboard',
       component: () => import('../views/user/DashboardView.vue'),
@@ -41,9 +53,27 @@ const router = createRouter({
       meta: { auth: true },
     },
     {
+      path: '/profile',
+      name: 'profile',
+      component: () => import('../views/user/ProfileView.vue'),
+      meta: { auth: true },
+    },
+    {
       path: '/admin/users',
       name: 'admin-users',
       component: () => import('../views/admin/UsersView.vue'),
+      meta: { auth: true, admin: true },
+    },
+    {
+      path: '/admin/wallets',
+      name: 'admin-wallets',
+      component: () => import('../views/admin/WalletsView.vue'),
+      meta: { auth: true, admin: true },
+    },
+    {
+      path: '/admin/quotas',
+      name: 'admin-quotas',
+      component: () => import('../views/admin/QuotasView.vue'),
       meta: { auth: true, admin: true },
     },
     {
@@ -56,6 +86,12 @@ const router = createRouter({
       path: '/admin/analytics',
       name: 'admin-analytics',
       component: () => import('../views/admin/AnalyticsView.vue'),
+      meta: { auth: true, admin: true },
+    },
+    {
+      path: '/admin/logs',
+      name: 'admin-logs',
+      component: () => import('../views/admin/LogsView.vue'),
       meta: { auth: true, admin: true },
     },
   ],
