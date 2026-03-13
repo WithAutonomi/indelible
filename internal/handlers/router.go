@@ -130,10 +130,10 @@ func NewRouter(cfg *config.Config, db *sql.DB) http.Handler {
 			r.Delete("/admin/webhooks/{id}", AdminDeleteWebhook(db))
 
 			// OIDC providers
-			r.Get("/admin/oidc/providers", AdminListOIDCProviders(db))
-			r.Post("/admin/oidc/providers", AdminCreateOIDCProvider(db))
-			r.Put("/admin/oidc/providers/{id}", AdminUpdateOIDCProvider(db))
-			r.Delete("/admin/oidc/providers/{id}", AdminDeleteOIDCProvider(db))
+			r.Get("/admin/oidc/providers", AdminListOIDCProviders(db, cfg))
+			r.Post("/admin/oidc/providers", AdminCreateOIDCProvider(db, cfg))
+			r.Put("/admin/oidc/providers/{id}", AdminUpdateOIDCProvider(db, cfg))
+			r.Delete("/admin/oidc/providers/{id}", AdminDeleteOIDCProvider(db, cfg))
 
 			// Analytics
 			r.Get("/admin/analytics/uploads", AdminUploadAnalytics(db))
