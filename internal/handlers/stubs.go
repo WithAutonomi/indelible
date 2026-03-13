@@ -76,11 +76,7 @@ func UpdateNotificationPrefs(db *sql.DB) http.HandlerFunc { return stub("PUT /no
 
 // Admin token handlers are in tokens.go
 
-// --- Admin: Wallets ---
-
-func AdminListWallets(db *sql.DB) http.HandlerFunc       { return stub("GET /admin/wallets") }
-func AdminCreateWallet(db *sql.DB) http.HandlerFunc      { return stub("POST /admin/wallets") }
-func AdminSetDefaultWallet(db *sql.DB) http.HandlerFunc  { return stub("PUT /admin/wallets/{id}/default") }
+// Admin wallet handlers are in admin_wallets.go
 
 // --- Admin: Settings ---
 
@@ -103,11 +99,7 @@ func AdminCreateOIDCProvider(db *sql.DB) http.HandlerFunc  { return stub("POST /
 func AdminUpdateOIDCProvider(db *sql.DB) http.HandlerFunc  { return stub("PUT /admin/oidc/providers/{id}") }
 func AdminDeleteOIDCProvider(db *sql.DB) http.HandlerFunc  { return stub("DELETE /admin/oidc/providers/{id}") }
 
-// --- Admin: Analytics ---
-
-func AdminUploadAnalytics(db *sql.DB) http.HandlerFunc { return stub("GET /admin/analytics/uploads") }
-func AdminTokenAnalytics(db *sql.DB) http.HandlerFunc  { return stub("GET /admin/analytics/tokens") }
-func AdminCostAnalytics(db *sql.DB) http.HandlerFunc   { return stub("GET /admin/analytics/costs") }
+// Admin analytics handlers are in admin_analytics.go
 
 // --- Admin: Logs ---
 

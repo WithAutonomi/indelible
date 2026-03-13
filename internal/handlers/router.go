@@ -113,9 +113,9 @@ func NewRouter(cfg *config.Config, db *sql.DB) http.Handler {
 			r.Delete("/admin/tokens/bulk", AdminBulkRevokeTokens(db))
 
 			// Wallet management
-			r.Get("/admin/wallets", AdminListWallets(db))
-			r.Post("/admin/wallets", AdminCreateWallet(db))
-			r.Put("/admin/wallets/{id}/default", AdminSetDefaultWallet(db))
+			r.Get("/admin/wallets", AdminListWallets(db, cfg))
+			r.Post("/admin/wallets", AdminCreateWallet(db, cfg))
+			r.Put("/admin/wallets/{id}/default", AdminSetDefaultWallet(db, cfg))
 
 			// System settings
 			r.Get("/admin/settings", AdminGetSettings(db))

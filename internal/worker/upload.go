@@ -19,6 +19,8 @@ import (
 // UploadWorker processes queued file uploads in the background.
 type UploadWorker struct {
 	uploadSvc  *services.UploadService
+	txnSvc     *services.TransactionService
+	walletSvc  *services.WalletService
 	antdClient *antd.Client
 	cfg        *config.Config
 	wg         sync.WaitGroup
@@ -29,6 +31,8 @@ type UploadWorker struct {
 func NewUploadWorker(db *sql.DB, cfg *config.Config) *UploadWorker {
 	return &UploadWorker{
 		uploadSvc:  services.NewUploadService(db),
+		txnSvc:     services.NewTransactionService(db),
+		walletSvc:  services.NewWalletService(db, cfg.WalletEncryptionKey),
 		antdClient: antd.NewClient(cfg.AntdURL),
 		cfg:        cfg,
 	}
@@ -141,7 +145,18 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		return fmt.Errorf("antd upload: %w", err)
 	}
 
-	return w.uploadSvc.MarkCompleted(upload.ID, result.Address, result.Cost)
+	// Mark upload completed
+	if err := w.uploadSvc.MarkCompleted(upload.ID, result.Address, result.Cost); err != nil {
+		return fmt.Errorf("mark completed: %w", err)
+	}
+
+	// Record transaction against default wallet (best-effort)
+	if wallet, err := w.walletSvc.GetDefault(); err == nil {
+		w.txnSvc.Record(wallet.ID, &upload.ID, "upload", result.Cost, wallet.PaymentBalance)
+	}
+
+	slog.Info("upload completed", "uuid", upload.UUID, "address", result.Address, "cost", result.Cost)
+	return nil
 }
 
 func (w *UploadWorker) cleanupTempFile(upload *services.Upload) {

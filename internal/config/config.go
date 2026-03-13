@@ -21,7 +21,8 @@ type Config struct {
 	Debug          bool     `toml:"debug"`
 	CORSOrigins    []string `toml:"cors_allowed_origins"`
 	TrustedProxies []string `toml:"trusted_proxies"`
-	BaseURL        string   `toml:"base_url"` // External URL (e.g. https://files.acme.com)
+	BaseURL             string   `toml:"base_url"` // External URL (e.g. https://files.acme.com)
+	WalletEncryptionKey string   `toml:"wallet_encryption_key"` // Hex-encoded 32-byte AES key for wallet private keys
 
 	// SMTP configuration for transactional emails (password reset, email verification)
 	SMTP SMTPConfig `toml:"smtp"`
@@ -98,6 +99,9 @@ func Load(path string) (*Config, error) {
 	if v := os.Getenv("INDELIBLE_BASE_URL"); v != "" {
 		cfg.BaseURL = v
 	}
+	if v := os.Getenv("INDELIBLE_WALLET_ENCRYPTION_KEY"); v != "" {
+		cfg.WalletEncryptionKey = v
+	}
 	if v := os.Getenv("INDELIBLE_SMTP_HOST"); v != "" {
 		cfg.SMTP.Host = v
 	}
@@ -126,6 +130,11 @@ func Load(path string) (*Config, error) {
 	// Generate JWT secret if not set
 	if cfg.JWTSecret == "" {
 		return nil, fmt.Errorf("jwt_secret is required (set INDELIBLE_JWT_SECRET or jwt_secret in config)")
+	}
+
+	// Generate wallet encryption key if not set
+	if cfg.WalletEncryptionKey == "" {
+		cfg.WalletEncryptionKey = "0000000000000000000000000000000000000000000000000000000000000000" // placeholder — wallets won't be secure until a real key is configured
 	}
 
 	return cfg, nil

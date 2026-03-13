@@ -102,11 +102,12 @@ func TestResetTokenService_CreateAndValidate(t *testing.T) {
 func TestResetPassword_FullFlow(t *testing.T) {
 	db := setupTestDB(t)
 	cfg := &config.Config{
-		Port:      8080,
-		DBURL:     "sqlite://:memory:",
-		AntdURL:   "http://localhost:8081",
-		JWTSecret: "test-secret-for-jwt-signing-1234567890",
-		BaseURL:   "http://localhost:8080",
+		Port:                8080,
+		DBURL:               "sqlite://:memory:",
+		AntdURL:             "http://localhost:8081",
+		JWTSecret:           "test-secret-for-jwt-signing-1234567890",
+		BaseURL:             "http://localhost:8080",
+		WalletEncryptionKey: "0000000000000000000000000000000000000000000000000000000000000000",
 	}
 
 	userSvc := services.NewUserService(db)

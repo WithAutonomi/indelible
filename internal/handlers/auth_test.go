@@ -15,10 +15,11 @@ import (
 func setupTestRouter(t *testing.T) http.Handler {
 	t.Helper()
 	cfg := &config.Config{
-		Port:      8080,
-		DBURL:     "sqlite://:memory:",
-		AntdURL:   "http://localhost:8081",
-		JWTSecret: "test-secret-for-jwt-signing-1234567890",
+		Port:                8080,
+		DBURL:               "sqlite://:memory:",
+		AntdURL:             "http://localhost:8081",
+		JWTSecret:           "test-secret-for-jwt-signing-1234567890",
+		WalletEncryptionKey: "0000000000000000000000000000000000000000000000000000000000000000",
 	}
 
 	db, err := database.Open(cfg.DBURL)
