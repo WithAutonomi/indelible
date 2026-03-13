@@ -1,0 +1,80 @@
+<script setup lang="ts">
+import { computed } from 'vue'
+import { useRouter } from 'vue-router'
+import { useAuthStore } from '../stores/auth'
+
+const auth = useAuthStore()
+const router = useRouter()
+
+const userName = computed(() => {
+  if (!auth.user) return ''
+  return `${auth.user.first_name} ${auth.user.last_name}`
+})
+
+function logout() {
+  auth.logout()
+  router.push('/login')
+}
+
+const navItems = computed(() => {
+  const items = [
+    { label: 'Dashboard', icon: 'pi pi-home', to: '/' },
+    { label: 'Uploads', icon: 'pi pi-upload', to: '/uploads' },
+    { label: 'Collections', icon: 'pi pi-folder', to: '/collections' },
+    { label: 'API Tokens', icon: 'pi pi-key', to: '/tokens' },
+  ]
+  if (auth.isAdmin) {
+    items.push(
+      { label: 'Users', icon: 'pi pi-users', to: '/admin/users' },
+      { label: 'Settings', icon: 'pi pi-cog', to: '/admin/settings' },
+      { label: 'Analytics', icon: 'pi pi-chart-bar', to: '/admin/analytics' },
+    )
+  }
+  return items
+})
+</script>
+
+<template>
+  <div class="flex min-h-screen bg-gray-50">
+    <!-- Sidebar -->
+    <aside class="w-60 bg-white border-r border-gray-200 flex flex-col">
+      <div class="p-4 border-b border-gray-200">
+        <h1 class="text-xl font-bold text-gray-800">Indelible</h1>
+        <p class="text-xs text-gray-400 mt-1">Autonomi Storage Gateway</p>
+      </div>
+
+      <nav class="flex-1 p-3 space-y-1">
+        <router-link
+          v-for="item in navItems"
+          :key="item.to"
+          :to="item.to"
+          class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+          active-class="!bg-blue-50 !text-blue-700 font-medium"
+        >
+          <i :class="item.icon" class="text-base"></i>
+          {{ item.label }}
+        </router-link>
+      </nav>
+
+      <div class="p-3 border-t border-gray-200">
+        <div class="flex items-center gap-3 px-3 py-2">
+          <div class="w-8 h-8 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-sm font-medium">
+            {{ auth.user?.first_name?.[0] }}{{ auth.user?.last_name?.[0] }}
+          </div>
+          <div class="flex-1 min-w-0">
+            <p class="text-sm font-medium text-gray-700 truncate">{{ userName }}</p>
+            <p class="text-xs text-gray-400 truncate">{{ auth.user?.email }}</p>
+          </div>
+          <button @click="logout" class="text-gray-400 hover:text-gray-600" title="Logout">
+            <i class="pi pi-sign-out"></i>
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main content -->
+    <main class="flex-1 overflow-auto">
+      <slot />
+    </main>
+  </div>
+</template>

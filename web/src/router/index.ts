@@ -29,6 +29,12 @@ const router = createRouter({
       meta: { auth: true },
     },
     {
+      path: '/collections',
+      name: 'collections',
+      component: () => import('../views/user/CollectionsView.vue'),
+      meta: { auth: true },
+    },
+    {
       path: '/tokens',
       name: 'tokens',
       component: () => import('../views/user/TokensView.vue'),
