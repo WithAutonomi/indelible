@@ -8,12 +8,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/maidsafe/indelible/internal/services"
+	"github.com/WithAutonomi/indelible/internal/services"
 )
 
 // LogRetentionWorker periodically cleans up old logs based on system settings.
 type LogRetentionWorker struct {
 	logSvc      *services.LogService
+	webhookSvc  *services.WebhookDeliveryService
 	settingsSvc *services.SettingsService
 	wg          sync.WaitGroup
 	cancel      context.CancelFunc
@@ -23,6 +24,7 @@ type LogRetentionWorker struct {
 func NewLogRetentionWorker(db *sql.DB) *LogRetentionWorker {
 	return &LogRetentionWorker{
 		logSvc:      services.NewLogService(db),
+		webhookSvc:  services.NewWebhookDeliveryService(db),
 		settingsSvc: services.NewSettingsService(db),
 	}
 }
@@ -86,5 +88,15 @@ func (w *LogRetentionWorker) run() {
 	}
 	if deleted > 0 {
 		slog.Info("log retention: cleaned up old logs", "deleted", deleted, "retention_days", days)
+	}
+
+	// Prune webhook delivery log using the same retention period
+	whDeleted, err := w.webhookSvc.PruneDeliveryLog(time.Duration(days) * 24 * time.Hour)
+	if err != nil {
+		slog.Error("webhook delivery log cleanup failed", "error", err)
+		return
+	}
+	if whDeleted > 0 {
+		slog.Info("log retention: cleaned up webhook delivery log", "deleted", whDeleted, "retention_days", days)
 	}
 }

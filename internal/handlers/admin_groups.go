@@ -10,8 +10,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/maidsafe/indelible/internal/middleware"
-	"github.com/maidsafe/indelible/internal/services"
+	"github.com/WithAutonomi/indelible/internal/middleware"
+	"github.com/WithAutonomi/indelible/internal/services"
 )
 
 type groupResponse struct {
@@ -57,6 +57,14 @@ func validPermissionLevel(level string) bool {
 	return level == "read" || level == "write" || level == "admin"
 }
 
+// @Summary      List all groups
+// @Description  Return all permission groups with member counts
+// @Tags         Admin: Groups
+// @Produce      json
+// @Success      200 {object} map[string][]groupResponse
+// @Failure      500 {object} map[string]string
+// @Router       /admin/groups [get]
+// @Security     BearerAuth
 func AdminListGroups(db *sql.DB) http.HandlerFunc {
 	groupSvc := services.NewGroupService(db)
 
@@ -77,6 +85,18 @@ func AdminListGroups(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+// @Summary      Create a group
+// @Description  Create a new permission group with a specified permission level
+// @Tags         Admin: Groups
+// @Accept       json
+// @Produce      json
+// @Param        body body createGroupRequest true "Group details"
+// @Success      201 {object} groupResponse
+// @Failure      400 {object} map[string]string
+// @Failure      409 {object} map[string]string "Group name taken"
+// @Failure      500 {object} map[string]string
+// @Router       /admin/groups [post]
+// @Security     BearerAuth
 func AdminCreateGroup(db *sql.DB) http.HandlerFunc {
 	groupSvc := services.NewGroupService(db)
 
@@ -111,6 +131,19 @@ func AdminCreateGroup(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+// @Summary      Update a group
+// @Description  Update a group's name, description, permission level, or active status
+// @Tags         Admin: Groups
+// @Accept       json
+// @Produce      json
+// @Param        id   path int                true "Group ID"
+// @Param        body body updateGroupRequest true "Updated group fields"
+// @Success      200 {object} groupResponse
+// @Failure      400 {object} map[string]string
+// @Failure      404 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /admin/groups/{id} [put]
+// @Security     BearerAuth
 func AdminUpdateGroup(db *sql.DB) http.HandlerFunc {
 	groupSvc := services.NewGroupService(db)
 
@@ -147,6 +180,16 @@ func AdminUpdateGroup(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+// @Summary      Delete a group
+// @Description  Remove a permission group and all its memberships
+// @Tags         Admin: Groups
+// @Produce      json
+// @Param        id path int true "Group ID"
+// @Success      200 {object} map[string]string
+// @Failure      400 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /admin/groups/{id} [delete]
+// @Security     BearerAuth
 func AdminDeleteGroup(db *sql.DB) http.HandlerFunc {
 	groupSvc := services.NewGroupService(db)
 
@@ -166,6 +209,19 @@ func AdminDeleteGroup(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+// @Summary      Add a group member
+// @Description  Add a user to a permission group
+// @Tags         Admin: Groups
+// @Accept       json
+// @Produce      json
+// @Param        id   path int              true "Group ID"
+// @Param        body body addMemberRequest true "User to add"
+// @Success      201 {object} map[string]string
+// @Failure      400 {object} map[string]string
+// @Failure      409 {object} map[string]string "Already a member"
+// @Failure      500 {object} map[string]string
+// @Router       /admin/groups/{id}/members [post]
+// @Security     BearerAuth
 func AdminAddGroupMember(db *sql.DB) http.HandlerFunc {
 	groupSvc := services.NewGroupService(db)
 
@@ -196,6 +252,18 @@ func AdminAddGroupMember(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+// @Summary      Remove a group member
+// @Description  Remove a user from a permission group
+// @Tags         Admin: Groups
+// @Produce      json
+// @Param        id     path int true "Group ID"
+// @Param        userId path int true "User ID to remove"
+// @Success      200 {object} map[string]string
+// @Failure      400 {object} map[string]string
+// @Failure      404 {object} map[string]string "Not a member"
+// @Failure      500 {object} map[string]string
+// @Router       /admin/groups/{id}/members/{userId} [delete]
+// @Security     BearerAuth
 func AdminRemoveGroupMember(db *sql.DB) http.HandlerFunc {
 	groupSvc := services.NewGroupService(db)
 

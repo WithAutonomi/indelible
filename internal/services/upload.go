@@ -24,16 +24,36 @@ type Upload struct {
 	ContentType      string
 	Visibility       string // "public" or "private"
 	Status           string // "queued", "processing", "completed", "failed"
+	StatusDetail     sql.NullString // substatus: "gas_backoff", etc.
 	DatamapAddress   sql.NullString
 	EstimatedCost    sql.NullString
 	ActualCost       sql.NullString
 	ErrorMessage     sql.NullString
 	TempPath         sql.NullString
+	BackoffUntil     sql.NullTime
+	BackoffAttempt   int
+	LastQuotedCost   sql.NullString
 	QueuedAt         time.Time
 	ProcessingAt     sql.NullTime
 	CompletedAt      sql.NullTime
 	FailedAt         sql.NullTime
 	CreatedAt        time.Time
+}
+
+const uploadColumns = `id, uuid, user_id, token_id, filename, original_filename, file_size, content_type, visibility, status,
+	status_detail, datamap_address, estimated_cost, actual_cost, error_message, temp_path,
+	backoff_until, backoff_attempt, last_quoted_cost,
+	queued_at, processing_at, completed_at, failed_at, created_at`
+
+func scanUpload(scanner interface{ Scan(...any) error }) (*Upload, error) {
+	u := &Upload{}
+	err := scanner.Scan(
+		&u.ID, &u.UUID, &u.UserID, &u.TokenID, &u.Filename, &u.OriginalFilename, &u.FileSize, &u.ContentType,
+		&u.Visibility, &u.Status, &u.StatusDetail, &u.DatamapAddress, &u.EstimatedCost, &u.ActualCost, &u.ErrorMessage, &u.TempPath,
+		&u.BackoffUntil, &u.BackoffAttempt, &u.LastQuotedCost,
+		&u.QueuedAt, &u.ProcessingAt, &u.CompletedAt, &u.FailedAt, &u.CreatedAt,
+	)
+	return u, err
 }
 
 // UploadService handles database operations for file uploads.
@@ -74,17 +94,7 @@ func (s *UploadService) Create(userID int64, tokenID *int64, filename, originalF
 
 // GetByID retrieves an upload by internal ID.
 func (s *UploadService) GetByID(id int64) (*Upload, error) {
-	u := &Upload{}
-	err := s.db.QueryRow(
-		`SELECT id, uuid, user_id, token_id, filename, original_filename, file_size, content_type, visibility, status,
-		        datamap_address, estimated_cost, actual_cost, error_message, temp_path,
-		        queued_at, processing_at, completed_at, failed_at, created_at
-		 FROM uploads WHERE id = ?`, id,
-	).Scan(
-		&u.ID, &u.UUID, &u.UserID, &u.TokenID, &u.Filename, &u.OriginalFilename, &u.FileSize, &u.ContentType,
-		&u.Visibility, &u.Status, &u.DatamapAddress, &u.EstimatedCost, &u.ActualCost, &u.ErrorMessage, &u.TempPath,
-		&u.QueuedAt, &u.ProcessingAt, &u.CompletedAt, &u.FailedAt, &u.CreatedAt,
-	)
+	u, err := scanUpload(s.db.QueryRow(`SELECT `+uploadColumns+` FROM uploads WHERE id = ?`, id))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrUploadNotFound
@@ -96,17 +106,7 @@ func (s *UploadService) GetByID(id int64) (*Upload, error) {
 
 // GetByUUID retrieves an upload by public UUID.
 func (s *UploadService) GetByUUID(uid string) (*Upload, error) {
-	u := &Upload{}
-	err := s.db.QueryRow(
-		`SELECT id, uuid, user_id, token_id, filename, original_filename, file_size, content_type, visibility, status,
-		        datamap_address, estimated_cost, actual_cost, error_message, temp_path,
-		        queued_at, processing_at, completed_at, failed_at, created_at
-		 FROM uploads WHERE uuid = ?`, uid,
-	).Scan(
-		&u.ID, &u.UUID, &u.UserID, &u.TokenID, &u.Filename, &u.OriginalFilename, &u.FileSize, &u.ContentType,
-		&u.Visibility, &u.Status, &u.DatamapAddress, &u.EstimatedCost, &u.ActualCost, &u.ErrorMessage, &u.TempPath,
-		&u.QueuedAt, &u.ProcessingAt, &u.CompletedAt, &u.FailedAt, &u.CreatedAt,
-	)
+	u, err := scanUpload(s.db.QueryRow(`SELECT `+uploadColumns+` FROM uploads WHERE uuid = ?`, uid))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrUploadNotFound
@@ -129,10 +129,7 @@ func (s *UploadService) ListByUser(userID int64, limit, offset int) ([]*Upload, 
 	}
 
 	rows, err := s.db.Query(
-		`SELECT id, uuid, user_id, token_id, filename, original_filename, file_size, content_type, visibility, status,
-		        datamap_address, estimated_cost, actual_cost, error_message, temp_path,
-		        queued_at, processing_at, completed_at, failed_at, created_at
-		 FROM uploads WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+		`SELECT `+uploadColumns+` FROM uploads WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`,
 		userID, limit, offset,
 	)
 	if err != nil {
@@ -156,10 +153,7 @@ func (s *UploadService) ListAll(limit, offset int) ([]*Upload, int64, error) {
 	}
 
 	rows, err := s.db.Query(
-		`SELECT id, uuid, user_id, token_id, filename, original_filename, file_size, content_type, visibility, status,
-		        datamap_address, estimated_cost, actual_cost, error_message, temp_path,
-		        queued_at, processing_at, completed_at, failed_at, created_at
-		 FROM uploads ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+		`SELECT `+uploadColumns+` FROM uploads ORDER BY created_at DESC LIMIT ? OFFSET ?`,
 		limit, offset,
 	)
 	if err != nil {
@@ -170,7 +164,140 @@ func (s *UploadService) ListAll(limit, offset int) ([]*Upload, int64, error) {
 	return scanUploads(rows, total)
 }
 
+// UploadListOptions configures filtered, sorted upload listing.
+type UploadListOptions struct {
+	UserID    int64
+	Limit     int
+	Offset    int
+	SortBy    string // "created_at" (default), "file_size", "filename", "status"
+	SortOrder string // "desc" (default), "asc"
+	Status    string // filter: "queued", "processing", "completed", "failed", "" (all)
+	From      *time.Time
+	To        *time.Time
+}
+
+// ListByUserFiltered returns uploads matching filter/sort criteria.
+func (s *UploadService) ListByUserFiltered(opts UploadListOptions) ([]*Upload, int64, error) {
+	if opts.Limit <= 0 || opts.Limit > 100 {
+		opts.Limit = 50
+	}
+
+	// Whitelist sort columns to prevent injection
+	validSorts := map[string]string{
+		"created_at": "created_at",
+		"file_size":  "file_size",
+		"filename":   "original_filename",
+		"status":     "status",
+	}
+	sortCol := "created_at"
+	if col, ok := validSorts[opts.SortBy]; ok {
+		sortCol = col
+	}
+	sortDir := "DESC"
+	if opts.SortOrder == "asc" {
+		sortDir = "ASC"
+	}
+
+	// Build WHERE conditions
+	conditions := []string{"user_id = ?"}
+	args := []any{opts.UserID}
+
+	if opts.Status != "" {
+		conditions = append(conditions, "status = ?")
+		args = append(args, opts.Status)
+	}
+	if opts.From != nil {
+		conditions = append(conditions, "created_at >= ?")
+		args = append(args, opts.From.UTC().Format("2006-01-02T15:04:05Z"))
+	}
+	if opts.To != nil {
+		conditions = append(conditions, "created_at <= ?")
+		args = append(args, opts.To.UTC().Format("2006-01-02T15:04:05Z"))
+	}
+
+	where := ""
+	for i, c := range conditions {
+		if i == 0 {
+			where = "WHERE " + c
+		} else {
+			where += " AND " + c
+		}
+	}
+
+	// Count
+	var total int64
+	countArgs := make([]any, len(args))
+	copy(countArgs, args)
+	err := s.db.QueryRow("SELECT COUNT(*) FROM uploads "+where, countArgs...).Scan(&total)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	// Query
+	query := "SELECT " + uploadColumns + " FROM uploads " + where +
+		" ORDER BY " + sortCol + " " + sortDir + " LIMIT ? OFFSET ?"
+	args = append(args, opts.Limit, opts.Offset)
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	return scanUploads(rows, total)
+}
+
+// ListByUserCursor returns uploads using cursor-based pagination.
+func (s *UploadService) ListByUserCursor(userID int64, limit int, cursorID int64, forward bool) ([]*Upload, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+
+	var rows *sql.Rows
+	var err error
+
+	if forward {
+		// Next page: IDs less than cursor (descending order)
+		rows, err = s.db.Query(
+			`SELECT `+uploadColumns+` FROM uploads WHERE user_id = ? AND id < ? ORDER BY id DESC LIMIT ?`,
+			userID, cursorID, limit,
+		)
+	} else {
+		// Previous page: IDs greater than cursor (ascending order, then reverse)
+		rows, err = s.db.Query(
+			`SELECT `+uploadColumns+` FROM uploads WHERE user_id = ? AND id > ? ORDER BY id ASC LIMIT ?`,
+			userID, cursorID, limit,
+		)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var uploads []*Upload
+	for rows.Next() {
+		u, err := scanUpload(rows)
+		if err != nil {
+			return nil, err
+		}
+		uploads = append(uploads, u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Reverse results for backward pagination
+	if !forward && len(uploads) > 0 {
+		for i, j := 0, len(uploads)-1; i < j; i, j = i+1, j-1 {
+			uploads[i], uploads[j] = uploads[j], uploads[i]
+		}
+	}
+
+	return uploads, nil
+}
+
 // DequeueNext atomically claims the next queued upload for processing.
+// Skips uploads in gas backoff (backoff_until in the future).
 // Returns nil, nil if no uploads are queued.
 func (s *UploadService) DequeueNext() (*Upload, error) {
 	tx, err := s.db.Begin()
@@ -181,7 +308,9 @@ func (s *UploadService) DequeueNext() (*Upload, error) {
 
 	var id int64
 	err = tx.QueryRow(
-		`SELECT id FROM uploads WHERE status = 'queued' ORDER BY queued_at ASC LIMIT 1`,
+		`SELECT id FROM uploads WHERE status = 'queued'
+		 AND (backoff_until IS NULL OR backoff_until <= datetime('now'))
+		 ORDER BY queued_at ASC LIMIT 1`,
 	).Scan(&id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -223,6 +352,27 @@ func (s *UploadService) MarkFailed(id int64, errMsg string) error {
 	return err
 }
 
+// SetGasBackoff puts a queued upload into gas backoff, scheduling it for retry later.
+// The upload stays status="queued" with status_detail="gas_backoff".
+func (s *UploadService) SetGasBackoff(id int64, backoffUntil time.Time, attempt int, quotedCost string) error {
+	_, err := s.db.Exec(
+		`UPDATE uploads SET status = 'queued', status_detail = 'gas_backoff',
+		 backoff_until = ?, backoff_attempt = ?, last_quoted_cost = ?,
+		 processing_at = NULL
+		 WHERE id = ?`,
+		backoffUntil.UTC().Format("2006-01-02 15:04:05"), attempt, quotedCost, id,
+	)
+	return err
+}
+
+// ClearBackoff removes backoff state when an upload proceeds normally.
+func (s *UploadService) ClearBackoff(id int64) error {
+	_, err := s.db.Exec(
+		`UPDATE uploads SET status_detail = NULL, backoff_until = NULL WHERE id = ?`, id,
+	)
+	return err
+}
+
 // RequeueStuck finds uploads that have been "processing" for longer than the timeout
 // and resets them to "queued". Returns the number of requeued uploads.
 func (s *UploadService) RequeueStuck(timeoutMinutes int) (int64, error) {
@@ -258,15 +408,86 @@ func (s *UploadService) CountByStatus() (map[string]int64, error) {
 	return counts, rows.Err()
 }
 
+// Cancel transitions a queued or backoff upload to "failed" with a user-initiated message.
+func (s *UploadService) Cancel(id int64) error {
+	result, err := s.db.Exec(
+		`UPDATE uploads SET status = 'failed', error_message = 'Cancelled by user', status_detail = NULL,
+		 backoff_until = NULL, failed_at = datetime('now'), temp_path = NULL
+		 WHERE id = ? AND status IN ('queued', 'processing')`,
+		id,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return errors.New("upload cannot be cancelled in its current state")
+	}
+	return nil
+}
+
+// Retry resets a failed upload back to queued for reprocessing.
+func (s *UploadService) Retry(id int64) error {
+	result, err := s.db.Exec(
+		`UPDATE uploads SET status = 'queued', status_detail = NULL, error_message = NULL,
+		 backoff_until = NULL, backoff_attempt = 0, last_quoted_cost = NULL,
+		 failed_at = NULL, processing_at = NULL, queued_at = datetime('now')
+		 WHERE id = ? AND status = 'failed'`,
+		id,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return errors.New("only failed uploads can be retried")
+	}
+	return nil
+}
+
+// ForceRetry immediately resets a gas-backoff upload to queued, clearing backoff state.
+func (s *UploadService) ForceRetry(id int64) error {
+	result, err := s.db.Exec(
+		`UPDATE uploads SET status = 'queued', status_detail = NULL,
+		 backoff_until = NULL, processing_at = NULL
+		 WHERE id = ? AND status = 'queued' AND status_detail = 'gas_backoff'`,
+		id,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return errors.New("upload is not in gas backoff")
+	}
+	return nil
+}
+
+// Delete permanently removes an upload record. Only allowed for failed or completed uploads.
+func (s *UploadService) Delete(id int64) error {
+	// Clean up related data first
+	s.db.Exec(`DELETE FROM file_tags WHERE upload_id = ?`, id)
+	s.db.Exec(`DELETE FROM collection_files WHERE upload_id = ?`, id)
+
+	result, err := s.db.Exec(
+		`DELETE FROM uploads WHERE id = ? AND status IN ('failed', 'completed')`,
+		id,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return errors.New("only failed or completed uploads can be deleted")
+	}
+	return nil
+}
+
 func scanUploads(rows *sql.Rows, total int64) ([]*Upload, int64, error) {
 	var uploads []*Upload
 	for rows.Next() {
-		u := &Upload{}
-		if err := rows.Scan(
-			&u.ID, &u.UUID, &u.UserID, &u.TokenID, &u.Filename, &u.OriginalFilename, &u.FileSize, &u.ContentType,
-			&u.Visibility, &u.Status, &u.DatamapAddress, &u.EstimatedCost, &u.ActualCost, &u.ErrorMessage, &u.TempPath,
-			&u.QueuedAt, &u.ProcessingAt, &u.CompletedAt, &u.FailedAt, &u.CreatedAt,
-		); err != nil {
+		u, err := scanUpload(rows)
+		if err != nil {
 			return nil, 0, err
 		}
 		uploads = append(uploads, u)

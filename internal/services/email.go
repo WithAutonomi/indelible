@@ -6,7 +6,7 @@ import (
 	"net/smtp"
 	"strings"
 
-	"github.com/maidsafe/indelible/internal/config"
+	"github.com/WithAutonomi/indelible/internal/config"
 )
 
 // Notifier is the interface for sending transactional notifications.

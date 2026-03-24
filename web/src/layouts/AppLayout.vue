@@ -28,6 +28,8 @@ const navItems = computed(() => {
       { label: 'Users', icon: 'pi pi-users', to: '/admin/users' },
       { label: 'Wallets', icon: 'pi pi-wallet', to: '/admin/wallets' },
       { label: 'Quotas', icon: 'pi pi-gauge', to: '/admin/quotas' },
+      { label: 'Webhooks', icon: 'pi pi-bell', to: '/admin/webhooks' },
+      { label: 'SCIM', icon: 'pi pi-sync', to: '/admin/scim' },
       { label: 'Settings', icon: 'pi pi-cog', to: '/admin/settings' },
       { label: 'Analytics', icon: 'pi pi-chart-bar', to: '/admin/analytics' },
       { label: 'Logs', icon: 'pi pi-list', to: '/admin/logs' },

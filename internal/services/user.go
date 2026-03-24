@@ -23,6 +23,7 @@ type User struct {
 	IsActive         bool
 	IsServiceAccount bool
 	EmailVerified    bool
+	ExternalID       sql.NullString
 	LastLoginAt      sql.NullTime
 	MaxFileSizeBytes sql.NullInt64
 	AllowedFileTypes sql.NullString // JSON array
@@ -83,13 +84,13 @@ func (s *UserService) GetByID(id int64) (*User, error) {
 	u := &User{}
 	err := s.db.QueryRow(
 		`SELECT id, email, password_hash, first_name, last_name, is_active,
-		        is_service_account, email_verified, last_login_at,
+		        is_service_account, email_verified, external_id, last_login_at,
 		        max_file_size_bytes, allowed_file_types, created_at, updated_at, deleted_at
 		 FROM users WHERE id = ? AND deleted_at IS NULL`,
 		id,
 	).Scan(
 		&u.ID, &u.Email, &u.PasswordHash, &u.FirstName, &u.LastName, &u.IsActive,
-		&u.IsServiceAccount, &u.EmailVerified, &u.LastLoginAt,
+		&u.IsServiceAccount, &u.EmailVerified, &u.ExternalID, &u.LastLoginAt,
 		&u.MaxFileSizeBytes, &u.AllowedFileTypes, &u.CreatedAt, &u.UpdatedAt, &u.DeletedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -103,13 +104,13 @@ func (s *UserService) GetByEmail(email string) (*User, error) {
 	u := &User{}
 	err := s.db.QueryRow(
 		`SELECT id, email, password_hash, first_name, last_name, is_active,
-		        is_service_account, email_verified, last_login_at,
+		        is_service_account, email_verified, external_id, last_login_at,
 		        max_file_size_bytes, allowed_file_types, created_at, updated_at, deleted_at
 		 FROM users WHERE email = ? AND deleted_at IS NULL`,
 		email,
 	).Scan(
 		&u.ID, &u.Email, &u.PasswordHash, &u.FirstName, &u.LastName, &u.IsActive,
-		&u.IsServiceAccount, &u.EmailVerified, &u.LastLoginAt,
+		&u.IsServiceAccount, &u.EmailVerified, &u.ExternalID, &u.LastLoginAt,
 		&u.MaxFileSizeBytes, &u.AllowedFileTypes, &u.CreatedAt, &u.UpdatedAt, &u.DeletedAt,
 	)
 	if err == sql.ErrNoRows {
@@ -143,7 +144,7 @@ func (s *UserService) List(limit, offset int) ([]*User, int64, error) {
 
 	rows, err := s.db.Query(
 		`SELECT id, email, password_hash, first_name, last_name, is_active,
-		        is_service_account, email_verified, last_login_at,
+		        is_service_account, email_verified, external_id, last_login_at,
 		        max_file_size_bytes, allowed_file_types, created_at, updated_at, deleted_at
 		 FROM users WHERE deleted_at IS NULL
 		 ORDER BY created_at DESC
@@ -160,7 +161,7 @@ func (s *UserService) List(limit, offset int) ([]*User, int64, error) {
 		u := &User{}
 		if err := rows.Scan(
 			&u.ID, &u.Email, &u.PasswordHash, &u.FirstName, &u.LastName, &u.IsActive,
-			&u.IsServiceAccount, &u.EmailVerified, &u.LastLoginAt,
+			&u.IsServiceAccount, &u.EmailVerified, &u.ExternalID, &u.LastLoginAt,
 			&u.MaxFileSizeBytes, &u.AllowedFileTypes, &u.CreatedAt, &u.UpdatedAt, &u.DeletedAt,
 		); err != nil {
 			return nil, 0, err
@@ -209,6 +210,73 @@ func (s *UserService) UpdatePassword(id int64, passwordHash string) error {
 	_, err := s.db.Exec(
 		`UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 		passwordHash, id,
+	)
+	return err
+}
+
+// GetByExternalID retrieves a user by their SCIM external ID.
+func (s *UserService) GetByExternalID(externalID string) (*User, error) {
+	u := &User{}
+	err := s.db.QueryRow(
+		`SELECT id, email, password_hash, first_name, last_name, is_active,
+		        is_service_account, email_verified, external_id, last_login_at,
+		        max_file_size_bytes, allowed_file_types, created_at, updated_at, deleted_at
+		 FROM users WHERE external_id = ? AND deleted_at IS NULL`,
+		externalID,
+	).Scan(
+		&u.ID, &u.Email, &u.PasswordHash, &u.FirstName, &u.LastName, &u.IsActive,
+		&u.IsServiceAccount, &u.EmailVerified, &u.ExternalID, &u.LastLoginAt,
+		&u.MaxFileSizeBytes, &u.AllowedFileTypes, &u.CreatedAt, &u.UpdatedAt, &u.DeletedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, ErrUserNotFound
+	}
+	return u, err
+}
+
+// CreateFromSCIM creates a SCIM-provisioned user (no password, not a service account).
+func (s *UserService) CreateFromSCIM(email, firstName, lastName, externalID string) (*User, error) {
+	var extID sql.NullString
+	if externalID != "" {
+		extID = sql.NullString{String: externalID, Valid: true}
+	}
+	var id int64
+	err := s.db.QueryRow(
+		`INSERT INTO users (email, first_name, last_name, external_id)
+		 VALUES (?, ?, ?, ?)
+		 RETURNING id`,
+		email, firstName, lastName, extID,
+	).Scan(&id)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return nil, ErrEmailTaken
+		}
+		return nil, err
+	}
+	return s.GetByID(id)
+}
+
+// UpdateFromSCIM performs a full SCIM replace on a user record.
+func (s *UserService) UpdateFromSCIM(id int64, email, firstName, lastName string, externalID *string, isActive *bool) error {
+	var extID sql.NullString
+	if externalID != nil {
+		extID = sql.NullString{String: *externalID, Valid: *externalID != ""}
+	}
+
+	_, err := s.db.Exec(
+		`UPDATE users SET email = ?, first_name = ?, last_name = ?, external_id = ?,
+		        is_active = COALESCE(?, is_active), updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ? AND deleted_at IS NULL`,
+		email, firstName, lastName, extID, isActive, id,
+	)
+	return err
+}
+
+// SetExternalID sets the SCIM external ID for a user.
+func (s *UserService) SetExternalID(id int64, externalID string) error {
+	_, err := s.db.Exec(
+		`UPDATE users SET external_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		externalID, id,
 	)
 	return err
 }

@@ -11,15 +11,16 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
-	antd "github.com/maidsafe/ant-sdk/antd-go"
+	antd "github.com/WithAutonomi/ant-sdk/antd-go"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/maidsafe/indelible/internal/config"
-	"github.com/maidsafe/indelible/internal/middleware"
-	"github.com/maidsafe/indelible/internal/services"
-	"github.com/maidsafe/indelible/internal/worker"
+	"github.com/WithAutonomi/indelible/internal/config"
+	"github.com/WithAutonomi/indelible/internal/middleware"
+	"github.com/WithAutonomi/indelible/internal/services"
+	"github.com/WithAutonomi/indelible/internal/worker"
 )
 
 type uploadResponse struct {
@@ -30,10 +31,14 @@ type uploadResponse struct {
 	ContentType      string  `json:"content_type"`
 	Visibility       string  `json:"visibility"`
 	Status           string  `json:"status"`
+	StatusDetail     *string `json:"status_detail,omitempty"`
 	DatamapAddress   *string `json:"datamap_address"`
 	EstimatedCost    *string `json:"estimated_cost"`
 	ActualCost       *string `json:"actual_cost"`
 	ErrorMessage     *string `json:"error_message"`
+	BackoffUntil     *string `json:"backoff_until,omitempty"`
+	BackoffAttempt   int     `json:"backoff_attempt,omitempty"`
+	LastQuotedCost   *string `json:"last_quoted_cost,omitempty"`
 	QueuedAt         string  `json:"queued_at"`
 	ProcessingAt     *string `json:"processing_at"`
 	CompletedAt      *string `json:"completed_at"`
@@ -65,6 +70,17 @@ func toUploadResponse(u *services.Upload) uploadResponse {
 	if u.ErrorMessage.Valid {
 		r.ErrorMessage = &u.ErrorMessage.String
 	}
+	if u.StatusDetail.Valid {
+		r.StatusDetail = &u.StatusDetail.String
+	}
+	if u.BackoffUntil.Valid {
+		s := u.BackoffUntil.Time.Format("2006-01-02T15:04:05Z")
+		r.BackoffUntil = &s
+	}
+	r.BackoffAttempt = u.BackoffAttempt
+	if u.LastQuotedCost.Valid {
+		r.LastQuotedCost = &u.LastQuotedCost.String
+	}
 	if u.ProcessingAt.Valid {
 		s := u.ProcessingAt.Time.Format("2006-01-02T15:04:05Z")
 		r.ProcessingAt = &s
@@ -81,12 +97,36 @@ func toUploadResponse(u *services.Upload) uploadResponse {
 }
 
 // CreateUpload handles multipart file upload, saves to temp, and queues for processing.
+//
+// @Summary      Upload file
+// @Description  Upload a file via multipart form data and queue it for processing
+// @Tags         Uploads
+// @Accept       multipart/form-data
+// @Produce      json
+// @Param        file        formData  file    true   "File to upload"
+// @Param        visibility  formData  string  false  "public or private"
+// @Success      202  {object}  map[string]any
+// @Failure      400  {object}  map[string]string
+// @Failure      403  {object}  map[string]string
+// @Failure      500  {object}  map[string]string
+// @Failure      503  {object}  map[string]string
+// @Security     BearerAuth
+// @Router       /uploads [post]
 func CreateUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	uploadSvc := services.NewUploadService(db)
 	quotaSvc := services.NewQuotaService(db)
+	webhookSvc := services.NewWebhookDeliveryService(db)
 	maxUploadSize := int64(10 << 30) // 10 GB default
 
+	walletSvc := services.NewWalletService(db, cfg.WalletEncryptionKey)
+
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Pre-flight: reject early if no wallet is configured
+		if wallet, err := walletSvc.GetDefault(); err != nil || wallet == nil {
+			jsonErrorWithCode(w, "No wallet configured", "wallet_not_configured", http.StatusServiceUnavailable)
+			return
+		}
+
 		userID := middleware.GetUserID(r.Context())
 		tokenID := middleware.GetTokenID(r.Context())
 
@@ -95,7 +135,7 @@ func CreateUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 
 		// Parse multipart form
 		if err := r.ParseMultipartForm(32 << 20); err != nil { // 32 MB memory buffer
-			jsonError(w, "file too large or invalid multipart form", http.StatusBadRequest)
+			jsonErrorWithCode(w, "file too large or invalid multipart form", "file_too_large", http.StatusBadRequest)
 			return
 		}
 
@@ -155,7 +195,7 @@ func CreateUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		// Check quota before accepting upload
 		if err := quotaSvc.CheckUserQuota(userID, written); err != nil {
 			os.Remove(tempPath)
-			jsonError(w, "quota exceeded: "+err.Error(), http.StatusForbidden)
+			jsonErrorWithCode(w, "quota exceeded: "+err.Error(), "quota_exceeded", http.StatusForbidden)
 			return
 		}
 
@@ -177,6 +217,8 @@ func CreateUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
+		webhookSvc.FireUploadEvent("queued", upload)
+
 		jsonResponse(w, http.StatusAccepted, map[string]any{
 			"message": "upload queued",
 			"upload":  toUploadResponse(upload),
@@ -185,14 +227,119 @@ func CreateUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 }
 
 // ListUploads returns the authenticated user's uploads.
+//
+// @Summary      List user's uploads
+// @Description  List all uploads belonging to the authenticated user
+// @Tags         Uploads
+// @Produce      json
+// @Param        limit   query  int  false  "Limit"
+// @Param        offset  query  int  false  "Offset"
+// @Success      200  {object}  map[string]any
+// @Failure      500  {object}  map[string]string
+// @Security     BearerAuth
+// @Router       /uploads [get]
 func ListUploads(db *sql.DB) http.HandlerFunc {
 	uploadSvc := services.NewUploadService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID := middleware.GetUserID(r.Context())
-		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-		offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+		q := r.URL.Query()
+		limit, _ := strconv.Atoi(q.Get("limit"))
+		offset, _ := strconv.Atoi(q.Get("offset"))
 
+		// Cursor-based pagination
+		if cursorParam := q.Get("cursor"); cursorParam != "" {
+			if limit <= 0 {
+				limit = 50
+			}
+			cursor, err := DecodeCursor(cursorParam)
+			if err != nil {
+				jsonErrorWithCode(w, "invalid cursor", "validation_error", http.StatusBadRequest)
+				return
+			}
+			forward := cursor.Dir != "prev"
+			uploads, err := uploadSvc.ListByUserCursor(userID, limit+1, cursor.ID, forward)
+			if err != nil {
+				jsonError(w, "failed to list uploads", http.StatusInternalServerError)
+				return
+			}
+
+			hasMore := len(uploads) > limit
+			if hasMore {
+				uploads = uploads[:limit]
+			}
+
+			resp := make([]uploadResponse, 0, len(uploads))
+			for _, u := range uploads {
+				resp = append(resp, toUploadResponse(u))
+			}
+
+			result := map[string]any{"uploads": resp}
+			if hasMore && len(uploads) > 0 {
+				result["next_cursor"] = EncodeCursor(Cursor{ID: uploads[len(uploads)-1].ID, Dir: "next"})
+			}
+			if len(uploads) > 0 {
+				result["prev_cursor"] = EncodeCursor(Cursor{ID: uploads[0].ID, Dir: "prev"})
+			}
+			jsonResponse(w, http.StatusOK, result)
+			return
+		}
+
+		// Sort/filter params
+		sortParam := q.Get("sort")
+		status := q.Get("status")
+		fromParam := q.Get("from")
+		toParam := q.Get("to")
+
+		if sortParam != "" || status != "" || fromParam != "" || toParam != "" {
+			opts := services.UploadListOptions{
+				UserID: userID,
+				Limit:  limit,
+				Offset: offset,
+				Status: status,
+			}
+
+			// Parse sort param: "field:direction" or just "field"
+			if sortParam != "" {
+				parts := strings.SplitN(sortParam, ":", 2)
+				opts.SortBy = parts[0]
+				if len(parts) > 1 {
+					opts.SortOrder = parts[1]
+				}
+			}
+
+			if fromParam != "" {
+				if t, err := time.Parse(time.RFC3339, fromParam); err == nil {
+					opts.From = &t
+				}
+			}
+			if toParam != "" {
+				if t, err := time.Parse(time.RFC3339, toParam); err == nil {
+					opts.To = &t
+				}
+			}
+
+			uploads, total, err := uploadSvc.ListByUserFiltered(opts)
+			if err != nil {
+				jsonError(w, "failed to list uploads", http.StatusInternalServerError)
+				return
+			}
+
+			resp := make([]uploadResponse, 0, len(uploads))
+			for _, u := range uploads {
+				resp = append(resp, toUploadResponse(u))
+			}
+
+			jsonResponse(w, http.StatusOK, map[string]any{
+				"uploads": resp,
+				"total":   total,
+				"limit":   opts.Limit,
+				"offset":  opts.Offset,
+			})
+			return
+		}
+
+		// Default: simple offset/limit
 		uploads, total, err := uploadSvc.ListByUser(userID, limit, offset)
 		if err != nil {
 			jsonError(w, "failed to list uploads", http.StatusInternalServerError)
@@ -204,16 +351,33 @@ func ListUploads(db *sql.DB) http.HandlerFunc {
 			resp = append(resp, toUploadResponse(u))
 		}
 
-		jsonResponse(w, http.StatusOK, map[string]any{
+		// Include cursor hints in default listing too
+		result := map[string]any{
 			"uploads": resp,
 			"total":   total,
 			"limit":   limit,
 			"offset":  offset,
-		})
+		}
+		if len(uploads) > 0 {
+			result["next_cursor"] = EncodeCursor(Cursor{ID: uploads[len(uploads)-1].ID, Dir: "next"})
+		}
+
+		jsonResponse(w, http.StatusOK, result)
 	}
 }
 
 // GetUpload returns a single upload by UUID.
+//
+// @Summary      Get upload by ID
+// @Description  Get a single upload by its UUID
+// @Tags         Uploads
+// @Produce      json
+// @Param        id  path  string  true  "Upload UUID"
+// @Success      200  {object}  uploadResponse
+// @Failure      404  {object}  map[string]string
+// @Failure      500  {object}  map[string]string
+// @Security     BearerAuth
+// @Router       /uploads/{id} [get]
 func GetUpload(db *sql.DB) http.HandlerFunc {
 	uploadSvc := services.NewUploadService(db)
 
@@ -242,7 +406,19 @@ func GetUpload(db *sql.DB) http.HandlerFunc {
 }
 
 // QuoteUpload estimates the cost of uploading a file.
-// Accepts multipart with a "file" field — saves to temp, gets cost from antd, cleans up.
+// Accepts multipart with a "file" field -- saves to temp, gets cost from antd, cleans up.
+//
+// @Summary      Estimate upload cost
+// @Description  Estimate the cost of uploading a file. Accepts JSON with file_size or multipart with a file.
+// @Tags         Uploads
+// @Accept       json,multipart/form-data
+// @Produce      json
+// @Success      200  {object}  map[string]any
+// @Failure      400  {object}  map[string]string
+// @Failure      500  {object}  map[string]string
+// @Failure      502  {object}  map[string]string
+// @Security     BearerAuth
+// @Router       /uploads/quote [post]
 func QuoteUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	client := antd.NewClient(cfg.AntdURL)
 
@@ -346,6 +522,19 @@ func QuoteUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 }
 
 // DownloadUpload retrieves a completed upload's data from the Autonomi network.
+//
+// @Summary      Download completed upload
+// @Description  Download a completed upload's file data from the Autonomi network
+// @Tags         Uploads
+// @Produce      octet-stream
+// @Param        id  path  string  true  "Upload UUID"
+// @Success      200  {file}    binary
+// @Failure      404  {object}  map[string]string
+// @Failure      409  {object}  map[string]string
+// @Failure      500  {object}  map[string]string
+// @Failure      502  {object}  map[string]string
+// @Security     BearerAuth
+// @Router       /uploads/{id}/download [get]
 func DownloadUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	uploadSvc := services.NewUploadService(db)
 	client := antd.NewClient(cfg.AntdURL)
@@ -407,6 +596,178 @@ func DownloadUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, upload.OriginalFilename))
 		w.Header().Set("Content-Type", upload.ContentType)
 		http.ServeFile(w, r, tempPath)
+	}
+}
+
+// CancelUpload allows a user to cancel their own queued/backoff upload.
+//
+// @Summary      Cancel queued upload
+// @Description  Cancel a queued or backoff upload
+// @Tags         Uploads
+// @Produce      json
+// @Param        id  path  string  true  "Upload UUID"
+// @Success      200  {object}  map[string]string
+// @Failure      404  {object}  map[string]string
+// @Failure      409  {object}  map[string]string
+// @Failure      500  {object}  map[string]string
+// @Security     BearerAuth
+// @Router       /uploads/{id}/cancel [post]
+func CancelUpload(db *sql.DB) http.HandlerFunc {
+	uploadSvc := services.NewUploadService(db)
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID := middleware.GetUserID(r.Context())
+		uploadUUID := chi.URLParam(r, "id")
+
+		upload, err := uploadSvc.GetByUUID(uploadUUID)
+		if err != nil {
+			if errors.Is(err, services.ErrUploadNotFound) {
+				jsonError(w, "upload not found", http.StatusNotFound)
+				return
+			}
+			jsonError(w, "failed to get upload", http.StatusInternalServerError)
+			return
+		}
+		if upload.UserID != userID {
+			jsonError(w, "upload not found", http.StatusNotFound)
+			return
+		}
+
+		if err := uploadSvc.Cancel(upload.ID); err != nil {
+			jsonError(w, err.Error(), http.StatusConflict)
+			return
+		}
+
+		jsonResponse(w, http.StatusOK, map[string]string{"message": "upload cancelled"})
+	}
+}
+
+// RetryUpload resets a failed upload back to queued.
+//
+// @Summary      Retry failed upload
+// @Description  Retry a failed upload by resetting it to queued status
+// @Tags         Uploads
+// @Produce      json
+// @Param        id  path  string  true  "Upload UUID"
+// @Success      200  {object}  map[string]string
+// @Failure      404  {object}  map[string]string
+// @Failure      409  {object}  map[string]string
+// @Failure      500  {object}  map[string]string
+// @Security     BearerAuth
+// @Router       /uploads/{id}/retry [post]
+func RetryUpload(db *sql.DB) http.HandlerFunc {
+	uploadSvc := services.NewUploadService(db)
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID := middleware.GetUserID(r.Context())
+		uploadUUID := chi.URLParam(r, "id")
+
+		upload, err := uploadSvc.GetByUUID(uploadUUID)
+		if err != nil {
+			if errors.Is(err, services.ErrUploadNotFound) {
+				jsonError(w, "upload not found", http.StatusNotFound)
+				return
+			}
+			jsonError(w, "failed to get upload", http.StatusInternalServerError)
+			return
+		}
+		if upload.UserID != userID {
+			jsonError(w, "upload not found", http.StatusNotFound)
+			return
+		}
+
+		if err := uploadSvc.Retry(upload.ID); err != nil {
+			jsonError(w, err.Error(), http.StatusConflict)
+			return
+		}
+
+		jsonResponse(w, http.StatusOK, map[string]string{"message": "upload requeued"})
+	}
+}
+
+// ForceRetryUpload immediately retries an upload in gas backoff.
+//
+// @Summary      Force retry upload in gas backoff
+// @Description  Immediately retry an upload that is in gas backoff state
+// @Tags         Uploads
+// @Produce      json
+// @Param        id  path  string  true  "Upload UUID"
+// @Success      200  {object}  map[string]string
+// @Failure      404  {object}  map[string]string
+// @Failure      409  {object}  map[string]string
+// @Failure      500  {object}  map[string]string
+// @Security     BearerAuth
+// @Router       /uploads/{id}/force-retry [post]
+func ForceRetryUpload(db *sql.DB) http.HandlerFunc {
+	uploadSvc := services.NewUploadService(db)
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID := middleware.GetUserID(r.Context())
+		uploadUUID := chi.URLParam(r, "id")
+
+		upload, err := uploadSvc.GetByUUID(uploadUUID)
+		if err != nil {
+			if errors.Is(err, services.ErrUploadNotFound) {
+				jsonError(w, "upload not found", http.StatusNotFound)
+				return
+			}
+			jsonError(w, "failed to get upload", http.StatusInternalServerError)
+			return
+		}
+		if upload.UserID != userID {
+			jsonError(w, "upload not found", http.StatusNotFound)
+			return
+		}
+
+		if err := uploadSvc.ForceRetry(upload.ID); err != nil {
+			jsonError(w, err.Error(), http.StatusConflict)
+			return
+		}
+
+		jsonResponse(w, http.StatusOK, map[string]string{"message": "upload retry forced"})
+	}
+}
+
+// DeleteUpload permanently removes a user's failed or completed upload record.
+//
+// @Summary      Delete upload record
+// @Description  Permanently delete a failed or completed upload record
+// @Tags         Uploads
+// @Produce      json
+// @Param        id  path  string  true  "Upload UUID"
+// @Success      200  {object}  map[string]string
+// @Failure      404  {object}  map[string]string
+// @Failure      409  {object}  map[string]string
+// @Failure      500  {object}  map[string]string
+// @Security     BearerAuth
+// @Router       /uploads/{id} [delete]
+func DeleteUpload(db *sql.DB) http.HandlerFunc {
+	uploadSvc := services.NewUploadService(db)
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID := middleware.GetUserID(r.Context())
+		uploadUUID := chi.URLParam(r, "id")
+
+		upload, err := uploadSvc.GetByUUID(uploadUUID)
+		if err != nil {
+			if errors.Is(err, services.ErrUploadNotFound) {
+				jsonError(w, "upload not found", http.StatusNotFound)
+				return
+			}
+			jsonError(w, "failed to get upload", http.StatusInternalServerError)
+			return
+		}
+		if upload.UserID != userID {
+			jsonError(w, "upload not found", http.StatusNotFound)
+			return
+		}
+
+		if err := uploadSvc.Delete(upload.ID); err != nil {
+			jsonError(w, err.Error(), http.StatusConflict)
+			return
+		}
+
+		jsonResponse(w, http.StatusOK, map[string]string{"message": "upload deleted"})
 	}
 }
 

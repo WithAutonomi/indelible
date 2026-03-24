@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/maidsafe/indelible/internal/crypto"
+	"github.com/WithAutonomi/indelible/internal/crypto"
 )
 
 var (

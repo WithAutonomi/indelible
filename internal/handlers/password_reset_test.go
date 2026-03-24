@@ -8,11 +8,11 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/maidsafe/indelible/internal/auth"
-	"github.com/maidsafe/indelible/internal/config"
-	"github.com/maidsafe/indelible/internal/database"
-	"github.com/maidsafe/indelible/internal/handlers"
-	"github.com/maidsafe/indelible/internal/services"
+	"github.com/WithAutonomi/indelible/internal/auth"
+	"github.com/WithAutonomi/indelible/internal/config"
+	"github.com/WithAutonomi/indelible/internal/database"
+	"github.com/WithAutonomi/indelible/internal/handlers"
+	"github.com/WithAutonomi/indelible/internal/services"
 )
 
 func setupTestDB(t *testing.T) *sql.DB {

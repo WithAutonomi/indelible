@@ -9,8 +9,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/maidsafe/indelible/internal/middleware"
-	"github.com/maidsafe/indelible/internal/services"
+	"github.com/WithAutonomi/indelible/internal/middleware"
+	"github.com/WithAutonomi/indelible/internal/services"
 )
 
 type collectionResponse struct {
@@ -53,7 +53,16 @@ type addFileRequest struct {
 	UploadUUID string `json:"upload_uuid"`
 }
 
-// CreateCollection creates a new collection/folder.
+// CreateCollection godoc
+// @Summary Create a new collection
+// @Tags Collections
+// @Accept json
+// @Produce json
+// @Param body body createCollectionRequest true "Collection details"
+// @Success 201 {object} collectionResponse
+// @Failure 400 {object} map[string]string
+// @Router /collections [post]
+// @Security BearerAuth
 func CreateCollection(db *sql.DB) http.HandlerFunc {
 	collSvc := services.NewCollectionService(db)
 
@@ -84,7 +93,14 @@ func CreateCollection(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-// ListCollections returns the user's collections. Use ?parent_id=N to list children.
+// ListCollections godoc
+// @Summary List collections
+// @Tags Collections
+// @Produce json
+// @Param parent_id query int false "Parent collection ID"
+// @Success 200 {object} map[string]interface{}
+// @Router /collections [get]
+// @Security BearerAuth
 func ListCollections(db *sql.DB) http.HandlerFunc {
 	collSvc := services.NewCollectionService(db)
 
@@ -114,7 +130,15 @@ func ListCollections(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-// GetCollection returns a single collection with its file count.
+// GetCollection godoc
+// @Summary Get collection by ID
+// @Tags Collections
+// @Produce json
+// @Param id path int true "Collection ID"
+// @Success 200 {object} map[string]interface{}
+// @Failure 404 {object} map[string]string
+// @Router /collections/{id} [get]
+// @Security BearerAuth
 func GetCollection(db *sql.DB) http.HandlerFunc {
 	collSvc := services.NewCollectionService(db)
 
@@ -158,6 +182,16 @@ func GetCollection(db *sql.DB) http.HandlerFunc {
 }
 
 // UpdateCollection modifies a collection's name and description.
+// UpdateCollection godoc
+// @Summary Update a collection
+// @Tags Collections
+// @Accept json
+// @Produce json
+// @Param id path int true "Collection ID"
+// @Success 200 {object} collectionResponse
+// @Failure 404 {object} map[string]string
+// @Router /collections/{id} [put]
+// @Security BearerAuth
 func UpdateCollection(db *sql.DB) http.HandlerFunc {
 	collSvc := services.NewCollectionService(db)
 
@@ -197,6 +231,15 @@ func UpdateCollection(db *sql.DB) http.HandlerFunc {
 }
 
 // DeleteCollection removes a collection and its children (files are not deleted).
+// DeleteCollection godoc
+// @Summary Delete a collection
+// @Tags Collections
+// @Produce json
+// @Param id path int true "Collection ID"
+// @Success 200 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Router /collections/{id} [delete]
+// @Security BearerAuth
 func DeleteCollection(db *sql.DB) http.HandlerFunc {
 	collSvc := services.NewCollectionService(db)
 
@@ -225,6 +268,16 @@ func DeleteCollection(db *sql.DB) http.HandlerFunc {
 }
 
 // AddToCollection adds an upload to a collection.
+// AddToCollection godoc
+// @Summary Add file to collection
+// @Tags Collections
+// @Accept json
+// @Produce json
+// @Param id path int true "Collection ID"
+// @Success 200 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Router /collections/{id}/files [post]
+// @Security BearerAuth
 func AddToCollection(db *sql.DB) http.HandlerFunc {
 	collSvc := services.NewCollectionService(db)
 	uploadSvc := services.NewUploadService(db)
@@ -271,6 +324,16 @@ func AddToCollection(db *sql.DB) http.HandlerFunc {
 }
 
 // RemoveFromCollection removes an upload from a collection.
+// RemoveFromCollection godoc
+// @Summary Remove file from collection
+// @Tags Collections
+// @Produce json
+// @Param id path int true "Collection ID"
+// @Param upload_id path string true "Upload UUID"
+// @Success 200 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Router /collections/{id}/files/{upload_id} [delete]
+// @Security BearerAuth
 func RemoveFromCollection(db *sql.DB) http.HandlerFunc {
 	collSvc := services.NewCollectionService(db)
 	uploadSvc := services.NewUploadService(db)

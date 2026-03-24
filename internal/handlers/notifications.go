@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/maidsafe/indelible/internal/middleware"
-	"github.com/maidsafe/indelible/internal/services"
+	"github.com/WithAutonomi/indelible/internal/middleware"
+	"github.com/WithAutonomi/indelible/internal/services"
 )
 
 type notificationPrefResponse struct {
@@ -21,7 +21,13 @@ type updateNotificationPrefRequest struct {
 	DigestMode string  `json:"digest_mode"` // "realtime", "daily", "weekly"
 }
 
-// GetNotificationPrefs returns the authenticated user's notification preferences.
+// GetNotificationPrefs godoc
+// @Summary Get notification preferences
+// @Tags Notifications
+// @Produce json
+// @Success 200 {object} notificationPrefResponse
+// @Router /notifications/preferences [get]
+// @Security BearerAuth
 func GetNotificationPrefs(db *sql.DB) http.HandlerFunc {
 	prefSvc := services.NewNotificationPrefService(db)
 
@@ -47,6 +53,14 @@ func GetNotificationPrefs(db *sql.DB) http.HandlerFunc {
 }
 
 // UpdateNotificationPrefs sets the authenticated user's notification preferences.
+// UpdateNotificationPrefs godoc
+// @Summary Update notification preferences
+// @Tags Notifications
+// @Accept json
+// @Produce json
+// @Success 200 {object} notificationPrefResponse
+// @Router /notifications/preferences [put]
+// @Security BearerAuth
 func UpdateNotificationPrefs(db *sql.DB) http.HandlerFunc {
 	prefSvc := services.NewNotificationPrefService(db)
 

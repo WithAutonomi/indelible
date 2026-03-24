@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/maidsafe/indelible/internal/auth"
-	"github.com/maidsafe/indelible/internal/config"
-	"github.com/maidsafe/indelible/internal/services"
+	"github.com/WithAutonomi/indelible/internal/auth"
+	"github.com/WithAutonomi/indelible/internal/config"
+	"github.com/WithAutonomi/indelible/internal/services"
 )
 
 type contextKey string
@@ -27,13 +27,13 @@ func Authenticate(db *sql.DB, cfg *config.Config) func(http.Handler) http.Handle
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := r.Header.Get("Authorization")
 			if authHeader == "" {
-				http.Error(w, `{"error":"missing authorization header"}`, http.StatusUnauthorized)
+				http.Error(w, `{"error":"missing authorization header","code":"unauthorized"}`, http.StatusUnauthorized)
 				return
 			}
 
 			tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
 			if tokenStr == authHeader {
-				http.Error(w, `{"error":"invalid authorization format"}`, http.StatusUnauthorized)
+				http.Error(w, `{"error":"invalid authorization format","code":"unauthorized"}`, http.StatusUnauthorized)
 				return
 			}
 
@@ -43,7 +43,7 @@ func Authenticate(db *sql.DB, cfg *config.Config) func(http.Handler) http.Handle
 				// Verify user still exists and is active
 				user, err := userSvc.GetByID(claims.UserID)
 				if err != nil || !user.IsActive {
-					http.Error(w, `{"error":"user not found or inactive"}`, http.StatusUnauthorized)
+					http.Error(w, `{"error":"user not found or inactive","code":"unauthorized"}`, http.StatusUnauthorized)
 					return
 				}
 
@@ -60,7 +60,7 @@ func Authenticate(db *sql.DB, cfg *config.Config) func(http.Handler) http.Handle
 				// Verify owning user still exists and is active
 				user, err := userSvc.GetByID(apiToken.UserID)
 				if err != nil || !user.IsActive {
-					http.Error(w, `{"error":"token owner not found or inactive"}`, http.StatusUnauthorized)
+					http.Error(w, `{"error":"token owner not found or inactive","code":"unauthorized"}`, http.StatusUnauthorized)
 					return
 				}
 
@@ -74,7 +74,7 @@ func Authenticate(db *sql.DB, cfg *config.Config) func(http.Handler) http.Handle
 				return
 			}
 
-			http.Error(w, `{"error":"invalid or expired token"}`, http.StatusUnauthorized)
+			http.Error(w, `{"error":"invalid or expired token","code":"unauthorized"}`, http.StatusUnauthorized)
 		})
 	}
 }
@@ -88,7 +88,7 @@ func RequireAdmin(db *sql.DB) func(http.Handler) http.Handler {
 			userID := GetUserID(r.Context())
 			isAdmin, err := permSvc.IsAdmin(userID)
 			if err != nil || !isAdmin {
-				http.Error(w, `{"error":"admin access required"}`, http.StatusForbidden)
+				http.Error(w, `{"error":"admin access required","code":"forbidden"}`, http.StatusForbidden)
 				return
 			}
 			next.ServeHTTP(w, r)

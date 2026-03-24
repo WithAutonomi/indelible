@@ -11,9 +11,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/maidsafe/indelible/internal/config"
-	"github.com/maidsafe/indelible/internal/middleware"
-	"github.com/maidsafe/indelible/internal/services"
+	"github.com/WithAutonomi/indelible/internal/config"
+	"github.com/WithAutonomi/indelible/internal/middleware"
+	"github.com/WithAutonomi/indelible/internal/services"
 )
 
 type createTokenRequest struct {
@@ -82,9 +82,24 @@ func toTokenResponse(t *services.Token) tokenResponse {
 
 // --- User token handlers (own tokens) ---
 
+// CreateToken creates a new API token for the authenticated user.
+//
+// @Summary      Create API token
+// @Description  Create a new API token with specified permissions and expiry
+// @Tags         API Tokens
+// @Accept       json
+// @Produce      json
+// @Param        body  body  createTokenRequest  true  "Token creation request"
+// @Success      201  {object}  createTokenResponse
+// @Failure      400  {object}  map[string]string
+// @Failure      403  {object}  map[string]string
+// @Failure      500  {object}  map[string]string
+// @Security     BearerAuth
+// @Router       /tokens [post]
 func CreateToken(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	tokenSvc := services.NewTokenService(db)
 	permSvc := services.NewPermissionService(db)
+	settingsSvc := services.NewSettingsService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID := middleware.GetUserID(r.Context())
@@ -123,7 +138,12 @@ func CreateToken(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 
 		// Calculate expiry
 		var expiresAt *time.Time
-		defaultDays := 90 // TODO: read from settings table
+		defaultDays := 90
+		if v, err := settingsSvc.Get("default_token_expiry_days"); err == nil {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				defaultDays = n
+			}
+		}
 		days := defaultDays
 		if req.ExpiresInDays != nil {
 			days = *req.ExpiresInDays
@@ -152,6 +172,16 @@ func CreateToken(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	}
 }
 
+// ListTokens returns all API tokens belonging to the authenticated user.
+//
+// @Summary      List user's tokens
+// @Description  List all API tokens owned by the authenticated user
+// @Tags         API Tokens
+// @Produce      json
+// @Success      200  {object}  map[string]any
+// @Failure      500  {object}  map[string]string
+// @Security     BearerAuth
+// @Router       /tokens [get]
 func ListTokens(db *sql.DB) http.HandlerFunc {
 	tokenSvc := services.NewTokenService(db)
 
@@ -173,6 +203,19 @@ func ListTokens(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+// RevokeToken revokes an API token owned by the authenticated user.
+//
+// @Summary      Revoke token
+// @Description  Revoke an API token by its UUID
+// @Tags         API Tokens
+// @Accept       json
+// @Produce      json
+// @Param        id  path  string  true  "Token UUID"
+// @Success      200  {object}  map[string]string
+// @Failure      404  {object}  map[string]string
+// @Failure      500  {object}  map[string]string
+// @Security     BearerAuth
+// @Router       /tokens/{id} [delete]
 func RevokeToken(db *sql.DB) http.HandlerFunc {
 	tokenSvc := services.NewTokenService(db)
 
@@ -211,6 +254,16 @@ func RevokeToken(db *sql.DB) http.HandlerFunc {
 
 // --- Admin token handlers ---
 
+// @Summary      List all tokens (admin)
+// @Description  Return a paginated list of all API tokens across all users
+// @Tags         Admin: Tokens
+// @Produce      json
+// @Param        limit  query int false "Max results (default 50, max 100)"
+// @Param        offset query int false "Offset for pagination"
+// @Success      200 {object} map[string]interface{}
+// @Failure      500 {object} map[string]string
+// @Router       /admin/tokens [get]
+// @Security     BearerAuth
 func AdminListAllTokens(db *sql.DB) http.HandlerFunc {
 	tokenSvc := services.NewTokenService(db)
 
@@ -241,6 +294,17 @@ func AdminListAllTokens(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+// @Summary      Bulk revoke tokens
+// @Description  Revoke multiple API tokens at once by their UUIDs
+// @Tags         Admin: Tokens
+// @Accept       json
+// @Produce      json
+// @Param        body body bulkRevokeRequest true "Token UUIDs to revoke"
+// @Success      200 {object} map[string]interface{}
+// @Failure      400 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /admin/tokens/bulk [delete]
+// @Security     BearerAuth
 func AdminBulkRevokeTokens(db *sql.DB) http.HandlerFunc {
 	tokenSvc := services.NewTokenService(db)
 

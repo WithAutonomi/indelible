@@ -26,6 +26,15 @@ All Autonomi network operations go through the antd daemon via `antd-go` SDK. In
 
 No mutable network primitives (pointers, scratchpads, registers, graph entries) are used. Cost estimation, wallet payment, and deduplication are handled transparently by antd.
 
+### 1.3 API Consumer Affordances
+- **Request ID tracing** — `X-Request-Id` header on every response for log correlation
+- **Rate limit headers** — `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset` on rate-limited endpoints; `Retry-After` on 429
+- **Structured error codes** — machine-readable `code` field in error responses alongside human-readable `error`
+- **Idempotency keys** — `Idempotency-Key` header on POST /uploads for safe retries; cached responses replayed for 24h
+- **Webhook signatures** — HMAC-SHA256 signing of outbound webhook payloads with `X-Signature-256` header; per-webhook secrets with rotation support
+- **Cursor pagination** — keyset-based pagination via `cursor` query param as alternative to offset/limit
+- **Upload filtering** — `status`, `sort`, `from`, `to` query params on upload listing
+
 ---
 
 ## 2. Authentication & Identity
@@ -47,9 +56,11 @@ No mutable network primitives (pointers, scratchpads, registers, graph entries) 
 - Service accounts and inactive users cannot request resets
 
 ### 2.3 Email Verification
-- Verification tokens with configurable TTL
-- One-time use tokens
-- Required before certain actions (configurable)
+- Verification email sent on registration (best-effort, non-blocking)
+- 24-hour one-time-use tokens stored in `email_verification_tokens` table
+- `GET /auth/verify-email?token=...` validates and sets `email_verified` flag
+- `POST /me/resend-verification` for authenticated users to request a new email
+- Uses the same `Notifier` interface as password reset (SMTP or noop)
 
 ### 2.4 OIDC / SSO
 - Global enable/disable switch
@@ -65,6 +76,20 @@ No mutable network primitives (pointers, scratchpads, registers, graph entries) 
 - Auto-provisioning toggle: create user on first SSO login with configurable default permissions
 - Manual identity linking: authenticated users can link additional providers
 - Identity unlinking with safety check (cannot unlink last login method if no password)
+
+### 2.5 SCIM 2.0 Provisioning
+- Industry-standard protocol for automated user/group provisioning from identity providers
+- Supported IdPs: Okta, Azure AD/Entra, Google Workspace, any SCIM 2.0 client
+- **Endpoints:** `/scim/v2/Users`, `/scim/v2/Groups`, `/scim/v2/ServiceProviderConfig`, `/scim/v2/Schemas`, `/scim/v2/ResourceTypes`
+- Full CRUD: Create, Read (single + list), Replace (PUT), Patch, Delete
+- Filter support: `userName eq "..."` optimized to direct DB lookup
+- SCIM-provisioned users have no password (authenticate via OIDC/SSO)
+- SCIM-provisioned groups default to "read" permission level
+- `externalId` mapping stored on users and groups for IdP correlation
+- Separate SCIM bearer tokens (prefixed `scim_`, bcrypt-hashed) managed via admin API
+- Global enable/disable toggle via admin settings
+- Audit logging for all SCIM operations
+- Admin UI: enable/disable toggle, token generation with one-time secret display, token management table
 
 ---
 
@@ -225,20 +250,45 @@ Three permission levels: **read**, **write**, **admin**
 ## 8. Webhook Notifications
 
 ### 8.1 Configuration
-- Global webhook URL + enabled toggle
+- Multiple webhook endpoints, each independently configured
+- Per-webhook enable/disable toggle
 - Integration type: **Generic** (raw JSON) or **Slack** (Block Kit formatted)
-- Event subscription: select which status transitions trigger webhooks
-  - Queued, Processing, Completed, Failed
+- Per-webhook event subscription: select which events trigger delivery
+  - Upload events: Queued, Processing, Completed, Failed
+  - System events: Disk Warning (80%), Disk Critical (95%), Disk Recovered
+- Dedicated admin page (**Admin > Webhooks**) with inline edit, event tag display
+- Test ping button per webhook for verifying endpoint connectivity
 
-### 8.2 Delivery
+### 8.2 Event Types
+
+| Event | Category | Source | Description |
+|-------|----------|--------|-------------|
+| `queued` | Upload | Upload handler | File accepted and queued for processing |
+| `processing` | Upload | Upload worker | Worker started processing the upload |
+| `completed` | Upload | Upload worker | Upload successfully stored on network |
+| `failed` | Upload | Upload worker | Upload processing failed |
+| `disk_warning` | System | Disk alert worker | Disk usage reached warning threshold (80%) |
+| `disk_critical` | System | Disk alert worker | Disk usage reached critical threshold (95%), uploads paused |
+| `disk_recovered` | System | Disk alert worker | Disk usage returned below warning threshold |
+| `test_ping` | Test | Admin API | Manual test ping from admin UI |
+
+### 8.3 Delivery
 - Async fire-and-forget (non-blocking to upload flow)
-- 3 retry attempts with exponential backoff
+- Event filtering: only delivers events the webhook is subscribed to
+- 3 retry attempts with exponential backoff (2s, 4s between retries)
 - 5-second timeout per attempt
-- Delivery logged at system level
+- Delivery log: every attempt recorded in `webhook_delivery_log` table with status code, success, attempts, error
+- Delivery log auto-pruned alongside log retention settings
+- System alert deduplication: disk alerts only fire once per threshold transition (not every check interval)
 
-### 8.3 Payloads
-**Generic:** JSON with event_type, timestamp, upload details (id, filename, status, size, cost, error)
-**Slack:** Formatted blocks with markdown, file info, cost display
+### 8.4 Payloads
+**Generic (upload event):** JSON with `event_type`, `timestamp`, `upload` object (uuid, user_id, token_id, filename, status, file_size, visibility, actual_cost, error_message). `token_id` included when the upload was created via API token, enabling consumers to filter for their own uploads.
+**Generic (system event):** JSON with `event_type`, `timestamp`, `system` object (alert_type, message, value)
+**Slack:** Formatted Block Kit messages with markdown — upload events show file info and cost; system events show alert type and percentage
+
+### 8.5 Admin API
+- `POST /api/v2/admin/webhooks/{id}/test` — synchronous test ping, returns HTTP status code and success/failure
+- `GET /api/v2/admin/webhooks/{id}/deliveries` — recent delivery history with status, attempts, errors
 
 ---
 
@@ -310,8 +360,8 @@ All settings stored in DB, changeable at runtime without restart.
 - **User Management** — list users, edit permissions, activate/deactivate, soft-delete
 - **Group Management** — create/edit groups, manage membership
 - **Wallet Management** — create wallets, set default, view balances, transaction history
-- **System Settings** — all runtime config from section 10
-- **Webhook Settings** — URL, integration type, event subscriptions
+- **System Settings** — all runtime config from section 10, per-card save/discard
+- **Webhooks** — dedicated page: create/edit/delete endpoints, integration type, event subscriptions, test ping, delivery history
 - **OIDC Settings** — provider management, auto-provision toggle
 - **Analytics: Tokens** — usage charts, active token stats
 - **Analytics: Uploads** — upload volume, success rates, processing times
@@ -408,7 +458,8 @@ server {
 
 **Indelible requirements for proxy support:**
 - Respects `X-Forwarded-For` and `X-Forwarded-Proto` headers for correct IP logging and HTTPS detection
-- `--trusted-proxies` flag or config option to specify trusted proxy CIDR ranges (prevents header spoofing)
+- `trusted_proxies` config option (CIDR ranges or exact IPs) — `X-Forwarded-For` is only honoured when the direct connection comes from a trusted proxy. Prevents header spoofing for rate limiting and audit logging.
+- Shared `middleware.ClientIP()` helper used by rate limiter and all audit logging
 - Health endpoint (`/health`) for load balancer health checks
 
 ### 13.6 Typical Deployment Walkthrough
@@ -528,7 +579,7 @@ volumes:
 
 6. **API versioning: `/api/v2/`** — aligns with Autonomi network versioning.
 
-7. **Backup/restore: Settings-only export/import.** In-app export covers system config, webhook config, OIDC config, and group definitions — enough to replicate an instance's configuration. Full database backup (SQLite file copy or pg_dump) is the deploying company's responsibility, documented in ops guide.
+7. **Backup/restore: Configuration export/import.** Structured JSON export includes system settings, webhook configurations, OIDC provider configs (without client secrets), and group definitions. Import supports both the structured format and legacy flat settings format for backwards compatibility. OIDC client secrets must be re-entered after import. Full database backup (SQLite file copy or pg_dump) is the deploying company's responsibility, documented in ops guide.
 
 ---
 
@@ -618,11 +669,13 @@ ClamAV or webhook-based file scanning before network upload. Optional. Important
 **FC-10: Scheduled Compliance Reports**
 PDF/CSV report templates delivered on schedule via webhooks. Data already exists in analytics tables.
 
-**FC-12: SCIM 2.0 Provisioning**
-Auto-provision/deprovision users from identity providers (Okta, Azure AD/Entra). High effort, only relevant at 100+ employees.
+**FC-12: SCIM 2.0 Provisioning** — *Implemented (see Section 2.5)*
 
 **FC-13: Content Classification Labels**
 Sensitivity levels (Public/Internal/Confidential/Restricted) with policy enforcement. Depends on tagging (FC-1) being mature.
+
+**FC-17: Paymaster / ANT-Only Payments (Smart Wallets)**
+Eliminate the requirement for enterprise deployments to hold both ANT and ETH by using ERC-4337 Account Abstraction with the Autonomi Paymaster contract. Users pay for both storage and gas using only ANT — the paymaster sponsors ETH gas and takes the equivalent ANT (priced via Chainlink + Uniswap V3 TWAP oracle). **Blocked on ant-sdk support:** The current `evmlib` wallet uses direct EOA transactions. Paymaster requires constructing UserOperations and routing through a bundler (Pimlico). The `external_signer` module in `autonomi_client` provides the calldata hooks needed — Indelible could get quotes from antd, submit payments as UserOperations via Pimlico's bundler API, and pass the receipt back to antd for upload. Implementation path: add `PaymentOption::SmartAccount` to ant-sdk, or bypass antd for the payment step and interact with the bundler directly from Go. Reference: `WithAutonomi/autonomi-paymaster` (Solidity contract on Arbitrum One at `0x95bf...1EF4`), `WithAutonomi/project-dave` (TypeScript integration using `permissionless.js` + Pimlico).
 
 ---
 

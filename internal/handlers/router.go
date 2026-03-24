@@ -9,10 +9,11 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
+	httpSwagger "github.com/swaggo/http-swagger"
 
-	"github.com/maidsafe/indelible/internal/config"
-	"github.com/maidsafe/indelible/internal/middleware"
-	"github.com/maidsafe/indelible/web"
+	"github.com/WithAutonomi/indelible/internal/config"
+	"github.com/WithAutonomi/indelible/internal/middleware"
+	"github.com/WithAutonomi/indelible/web"
 )
 
 // NewRouter builds the application router with all routes registered.
@@ -21,6 +22,7 @@ func NewRouter(cfg *config.Config, db *sql.DB) http.Handler {
 
 	// Global middleware
 	r.Use(chimw.RequestID)
+	r.Use(propagateRequestID)
 	r.Use(chimw.RealIP)
 	r.Use(chimw.Logger)
 	r.Use(chimw.Recoverer)
@@ -30,14 +32,17 @@ func NewRouter(cfg *config.Config, db *sql.DB) http.Handler {
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   cfg.CORSOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
-		ExposedHeaders:   []string{"Link"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "Idempotency-Key"},
+		ExposedHeaders:   []string{"Link", "X-Request-Id", "X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset", "Retry-After", "X-Idempotent-Replayed"},
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
 
 	// Health check (no auth)
 	r.Get("/health", Health(db, cfg))
+
+	// Swagger API docs
+	r.Get("/api/docs/*", httpSwagger.WrapHandler)
 
 	// API v2 routes
 	r.Route("/api/v2", func(r chi.Router) {
@@ -46,27 +51,36 @@ func NewRouter(cfg *config.Config, db *sql.DB) http.Handler {
 
 		// Public auth routes (with rate limiting on login)
 		r.Group(func(r chi.Router) {
-			r.With(middleware.RateLimit(5, 60*time.Second)).Post("/auth/login", Login(db, cfg))
+			r.With(middleware.RateLimit(5, 60*time.Second, cfg.TrustedProxies)).Post("/auth/login", Login(db, cfg))
 			r.Post("/auth/register", Register(db, cfg))
 			r.Post("/auth/forgot-password", ForgotPassword(db, cfg))
 			r.Post("/auth/reset-password", ResetPassword(db, cfg))
+			r.Get("/auth/verify-email", VerifyEmail(db))
 		})
 
 		// Authenticated routes
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.Authenticate(db, cfg))
 
+			// System status (available to all authenticated users)
+			r.Get("/system/wallet-status", WalletStatus(db, cfg))
+
 			// Profile
 			r.Get("/me", GetProfile(db))
 			r.Put("/me", UpdateProfile(db))
+			r.Post("/me/resend-verification", ResendVerification(db, cfg))
 			r.Put("/me/password", ChangePassword(db, cfg))
 
 			// Uploads
-			r.Post("/uploads", CreateUpload(db, cfg))
+			r.With(middleware.Idempotency(db)).Post("/uploads", CreateUpload(db, cfg))
 			r.Get("/uploads", ListUploads(db))
 			r.Get("/uploads/{id}", GetUpload(db))
 			r.Post("/uploads/quote", QuoteUpload(db, cfg))
 			r.Get("/uploads/{id}/download", DownloadUpload(db, cfg))
+			r.Post("/uploads/{id}/cancel", CancelUpload(db))
+			r.Post("/uploads/{id}/retry", RetryUpload(db))
+			r.Post("/uploads/{id}/force-retry", ForceRetryUpload(db))
+			r.Delete("/uploads/{id}", DeleteUpload(db))
 
 			// Tags
 			r.Put("/uploads/{id}/tags", UpdateTags(db))
@@ -97,6 +111,7 @@ func NewRouter(cfg *config.Config, db *sql.DB) http.Handler {
 			r.Use(middleware.RequireAdmin(db))
 
 			// User management
+			r.Post("/admin/users", AdminCreateUser(db))
 			r.Get("/admin/users", AdminListUsers(db))
 			r.Get("/admin/users/{id}", AdminGetUser(db))
 			r.Put("/admin/users/{id}", AdminUpdateUser(db))
@@ -131,7 +146,16 @@ func NewRouter(cfg *config.Config, db *sql.DB) http.Handler {
 			r.Get("/admin/webhooks", AdminGetWebhooks(db))
 			r.Post("/admin/webhooks", AdminCreateWebhook(db))
 			r.Put("/admin/webhooks/{id}", AdminUpdateWebhook(db))
+			r.Patch("/admin/webhooks/{id}", AdminUpdateWebhook(db))
 			r.Delete("/admin/webhooks/{id}", AdminDeleteWebhook(db))
+			r.Post("/admin/webhooks/{id}/test", AdminTestWebhook(db))
+			r.Post("/admin/webhooks/{id}/rotate-secret", AdminRotateWebhookSecret(db))
+			r.Get("/admin/webhooks/{id}/deliveries", AdminGetWebhookDeliveries(db))
+
+			// SCIM token management
+			r.Post("/admin/scim/tokens", AdminCreateScimToken(db))
+			r.Get("/admin/scim/tokens", AdminListScimTokens(db))
+			r.Delete("/admin/scim/tokens/{id}", AdminRevokeScimToken(db))
 
 			// OIDC providers
 			r.Get("/admin/oidc/providers", AdminListOIDCProviders(db, cfg))
@@ -157,6 +181,15 @@ func NewRouter(cfg *config.Config, db *sql.DB) http.Handler {
 		})
 	})
 
+	// SCIM 2.0 provisioning endpoint
+	scimServer, err := NewSCIMServer(db)
+	if err == nil {
+		r.Route("/scim/v2", func(r chi.Router) {
+			r.Use(middleware.SCIMAuth(db))
+			r.Mount("/", scimServer)
+		})
+	}
+
 	// Serve embedded Vue SPA for all other routes
 	spa, err := fs.Sub(web.StaticFS, "dist")
 	if err != nil {
@@ -166,6 +199,16 @@ func NewRouter(cfg *config.Config, db *sql.DB) http.Handler {
 	r.Handle("/*", spaHandler(fileServer))
 
 	return r
+}
+
+// propagateRequestID copies the Chi-generated request ID into the response header.
+func propagateRequestID(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if reqID := chimw.GetReqID(r.Context()); reqID != "" {
+			w.Header().Set("X-Request-Id", reqID)
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // spaHandler serves static files, falling back to index.html for SPA routing.

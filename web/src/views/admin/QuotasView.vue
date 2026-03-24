@@ -64,7 +64,7 @@ onMounted(fetchQuotas)
 </script>
 
 <template>
-  <div class="p-6 max-w-4xl">
+  <div class="p-6">
     <div class="flex items-center justify-between mb-6">
       <h1 class="text-2xl font-bold">Storage Quotas</h1>
       <button @click="showCreate = !showCreate"
@@ -74,33 +74,58 @@ onMounted(fetchQuotas)
     </div>
 
     <!-- Create form -->
-    <div v-if="showCreate" class="bg-white rounded-lg border border-gray-200 p-6 mb-6">
-      <form @submit.prevent="createQuota" class="space-y-4">
-        <div class="grid grid-cols-2 gap-4">
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Entity Type</label>
-            <select v-model="newEntityType" class="block w-full rounded border border-gray-300 px-3 py-2 text-sm">
-              <option value="system">System</option>
-              <option value="user">User</option>
-              <option value="group">Group</option>
-              <option value="department">Department</option>
-            </select>
+    <div v-if="showCreate" class="bg-white rounded-lg border border-gray-200 mb-6">
+      <div class="px-6 py-4 border-b border-gray-200">
+        <h2 class="text-base font-semibold text-gray-800">New Quota</h2>
+      </div>
+      <form @submit.prevent="createQuota">
+        <div class="divide-y divide-gray-100">
+          <div class="grid grid-cols-3 gap-6 px-6 py-5">
+            <div>
+              <label class="text-sm font-medium text-gray-700">Entity Type</label>
+              <p class="text-xs text-gray-400 mt-1">What this quota applies to.</p>
+            </div>
+            <div class="col-span-2">
+              <select v-model="newEntityType" class="block w-48 rounded border border-gray-300 px-3 py-2 text-sm">
+                <option value="system">System</option>
+                <option value="user">User</option>
+                <option value="group">Group</option>
+                <option value="department">Department</option>
+              </select>
+            </div>
           </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Entity ID</label>
-            <input v-model="newEntityId" type="text" placeholder="User/group ID (empty for system)"
-              class="block w-full rounded border border-gray-300 px-3 py-2 text-sm" />
+          <div class="grid grid-cols-3 gap-6 px-6 py-5">
+            <div>
+              <label class="text-sm font-medium text-gray-700">Entity ID</label>
+              <p class="text-xs text-gray-400 mt-1">Leave empty for system-wide quota.</p>
+            </div>
+            <div class="col-span-2">
+              <input v-model="newEntityId" type="text" placeholder="User/group ID"
+                class="block w-full max-w-md rounded border border-gray-300 px-3 py-2 text-sm" />
+            </div>
+          </div>
+          <div class="grid grid-cols-3 gap-6 px-6 py-5">
+            <div>
+              <label class="text-sm font-medium text-gray-700">Max Storage</label>
+              <p class="text-xs text-gray-400 mt-1">Maximum storage allowed for this entity.</p>
+            </div>
+            <div class="col-span-2">
+              <div class="flex items-center gap-2">
+                <input v-model.number="newMaxGB" type="number" min="1" required
+                  class="block w-32 rounded border border-gray-300 px-3 py-2 text-sm" />
+                <span class="text-sm text-gray-400">GB</span>
+              </div>
+            </div>
           </div>
         </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Max Storage (GB)</label>
-          <input v-model.number="newMaxGB" type="number" min="1" required
-            class="block w-full rounded border border-gray-300 px-3 py-2 text-sm" />
+        <div class="px-6 py-4 bg-gray-50 border-t border-gray-200 rounded-b-lg flex justify-end gap-2">
+          <button type="button" @click="showCreate = false"
+            class="rounded border px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100">Cancel</button>
+          <button type="submit" :disabled="creating"
+            class="rounded bg-blue-600 px-4 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50">
+            {{ creating ? 'Creating...' : 'Create Quota' }}
+          </button>
         </div>
-        <button type="submit" :disabled="creating"
-          class="rounded bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-50">
-          {{ creating ? 'Creating...' : 'Create Quota' }}
-        </button>
       </form>
     </div>
 

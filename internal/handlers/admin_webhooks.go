@@ -9,7 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/maidsafe/indelible/internal/services"
+	"github.com/WithAutonomi/indelible/internal/services"
 )
 
 type webhookResponse struct {
@@ -47,6 +47,14 @@ type updateWebhookRequest struct {
 	IsEnabled       bool   `json:"is_enabled"`
 }
 
+// @Summary      List all webhooks
+// @Description  Return all configured webhook endpoints
+// @Tags         Admin: Webhooks
+// @Produce      json
+// @Success      200 {object} map[string][]webhookResponse
+// @Failure      500 {object} map[string]string
+// @Router       /admin/webhooks [get]
+// @Security     BearerAuth
 func AdminGetWebhooks(db *sql.DB) http.HandlerFunc {
 	webhookSvc := services.NewWebhookService(db)
 
@@ -66,6 +74,17 @@ func AdminGetWebhooks(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+// @Summary      Create a webhook
+// @Description  Register a new webhook endpoint for event notifications
+// @Tags         Admin: Webhooks
+// @Accept       json
+// @Produce      json
+// @Param        body body createWebhookRequest true "Webhook details"
+// @Success      201 {object} webhookResponse
+// @Failure      400 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /admin/webhooks [post]
+// @Security     BearerAuth
 func AdminCreateWebhook(db *sql.DB) http.HandlerFunc {
 	webhookSvc := services.NewWebhookService(db)
 
@@ -86,10 +105,28 @@ func AdminCreateWebhook(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		jsonResponse(w, http.StatusCreated, toWebhookResponse(webhook))
+		// Include secret in create response (shown once)
+		resp := toWebhookResponse(webhook)
+		jsonResponse(w, http.StatusCreated, map[string]any{
+			"webhook": resp,
+			"secret":  webhook.Secret,
+		})
 	}
 }
 
+// @Summary      Update a webhook
+// @Description  Update an existing webhook's URL, events, integration type, or enabled status
+// @Tags         Admin: Webhooks
+// @Accept       json
+// @Produce      json
+// @Param        id   path int                  true "Webhook ID"
+// @Param        body body updateWebhookRequest true "Updated webhook fields"
+// @Success      200 {object} webhookResponse
+// @Failure      400 {object} map[string]string
+// @Failure      404 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /admin/webhooks/{id} [put]
+// @Security     BearerAuth
 func AdminUpdateWebhook(db *sql.DB) http.HandlerFunc {
 	webhookSvc := services.NewWebhookService(db)
 
@@ -120,6 +157,17 @@ func AdminUpdateWebhook(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+// @Summary      Delete a webhook
+// @Description  Remove a webhook endpoint
+// @Tags         Admin: Webhooks
+// @Produce      json
+// @Param        id path int true "Webhook ID"
+// @Success      200 {object} map[string]string
+// @Failure      400 {object} map[string]string
+// @Failure      404 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /admin/webhooks/{id} [delete]
+// @Security     BearerAuth
 func AdminDeleteWebhook(db *sql.DB) http.HandlerFunc {
 	webhookSvc := services.NewWebhookService(db)
 
@@ -140,5 +188,155 @@ func AdminDeleteWebhook(db *sql.DB) http.HandlerFunc {
 		}
 
 		jsonResponse(w, http.StatusOK, map[string]string{"message": "webhook deleted"})
+	}
+}
+
+// @Summary      Test a webhook
+// @Description  Send a test ping to a webhook endpoint and return the result
+// @Tags         Admin: Webhooks
+// @Produce      json
+// @Param        id path int true "Webhook ID"
+// @Success      200 {object} map[string]interface{}
+// @Failure      400 {object} map[string]string
+// @Failure      404 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /admin/webhooks/{id}/test [post]
+// @Security     BearerAuth
+// AdminTestWebhook sends a test ping to a webhook endpoint synchronously.
+func AdminTestWebhook(db *sql.DB) http.HandlerFunc {
+	webhookSvc := services.NewWebhookService(db)
+	deliverySvc := services.NewWebhookDeliveryService(db)
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+		if err != nil {
+			jsonError(w, "invalid webhook id", http.StatusBadRequest)
+			return
+		}
+
+		webhook, err := webhookSvc.GetByID(id)
+		if err != nil {
+			if errors.Is(err, services.ErrWebhookNotFound) {
+				jsonError(w, "webhook not found", http.StatusNotFound)
+				return
+			}
+			jsonError(w, "failed to get webhook", http.StatusInternalServerError)
+			return
+		}
+
+		statusCode, success, testErr := deliverySvc.FireTestPing(webhook)
+		resp := map[string]any{
+			"success":     success,
+			"status_code": statusCode,
+		}
+		if testErr != nil {
+			resp["error"] = testErr.Error()
+		}
+
+		jsonResponse(w, http.StatusOK, resp)
+	}
+}
+
+type deliveryResponse struct {
+	ID           int64  `json:"id"`
+	WebhookID    int64  `json:"webhook_id"`
+	EventType    string `json:"event_type"`
+	StatusCode   *int64 `json:"status_code"`
+	Success      bool   `json:"success"`
+	Attempts     int    `json:"attempts"`
+	ErrorMessage string `json:"error_message,omitempty"`
+	CreatedAt    string `json:"created_at"`
+}
+
+// @Summary      List webhook deliveries
+// @Description  Return recent delivery log entries for a specific webhook
+// @Tags         Admin: Webhooks
+// @Produce      json
+// @Param        id    path  int true  "Webhook ID"
+// @Param        limit query int false "Max results (default 20, max 100)"
+// @Success      200 {object} map[string][]deliveryResponse
+// @Failure      400 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /admin/webhooks/{id}/deliveries [get]
+// @Security     BearerAuth
+// AdminGetWebhookDeliveries returns recent delivery log entries for a webhook.
+func AdminGetWebhookDeliveries(db *sql.DB) http.HandlerFunc {
+	deliverySvc := services.NewWebhookDeliveryService(db)
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+		if err != nil {
+			jsonError(w, "invalid webhook id", http.StatusBadRequest)
+			return
+		}
+
+		limit := 20
+		if l := r.URL.Query().Get("limit"); l != "" {
+			if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 && parsed <= 100 {
+				limit = parsed
+			}
+		}
+
+		deliveries, err := deliverySvc.GetDeliveryLog(id, limit)
+		if err != nil {
+			jsonError(w, "failed to get delivery log", http.StatusInternalServerError)
+			return
+		}
+
+		resp := make([]deliveryResponse, 0, len(deliveries))
+		for _, d := range deliveries {
+			dr := deliveryResponse{
+				ID:        d.ID,
+				WebhookID: d.WebhookID,
+				EventType: d.EventType,
+				Success:   d.Success,
+				Attempts:  d.Attempts,
+				CreatedAt: d.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			}
+			if d.StatusCode.Valid {
+				dr.StatusCode = &d.StatusCode.Int64
+			}
+			if d.ErrorMessage.Valid {
+				dr.ErrorMessage = d.ErrorMessage.String
+			}
+			resp = append(resp, dr)
+		}
+
+		jsonResponse(w, http.StatusOK, map[string]any{"deliveries": resp})
+	}
+}
+
+// @Summary      Rotate webhook secret
+// @Description  Generate a new signing secret for a webhook endpoint
+// @Tags         Admin: Webhooks
+// @Produce      json
+// @Param        id path int true "Webhook ID"
+// @Success      200 {object} map[string]interface{}
+// @Failure      400 {object} map[string]string
+// @Failure      404 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /admin/webhooks/{id}/rotate-secret [post]
+// @Security     BearerAuth
+func AdminRotateWebhookSecret(db *sql.DB) http.HandlerFunc {
+	webhookSvc := services.NewWebhookService(db)
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+		if err != nil {
+			jsonError(w, "invalid webhook id", http.StatusBadRequest)
+			return
+		}
+
+		secret, err := webhookSvc.RotateSecret(id)
+		if err != nil {
+			if errors.Is(err, services.ErrWebhookNotFound) {
+				jsonError(w, "webhook not found", http.StatusNotFound)
+				return
+			}
+			jsonError(w, "failed to rotate secret", http.StatusInternalServerError)
+			return
+		}
+
+		jsonResponse(w, http.StatusOK, map[string]any{"secret": secret})
 	}
 }

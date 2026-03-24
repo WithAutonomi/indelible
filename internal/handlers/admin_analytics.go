@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/maidsafe/indelible/internal/services"
+	"github.com/WithAutonomi/indelible/internal/services"
 )
 
 func parseSince(r *http.Request) time.Time {
@@ -17,6 +17,15 @@ func parseSince(r *http.Request) time.Time {
 	return time.Now().AddDate(0, 0, -days)
 }
 
+// @Summary      Get upload analytics
+// @Description  Return upload statistics for the specified time period
+// @Tags         Admin: Analytics
+// @Produce      json
+// @Param        days query int false "Number of days to look back (default 7)"
+// @Success      200 {object} map[string]interface{}
+// @Failure      500 {object} map[string]string
+// @Router       /admin/analytics/uploads [get]
+// @Security     BearerAuth
 // AdminUploadAnalytics returns upload statistics.
 func AdminUploadAnalytics(db *sql.DB) http.HandlerFunc {
 	analyticsSvc := services.NewAnalyticsService(db)
@@ -32,6 +41,15 @@ func AdminUploadAnalytics(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+// @Summary      Get token analytics
+// @Description  Return API token usage statistics for the specified time period
+// @Tags         Admin: Analytics
+// @Produce      json
+// @Param        days query int false "Number of days to look back (default 7)"
+// @Success      200 {object} map[string]interface{}
+// @Failure      500 {object} map[string]string
+// @Router       /admin/analytics/tokens [get]
+// @Security     BearerAuth
 // AdminTokenAnalytics returns token usage statistics.
 func AdminTokenAnalytics(db *sql.DB) http.HandlerFunc {
 	analyticsSvc := services.NewAnalyticsService(db)
@@ -47,6 +65,15 @@ func AdminTokenAnalytics(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+// @Summary      Get cost analytics
+// @Description  Return cost analytics broken down by token and department
+// @Tags         Admin: Analytics
+// @Produce      json
+// @Param        days query int false "Number of days to look back (default 7)"
+// @Success      200 {object} map[string]interface{}
+// @Failure      500 {object} map[string]string
+// @Router       /admin/analytics/costs [get]
+// @Security     BearerAuth
 // AdminCostAnalytics returns cost analytics by token and department.
 func AdminCostAnalytics(db *sql.DB) http.HandlerFunc {
 	analyticsSvc := services.NewAnalyticsService(db)

@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"net/http"
 
-	"github.com/maidsafe/indelible/internal/services"
+	"github.com/WithAutonomi/indelible/internal/services"
 )
 
 // MaintenanceMode checks the system settings for maintenance mode and returns
@@ -22,7 +22,7 @@ func MaintenanceMode(db *sql.DB) func(http.Handler) http.Handler {
 				}
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusServiceUnavailable)
-				w.Write([]byte(`{"error":"` + msg + `"}`))
+				w.Write([]byte(`{"error":"` + msg + `","code":"maintenance_mode"}`))
 				return
 			}
 			next.ServeHTTP(w, r)

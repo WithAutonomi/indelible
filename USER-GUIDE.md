@@ -18,12 +18,14 @@ Indelible is an enterprise gateway for the Autonomi decentralized storage networ
 10. [Admin: System Settings](#admin-system-settings)
 11. [Admin: Webhooks](#admin-webhooks)
 12. [Admin: OIDC / SSO Providers](#admin-oidc--sso-providers)
-13. [Admin: Analytics](#admin-analytics)
-14. [Admin: Logs](#admin-logs)
-15. [Maintenance Mode](#maintenance-mode)
-16. [Rate Limiting](#rate-limiting)
-17. [Disk Space Monitoring](#disk-space-monitoring)
-18. [Deployment](#deployment)
+13. [Admin: SCIM Provisioning](#admin-scim-provisioning)
+14. [Admin: Analytics](#admin-analytics)
+15. [Admin: Logs](#admin-logs)
+16. [Maintenance Mode](#maintenance-mode)
+17. [Rate Limiting](#rate-limiting)
+18. [Disk Space Monitoring](#disk-space-monitoring)
+19. [API Consumer Guide](#api-consumer-guide)
+20. [Deployment](#deployment)
 19. [API Reference](#api-reference)
 
 ---
@@ -121,6 +123,7 @@ Set the resulting 64-character hex string as `INDELIBLE_WALLET_ENCRYPTION_KEY`. 
 1. Navigate to `/register` in your browser
 2. Enter email, password (minimum 8 characters), first name, last name
 3. The first registered user automatically receives admin permissions
+4. A verification email is sent if SMTP is configured (non-blocking — you can use the app immediately)
 
 ### Login
 
@@ -134,6 +137,14 @@ Navigate to `/login` and enter your email and password. Login is rate-limited to
 4. The response is always the same regardless of whether the email exists (prevents email enumeration)
 
 **Note:** Password reset requires SMTP configuration. Without it, reset tokens are logged to server output.
+
+### Email Verification
+
+A verification email is sent automatically on registration. Click the link to verify your email address.
+
+- Verification tokens expire after **24 hours**
+- To resend: call `POST /api/v2/me/resend-verification` (requires authentication)
+- Verification requires SMTP configuration. Without it, tokens are logged to server output.
 
 ### Changing Password
 
@@ -394,13 +405,19 @@ Runtime settings are stored in the database and take effect immediately without 
 
 ### Export / Import
 
-Settings can be exported as JSON for backup or replication to another instance:
+Instance configuration can be exported as JSON for backup or replication to another instance:
 
 1. Go to **Admin > Settings**
 2. Click **Export** to download `indelible-settings.json`
 3. On another instance, click **Import** and select the file
 
-All settings changes are recorded in the config audit trail with old/new values, who changed them, and the source IP.
+The export includes:
+- **System settings** — all runtime configuration (maintenance mode, upload limits, log retention, etc.)
+- **Webhook configurations** — URLs, integration types, event subscriptions, enabled state
+- **OIDC provider configurations** — names, issuer URLs, client IDs, scopes (client secrets are excluded for security — re-enter after import)
+- **Group definitions** — names, descriptions, permission levels
+
+The import is backwards-compatible with older flat settings exports. All settings changes are recorded in the config audit trail.
 
 ---
 
@@ -408,25 +425,53 @@ All settings changes are recorded in the config audit trail with old/new values,
 
 *Requires admin permissions.*
 
-Webhooks send HTTP notifications when upload status changes (queued, processing, completed, failed).
+Webhooks send HTTP notifications when events occur — upload status changes and system alerts. Navigate to **Admin > Webhooks** in the sidebar.
 
-### Setup
+### Creating a Webhook
 
-1. Go to **Admin > Settings** (Webhooks section)
-2. Enter your webhook URL and click **Add**
+1. Click **Add Endpoint**
+2. Enter the endpoint URL
+3. Choose integration type: **Generic JSON** or **Slack**
+4. Select which events to subscribe to:
+   - **Upload events:** `queued`, `processing`, `completed`, `failed`
+   - **System events:** `disk_warning`, `disk_critical`, `disk_recovered`
+5. Click **Create Webhook**
+
+### Managing Webhooks
+
+- **Enable/Disable** — toggle in the list without deleting
+- **Edit** — click the pencil icon to expand an inline edit panel (URL, type, events, enabled)
+- **Test** — click the lightning bolt icon to send a test ping; result shown inline
+- **History** — click the clock icon to view recent delivery attempts with status codes and errors
+- **Delete** — click the trash icon (requires confirmation)
 
 ### Integration Types
 
-- **Generic** — raw JSON payload with event type, timestamp, and upload details
-- **Slack** — formatted Block Kit message suitable for Slack incoming webhooks
+- **Generic** — raw JSON payload, suitable for any HTTP endpoint
+- **Slack** — formatted Block Kit message for Slack incoming webhooks
+
+### Event Types
+
+| Event | Category | When it fires |
+|-------|----------|---------------|
+| `queued` | Upload | File accepted and queued for processing |
+| `processing` | Upload | Worker started processing the upload |
+| `completed` | Upload | Upload successfully stored on the network |
+| `failed` | Upload | Upload processing failed |
+| `disk_warning` | System | Disk usage reached 80% |
+| `disk_critical` | System | Disk usage reached 95%, uploads paused |
+| `disk_recovered` | System | Disk usage returned below warning threshold |
+
+System alerts fire once per threshold transition — not every check interval (5 minutes).
 
 ### Delivery
 
-- Async (non-blocking to upload flow)
+- Async and non-blocking to the upload flow
 - 3 retry attempts with exponential backoff
 - 5-second timeout per attempt
+- Every delivery attempt is logged and visible in the delivery history panel
 
-### Payload Format (Generic)
+### Payload Format (Generic — Upload Event)
 
 ```json
 {
@@ -434,12 +479,39 @@ Webhooks send HTTP notifications when upload status changes (queued, processing,
   "timestamp": "2026-03-13T12:00:00Z",
   "upload": {
     "uuid": "abc-123-...",
+    "user_id": 5,
+    "token_id": 12,
     "filename": "document.pdf",
     "status": "completed",
     "file_size": 1048576,
     "visibility": "private",
     "actual_cost": "5000000"
   }
+}
+```
+
+`user_id` is always present. `token_id` is included when the upload was created via API token — this allows API consumers to filter webhooks for their own uploads without needing per-user webhook configuration.
+
+### Payload Format (Generic — System Event)
+
+```json
+{
+  "event_type": "disk_critical",
+  "timestamp": "2026-03-13T12:00:00Z",
+  "system": {
+    "alert_type": "disk_critical",
+    "message": "Disk usage at 96.2%, uploads paused",
+    "value": 96.2
+  }
+}
+```
+
+### Payload Format (Test Ping)
+
+```json
+{
+  "event_type": "test_ping",
+  "timestamp": "2026-03-13T12:00:00Z"
 }
 ```
 
@@ -462,6 +534,80 @@ Indelible supports OpenID Connect for single sign-on with identity providers lik
    - **Scopes** — default: `openid email profile`
 
 Client secrets are encrypted at rest using AES-256-GCM.
+
+---
+
+## Admin: SCIM Provisioning
+
+*Requires admin permissions.*
+
+SCIM 2.0 enables automatic user and group provisioning from identity providers such as Okta, Azure AD/Entra, and Google Workspace.
+
+### Enabling SCIM
+
+1. Go to **Admin > SCIM**
+2. Toggle **SCIM Provisioning** to enabled
+3. Note the **SCIM Base URL** displayed (e.g., `https://your-domain.com/scim/v2`)
+
+### Generating a SCIM Token
+
+1. Click **Generate Token**
+2. Enter a descriptive name (e.g., "Okta Production")
+3. Click **Generate**
+4. **Copy the token immediately** — it is shown only once
+5. Use this token as the Bearer token in your identity provider's SCIM configuration
+
+### Token Management
+
+- View all tokens with their creation date, last used timestamp, and status
+- **Revoke** a token when rotating credentials or decommissioning an IdP connection
+- Revoked tokens cannot be reactivated — generate a new one instead
+
+### API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/v2/admin/scim/tokens` | Create a SCIM token |
+| `GET` | `/api/v2/admin/scim/tokens` | List all SCIM tokens |
+| `DELETE` | `/api/v2/admin/scim/tokens/{id}` | Revoke a SCIM token |
+
+### IdP Configuration
+
+**Okta:**
+1. Add a new SCIM 2.0 application
+2. Set **SCIM connector base URL** to `https://your-domain.com/scim/v2`
+3. Set **Unique identifier field** to `userName`
+4. Set **Authentication Mode** to `HTTP Header`
+5. Paste the SCIM token in the **Authorization** field (with `Bearer ` prefix)
+6. Enable **Push New Users**, **Push Profile Updates**, and **Push Groups**
+
+**Azure AD / Entra ID:**
+1. In your Enterprise Application, go to **Provisioning**
+2. Set **Provisioning Mode** to `Automatic`
+3. Set **Tenant URL** to `https://your-domain.com/scim/v2`
+4. Set **Secret Token** to the SCIM token
+5. Click **Test Connection**, then **Save**
+6. Map attributes: `userPrincipalName` → `userName`, `givenName` → `name.givenName`, `surname` → `name.familyName`
+
+**Google Workspace:**
+1. Use the SCIM API endpoint `https://your-domain.com/scim/v2`
+2. Configure with a Bearer token in the Authorization header
+
+### How SCIM Maps to Indelible
+
+| SCIM Attribute | Indelible Field |
+|----------------|-----------------|
+| `userName` | `email` |
+| `name.givenName` | `first_name` |
+| `name.familyName` | `last_name` |
+| `active` | `is_active` |
+| `externalId` | `external_id` |
+| Group `displayName` | `name` |
+| Group `members[].value` | group membership |
+
+- SCIM-provisioned users have no password and should authenticate via OIDC/SSO
+- SCIM-provisioned groups default to "read" permission level
+- SCIM DELETE performs a soft-delete to preserve audit history
 
 ---
 
@@ -559,6 +705,92 @@ The health endpoint (`/health`) reflects the paused state. This is essential bec
 
 ---
 
+## API Consumer Guide
+
+### Request ID Tracing
+
+Every API response includes an `X-Request-Id` header. Include this ID in support requests to help correlate issues with server-side logs.
+
+### Rate Limiting
+
+Rate-limited endpoints (currently login) include these headers on every response:
+
+| Header | Description |
+|--------|-------------|
+| `X-RateLimit-Limit` | Maximum requests per window |
+| `X-RateLimit-Remaining` | Requests remaining in current window |
+| `X-RateLimit-Reset` | Unix timestamp when the window resets |
+| `Retry-After` | Seconds until retry is allowed (only on 429) |
+
+### Error Codes
+
+Error responses include a machine-readable `code` field alongside the human-readable `error` message:
+
+```json
+{"error": "email already registered", "code": "email_taken"}
+```
+
+Common codes: `unauthorized`, `forbidden`, `validation_error`, `not_found`, `email_taken`, `invalid_credentials`, `quota_exceeded`, `file_too_large`, `rate_limit_exceeded`, `maintenance_mode`, `wallet_not_configured`.
+
+### Idempotency Keys
+
+For upload creation (`POST /uploads`), include an `Idempotency-Key` header to safely retry requests:
+
+```bash
+curl -X POST /api/v2/uploads \
+  -H "Idempotency-Key: unique-request-id-123" \
+  -F file=@document.pdf
+```
+
+If the same key + user combination is sent again within 24 hours, the original response is replayed with `X-Idempotent-Replayed: true`.
+
+### Webhook Signatures
+
+All webhook deliveries include HMAC-SHA256 signatures for payload verification:
+
+| Header | Description |
+|--------|-------------|
+| `X-Signature-256` | `sha256=<hex-encoded HMAC>` |
+| `X-Webhook-Timestamp` | Unix timestamp of delivery |
+
+To verify in your receiver:
+```python
+import hmac, hashlib
+expected = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+assert hmac.compare_digest(expected, request.headers["X-Signature-256"])
+```
+
+Webhook secrets are generated automatically on creation and shown once. Use the **Rotate Secret** button to generate a new one.
+
+### Upload Filtering and Sorting
+
+`GET /uploads` supports these query parameters:
+
+| Parameter | Example | Description |
+|-----------|---------|-------------|
+| `status` | `completed` | Filter by upload status |
+| `sort` | `file_size:asc` | Sort by field with direction |
+| `from` | `2026-01-01T00:00:00Z` | Created after (RFC 3339) |
+| `to` | `2026-03-01T00:00:00Z` | Created before (RFC 3339) |
+
+Sort fields: `created_at` (default), `file_size`, `filename`, `status`.
+
+### Cursor Pagination
+
+List endpoints support cursor-based pagination as an alternative to offset/limit:
+
+```bash
+# First page (offset/limit — includes next_cursor in response)
+GET /api/v2/uploads?limit=10
+
+# Next page using cursor
+GET /api/v2/uploads?cursor=<next_cursor_value>&limit=10
+```
+
+The response includes `next_cursor` and `prev_cursor` fields when applicable.
+
+---
+
 ## Deployment
 
 ### Minimal (Single Binary + SQLite)
@@ -624,7 +856,7 @@ volumes:
 
 ### Trusted Proxies
 
-When behind a reverse proxy, configure trusted proxy ranges so Indelible correctly reads client IPs from `X-Forwarded-For`:
+When behind a reverse proxy, configure trusted proxy ranges so Indelible correctly reads client IPs from `X-Forwarded-For`. Without this, `X-Forwarded-For` is ignored and the direct connection IP is used (safe default). This affects rate limiting and audit log IP addresses.
 
 ```toml
 trusted_proxies = ["127.0.0.1/32", "10.0.0.0/8"]
@@ -649,6 +881,7 @@ All endpoints are under `/api/v2/`. Authentication is via Bearer token (JWT or A
 | POST | `/auth/register` | Register new user |
 | POST | `/auth/forgot-password` | Request password reset |
 | POST | `/auth/reset-password` | Reset password with token |
+| GET | `/auth/verify-email` | Verify email with token |
 | GET | `/health` | Health check |
 
 ### User Endpoints (authenticated)
@@ -658,6 +891,7 @@ All endpoints are under `/api/v2/`. Authentication is via Bearer token (JWT or A
 | GET | `/me` | Get profile |
 | PUT | `/me` | Update profile |
 | PUT | `/me/password` | Change password |
+| POST | `/me/resend-verification` | Resend verification email |
 | POST | `/uploads` | Upload file (multipart) |
 | GET | `/uploads` | List uploads |
 | GET | `/uploads/{id}` | Get upload by UUID |
@@ -705,8 +939,10 @@ All endpoints are under `/api/v2/`. Authentication is via Bearer token (JWT or A
 | POST | `/admin/settings/import` | Import settings JSON |
 | GET | `/admin/webhooks` | List webhooks |
 | POST | `/admin/webhooks` | Create webhook |
-| PUT | `/admin/webhooks/{id}` | Update webhook |
+| PUT/PATCH | `/admin/webhooks/{id}` | Update webhook |
 | DELETE | `/admin/webhooks/{id}` | Delete webhook |
+| POST | `/admin/webhooks/{id}/test` | Send test ping |
+| GET | `/admin/webhooks/{id}/deliveries` | Delivery history |
 | GET | `/admin/oidc/providers` | List OIDC providers |
 | POST | `/admin/oidc/providers` | Create provider |
 | PUT | `/admin/oidc/providers/{id}` | Update provider |

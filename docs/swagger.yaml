@@ -1,0 +1,3139 @@
+basePath: /api/v2
+definitions:
+  internal_handlers.addMemberRequest:
+    properties:
+      user_id:
+        type: integer
+    type: object
+  internal_handlers.adminCreateUserRequest:
+    properties:
+      email:
+        type: string
+      first_name:
+        type: string
+      last_name:
+        type: string
+      password:
+        type: string
+      permissions:
+        description: read, write, admin
+        type: string
+    type: object
+  internal_handlers.adminListUsersResponse:
+    properties:
+      limit:
+        type: integer
+      offset:
+        type: integer
+      total:
+        type: integer
+      users:
+        items:
+          $ref: '#/definitions/internal_handlers.adminUserResponse'
+        type: array
+    type: object
+  internal_handlers.adminUserResponse:
+    properties:
+      created_at:
+        type: string
+      email:
+        type: string
+      email_verified:
+        type: boolean
+      first_name:
+        type: string
+      id:
+        type: integer
+      is_active:
+        type: boolean
+      is_service_account:
+        type: boolean
+      last_login_at:
+        type: string
+      last_name:
+        type: string
+      permissions:
+        type: string
+    type: object
+  internal_handlers.authResponse:
+    properties:
+      token:
+        type: string
+      user:
+        $ref: '#/definitions/internal_handlers.userResponse'
+    type: object
+  internal_handlers.bulkRevokeRequest:
+    properties:
+      reason:
+        type: string
+      token_uuids:
+        items:
+          type: string
+        type: array
+    type: object
+  internal_handlers.changePasswordRequest:
+    properties:
+      current_password:
+        type: string
+      new_password:
+        type: string
+    type: object
+  internal_handlers.collectionResponse:
+    properties:
+      created_at:
+        type: string
+      description:
+        type: string
+      file_count:
+        type: integer
+      id:
+        type: integer
+      name:
+        type: string
+      parent_id:
+        type: integer
+      updated_at:
+        type: string
+    type: object
+  internal_handlers.createCollectionRequest:
+    properties:
+      description:
+        type: string
+      name:
+        type: string
+      parent_id:
+        type: integer
+    type: object
+  internal_handlers.createGroupRequest:
+    properties:
+      description:
+        type: string
+      name:
+        type: string
+      permission_level:
+        type: string
+    type: object
+  internal_handlers.createOIDCRequest:
+    properties:
+      client_id:
+        type: string
+      client_secret:
+        type: string
+      display_name:
+        type: string
+      issuer_url:
+        type: string
+      name:
+        type: string
+      scopes:
+        type: string
+    type: object
+  internal_handlers.createQuotaRequest:
+    properties:
+      entity_id:
+        type: string
+      entity_type:
+        type: string
+      max_bytes:
+        type: integer
+    type: object
+  internal_handlers.createServiceAccountRequest:
+    properties:
+      email:
+        type: string
+      first_name:
+        type: string
+      last_name:
+        type: string
+      permissions:
+        description: read, write, admin
+        type: string
+    type: object
+  internal_handlers.createTokenRequest:
+    properties:
+      department:
+        type: string
+      description:
+        type: string
+      expires_in_days:
+        description: null = use system default
+        type: integer
+      name:
+        type: string
+      permissions:
+        description: '["read"], ["read","write"], etc.'
+        items:
+          type: string
+        type: array
+    type: object
+  internal_handlers.createTokenResponse:
+    properties:
+      secret:
+        description: shown once
+        type: string
+      token:
+        $ref: '#/definitions/internal_handlers.tokenResponse'
+    type: object
+  internal_handlers.createWalletRequest:
+    properties:
+      address:
+        type: string
+      name:
+        type: string
+      private_key:
+        type: string
+    type: object
+  internal_handlers.createWebhookRequest:
+    properties:
+      events:
+        description: JSON array string
+        type: string
+      integration_type:
+        type: string
+      url:
+        type: string
+    type: object
+  internal_handlers.deliveryResponse:
+    properties:
+      attempts:
+        type: integer
+      created_at:
+        type: string
+      error_message:
+        type: string
+      event_type:
+        type: string
+      id:
+        type: integer
+      status_code:
+        type: integer
+      success:
+        type: boolean
+      webhook_id:
+        type: integer
+    type: object
+  internal_handlers.forgotPasswordRequest:
+    properties:
+      email:
+        type: string
+    type: object
+  internal_handlers.groupResponse:
+    properties:
+      created_at:
+        type: string
+      description:
+        type: string
+      id:
+        type: integer
+      is_active:
+        type: boolean
+      member_count:
+        type: integer
+      name:
+        type: string
+      permission_level:
+        type: string
+    type: object
+  internal_handlers.loginRequest:
+    properties:
+      email:
+        type: string
+      password:
+        type: string
+    type: object
+  internal_handlers.notificationPrefResponse:
+    properties:
+      digest_mode:
+        type: string
+      events:
+        type: string
+      webhook_url:
+        type: string
+    type: object
+  internal_handlers.oidcProviderResponse:
+    properties:
+      client_id:
+        type: string
+      created_at:
+        type: string
+      display_name:
+        type: string
+      id:
+        type: integer
+      is_enabled:
+        type: boolean
+      issuer_url:
+        type: string
+      name:
+        type: string
+      scopes:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  internal_handlers.quotaResponse:
+    properties:
+      created_at:
+        type: string
+      entity_id:
+        type: string
+      entity_type:
+        type: string
+      id:
+        type: integer
+      is_enabled:
+        type: boolean
+      max_bytes:
+        type: integer
+      updated_at:
+        type: string
+      used_bytes:
+        type: integer
+    type: object
+  internal_handlers.registerRequest:
+    properties:
+      email:
+        type: string
+      first_name:
+        type: string
+      last_name:
+        type: string
+      password:
+        type: string
+    type: object
+  internal_handlers.resetPasswordRequest:
+    properties:
+      new_password:
+        type: string
+      token:
+        type: string
+    type: object
+  internal_handlers.setPermissionsRequest:
+    properties:
+      permission:
+        description: read, write, admin
+        type: string
+    type: object
+  internal_handlers.tokenResponse:
+    properties:
+      created_at:
+        type: string
+      department:
+        type: string
+      description:
+        type: string
+      expires_at:
+        type: string
+      last_used_at:
+        type: string
+      name:
+        type: string
+      owner_id:
+        type: integer
+      permissions:
+        type: string
+      revoked_at:
+        type: string
+      usage_count:
+        type: integer
+      uuid:
+        type: string
+    type: object
+  internal_handlers.updateGroupRequest:
+    properties:
+      description:
+        type: string
+      is_active:
+        type: boolean
+      name:
+        type: string
+      permission_level:
+        type: string
+    type: object
+  internal_handlers.updateOIDCRequest:
+    properties:
+      client_id:
+        type: string
+      client_secret:
+        description: empty = keep existing
+        type: string
+      display_name:
+        type: string
+      is_enabled:
+        type: boolean
+      issuer_url:
+        type: string
+      name:
+        type: string
+      scopes:
+        type: string
+    type: object
+  internal_handlers.updateProfileRequest:
+    properties:
+      first_name:
+        type: string
+      last_name:
+        type: string
+    type: object
+  internal_handlers.updateQuotaRequest:
+    properties:
+      is_enabled:
+        type: boolean
+      max_bytes:
+        type: integer
+    type: object
+  internal_handlers.updateUserRequest:
+    properties:
+      first_name:
+        type: string
+      is_active:
+        type: boolean
+      last_name:
+        type: string
+    type: object
+  internal_handlers.updateWebhookRequest:
+    properties:
+      events:
+        type: string
+      integration_type:
+        type: string
+      is_enabled:
+        type: boolean
+      url:
+        type: string
+    type: object
+  internal_handlers.uploadResponse:
+    properties:
+      actual_cost:
+        type: string
+      backoff_attempt:
+        type: integer
+      backoff_until:
+        type: string
+      completed_at:
+        type: string
+      content_type:
+        type: string
+      created_at:
+        type: string
+      datamap_address:
+        type: string
+      error_message:
+        type: string
+      estimated_cost:
+        type: string
+      failed_at:
+        type: string
+      file_size:
+        type: integer
+      filename:
+        type: string
+      last_quoted_cost:
+        type: string
+      original_filename:
+        type: string
+      processing_at:
+        type: string
+      queued_at:
+        type: string
+      status:
+        type: string
+      status_detail:
+        type: string
+      uuid:
+        type: string
+      visibility:
+        type: string
+    type: object
+  internal_handlers.userResponse:
+    properties:
+      created_at:
+        type: string
+      email:
+        type: string
+      email_verified:
+        type: boolean
+      first_name:
+        type: string
+      id:
+        type: integer
+      is_active:
+        type: boolean
+      is_service_account:
+        type: boolean
+      last_name:
+        type: string
+      permissions:
+        type: string
+    type: object
+  internal_handlers.walletResponse:
+    properties:
+      address:
+        type: string
+      created_at:
+        type: string
+      gas_balance:
+        type: string
+      id:
+        type: integer
+      is_default:
+        type: boolean
+      name:
+        type: string
+      payment_balance:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  internal_handlers.webhookResponse:
+    properties:
+      created_at:
+        type: string
+      events:
+        type: string
+      id:
+        type: integer
+      integration_type:
+        type: string
+      is_enabled:
+        type: boolean
+      updated_at:
+        type: string
+      url:
+        type: string
+    type: object
+host: localhost:8080
+info:
+  contact: {}
+  description: Enterprise gateway for Autonomi decentralized storage. Provides file
+    upload/download, user management, API tokens, webhooks, and admin controls.
+  title: Indelible API
+  version: "2.0"
+paths:
+  /admin/analytics/costs:
+    get:
+      description: Return cost analytics broken down by token and department
+      parameters:
+      - description: Number of days to look back (default 7)
+        in: query
+        name: days
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get cost analytics
+      tags:
+      - 'Admin: Analytics'
+  /admin/analytics/tokens:
+    get:
+      description: Return API token usage statistics for the specified time period
+      parameters:
+      - description: Number of days to look back (default 7)
+        in: query
+        name: days
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get token analytics
+      tags:
+      - 'Admin: Analytics'
+  /admin/analytics/uploads:
+    get:
+      description: Return upload statistics for the specified time period
+      parameters:
+      - description: Number of days to look back (default 7)
+        in: query
+        name: days
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get upload analytics
+      tags:
+      - 'Admin: Analytics'
+  /admin/groups:
+    get:
+      description: Return all permission groups with member counts
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              items:
+                $ref: '#/definitions/internal_handlers.groupResponse'
+              type: array
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List all groups
+      tags:
+      - 'Admin: Groups'
+    post:
+      consumes:
+      - application/json
+      description: Create a new permission group with a specified permission level
+      parameters:
+      - description: Group details
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handlers.createGroupRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/internal_handlers.groupResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Group name taken
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create a group
+      tags:
+      - 'Admin: Groups'
+  /admin/groups/{id}:
+    delete:
+      description: Remove a permission group and all its memberships
+      parameters:
+      - description: Group ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete a group
+      tags:
+      - 'Admin: Groups'
+    put:
+      consumes:
+      - application/json
+      description: Update a group's name, description, permission level, or active
+        status
+      parameters:
+      - description: Group ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Updated group fields
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handlers.updateGroupRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_handlers.groupResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update a group
+      tags:
+      - 'Admin: Groups'
+  /admin/groups/{id}/members:
+    post:
+      consumes:
+      - application/json
+      description: Add a user to a permission group
+      parameters:
+      - description: Group ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: User to add
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handlers.addMemberRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Already a member
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Add a group member
+      tags:
+      - 'Admin: Groups'
+  /admin/groups/{id}/members/{userId}:
+    delete:
+      description: Remove a user from a permission group
+      parameters:
+      - description: Group ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: User ID to remove
+        in: path
+        name: userId
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not a member
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Remove a group member
+      tags:
+      - 'Admin: Groups'
+  /admin/logs/audit:
+    get:
+      description: Return audit log entries with optional filtering (permanent, never
+        deleted)
+      parameters:
+      - description: Filter by event type
+        in: query
+        name: event_type
+        type: string
+      - description: Filter by user ID
+        in: query
+        name: user_id
+        type: integer
+      - description: Start date (YYYY-MM-DD)
+        in: query
+        name: since
+        type: string
+      - description: End date (YYYY-MM-DD)
+        in: query
+        name: until
+        type: string
+      - description: Max results
+        in: query
+        name: limit
+        type: integer
+      - description: Offset for pagination
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Query audit logs
+      tags:
+      - 'Admin: Logs'
+  /admin/logs/system:
+    get:
+      description: Return system log entries with optional filtering (retention-managed)
+      parameters:
+      - description: Filter by log level
+        in: query
+        name: level
+        type: string
+      - description: Filter by component
+        in: query
+        name: component
+        type: string
+      - description: Start date (YYYY-MM-DD)
+        in: query
+        name: since
+        type: string
+      - description: End date (YYYY-MM-DD)
+        in: query
+        name: until
+        type: string
+      - description: Max results
+        in: query
+        name: limit
+        type: integer
+      - description: Offset for pagination
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Query system logs
+      tags:
+      - 'Admin: Logs'
+  /admin/logs/user:
+    get:
+      description: Return user activity log entries with optional filtering
+      parameters:
+      - description: Filter by user ID
+        in: query
+        name: user_id
+        type: integer
+      - description: Start date (YYYY-MM-DD)
+        in: query
+        name: since
+        type: string
+      - description: End date (YYYY-MM-DD)
+        in: query
+        name: until
+        type: string
+      - description: Max results
+        in: query
+        name: limit
+        type: integer
+      - description: Offset for pagination
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Query user activity logs
+      tags:
+      - 'Admin: Logs'
+  /admin/oidc/providers:
+    get:
+      description: Return all configured OIDC identity providers
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              items:
+                $ref: '#/definitions/internal_handlers.oidcProviderResponse'
+              type: array
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List OIDC providers
+      tags:
+      - 'Admin: OIDC'
+    post:
+      consumes:
+      - application/json
+      description: Register a new OIDC identity provider with encrypted client secret
+      parameters:
+      - description: OIDC provider details
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handlers.createOIDCRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/internal_handlers.oidcProviderResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create an OIDC provider
+      tags:
+      - 'Admin: OIDC'
+  /admin/oidc/providers/{id}:
+    delete:
+      description: Remove an OIDC identity provider
+      parameters:
+      - description: Provider ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete an OIDC provider
+      tags:
+      - 'Admin: OIDC'
+    put:
+      consumes:
+      - application/json
+      description: Update an existing OIDC provider's configuration (empty client_secret
+        keeps existing)
+      parameters:
+      - description: Provider ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Updated provider fields
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handlers.updateOIDCRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_handlers.oidcProviderResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update an OIDC provider
+      tags:
+      - 'Admin: OIDC'
+  /admin/quotas:
+    get:
+      description: Return all configured storage quotas
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              items:
+                $ref: '#/definitions/internal_handlers.quotaResponse'
+              type: array
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List all quotas
+      tags:
+      - 'Admin: Quotas'
+    post:
+      consumes:
+      - application/json
+      description: Create a new storage quota for an entity type
+      parameters:
+      - description: Quota details
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handlers.createQuotaRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/internal_handlers.quotaResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Duplicate quota
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create a quota
+      tags:
+      - 'Admin: Quotas'
+  /admin/quotas/{id}:
+    delete:
+      description: Remove a storage quota
+      parameters:
+      - description: Quota ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete a quota
+      tags:
+      - 'Admin: Quotas'
+    put:
+      consumes:
+      - application/json
+      description: Update a quota's max bytes and enabled status
+      parameters:
+      - description: Quota ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Updated quota fields
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handlers.updateQuotaRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_handlers.quotaResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update a quota
+      tags:
+      - 'Admin: Quotas'
+  /admin/settings:
+    get:
+      description: Return all system configuration settings
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get all settings
+      tags:
+      - 'Admin: Settings'
+    patch:
+      consumes:
+      - application/json
+      description: Apply partial updates to system settings with audit logging
+      parameters:
+      - description: Key-value pairs to update
+        in: body
+        name: body
+        required: true
+        schema:
+          additionalProperties:
+            type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update settings
+      tags:
+      - 'Admin: Settings'
+  /admin/settings/export:
+    get:
+      description: Download all settings as a JSON file for backup or migration
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: JSON settings export
+          schema:
+            type: file
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Export settings
+      tags:
+      - 'Admin: Settings'
+  /admin/settings/import:
+    post:
+      consumes:
+      - application/json
+      description: Restore settings from a JSON export (supports structured and legacy
+        flat formats)
+      parameters:
+      - description: Settings export JSON
+        in: body
+        name: body
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Import settings
+      tags:
+      - 'Admin: Settings'
+  /admin/tokens:
+    get:
+      description: Return a paginated list of all API tokens across all users
+      parameters:
+      - description: Max results (default 50, max 100)
+        in: query
+        name: limit
+        type: integer
+      - description: Offset for pagination
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List all tokens (admin)
+      tags:
+      - 'Admin: Tokens'
+  /admin/tokens/bulk:
+    delete:
+      consumes:
+      - application/json
+      description: Revoke multiple API tokens at once by their UUIDs
+      parameters:
+      - description: Token UUIDs to revoke
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handlers.bulkRevokeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Bulk revoke tokens
+      tags:
+      - 'Admin: Tokens'
+  /admin/users:
+    get:
+      description: Return a paginated list of all users with their permissions
+      parameters:
+      - description: Max results (default 50, max 100)
+        in: query
+        name: limit
+        type: integer
+      - description: Offset for pagination
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_handlers.adminListUsersResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List all users
+      tags:
+      - 'Admin: Users'
+    post:
+      consumes:
+      - application/json
+      description: Create a new user account with email, password, name, and permissions
+      parameters:
+      - description: User details
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handlers.adminCreateUserRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/internal_handlers.adminUserResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create a user
+      tags:
+      - 'Admin: Users'
+  /admin/users/{id}:
+    delete:
+      description: Soft-delete a user account (cannot delete yourself)
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete a user
+      tags:
+      - 'Admin: Users'
+    get:
+      description: Return a single user's details and effective permissions
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_handlers.adminUserResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get user by ID
+      tags:
+      - 'Admin: Users'
+    put:
+      consumes:
+      - application/json
+      description: Update a user's first name, last name, or active status
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Fields to update
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handlers.updateUserRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_handlers.adminUserResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update a user
+      tags:
+      - 'Admin: Users'
+  /admin/users/{id}/permissions:
+    put:
+      consumes:
+      - application/json
+      description: Set the direct permission level for a user (read, write, or admin)
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Permission level
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handlers.setPermissionsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Cannot remove the last admin
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Set user permissions
+      tags:
+      - 'Admin: Users'
+  /admin/users/service-accounts:
+    post:
+      consumes:
+      - application/json
+      description: Create a non-login service account with specified permissions
+      parameters:
+      - description: Service account details
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handlers.createServiceAccountRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/internal_handlers.adminUserResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create a service account
+      tags:
+      - 'Admin: Users'
+  /admin/wallets:
+    get:
+      description: Return all configured wallets with their balances
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              items:
+                $ref: '#/definitions/internal_handlers.walletResponse'
+              type: array
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List all wallets
+      tags:
+      - 'Admin: Wallets'
+    post:
+      consumes:
+      - application/json
+      description: Add a new wallet with encrypted private key storage
+      parameters:
+      - description: Wallet details including private key
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handlers.createWalletRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create a wallet
+      tags:
+      - 'Admin: Wallets'
+  /admin/wallets/{id}/default:
+    put:
+      description: Make a wallet the default for upload payments
+      parameters:
+      - description: Wallet ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Set default wallet
+      tags:
+      - 'Admin: Wallets'
+  /admin/webhooks:
+    get:
+      description: Return all configured webhook endpoints
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              items:
+                $ref: '#/definitions/internal_handlers.webhookResponse'
+              type: array
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List all webhooks
+      tags:
+      - 'Admin: Webhooks'
+    post:
+      consumes:
+      - application/json
+      description: Register a new webhook endpoint for event notifications
+      parameters:
+      - description: Webhook details
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handlers.createWebhookRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/internal_handlers.webhookResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create a webhook
+      tags:
+      - 'Admin: Webhooks'
+  /admin/webhooks/{id}:
+    delete:
+      description: Remove a webhook endpoint
+      parameters:
+      - description: Webhook ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete a webhook
+      tags:
+      - 'Admin: Webhooks'
+    put:
+      consumes:
+      - application/json
+      description: Update an existing webhook's URL, events, integration type, or
+        enabled status
+      parameters:
+      - description: Webhook ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Updated webhook fields
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handlers.updateWebhookRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_handlers.webhookResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update a webhook
+      tags:
+      - 'Admin: Webhooks'
+  /admin/webhooks/{id}/deliveries:
+    get:
+      description: Return recent delivery log entries for a specific webhook
+      parameters:
+      - description: Webhook ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Max results (default 20, max 100)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              items:
+                $ref: '#/definitions/internal_handlers.deliveryResponse'
+              type: array
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List webhook deliveries
+      tags:
+      - 'Admin: Webhooks'
+  /admin/webhooks/{id}/test:
+    post:
+      description: Send a test ping to a webhook endpoint and return the result
+      parameters:
+      - description: Webhook ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Test a webhook
+      tags:
+      - 'Admin: Webhooks'
+  /auth/forgot-password:
+    post:
+      consumes:
+      - application/json
+      description: Send a password reset link to the provided email address if it
+        exists
+      parameters:
+      - description: Email address
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handlers.forgotPasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Request password reset email
+      tags:
+      - Auth
+  /auth/login:
+    post:
+      consumes:
+      - application/json
+      description: Authenticate a user with email and password credentials and return
+        a JWT token
+      parameters:
+      - description: Login credentials
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handlers.loginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_handlers.authResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Log in with email and password
+      tags:
+      - Auth
+  /auth/register:
+    post:
+      consumes:
+      - application/json
+      description: Create a new user account with email, password, and name
+      parameters:
+      - description: Registration details
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handlers.registerRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/internal_handlers.authResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Register a new user
+      tags:
+      - Auth
+  /auth/reset-password:
+    post:
+      consumes:
+      - application/json
+      description: Reset a user's password using a valid reset token from the forgot-password
+        email
+      parameters:
+      - description: Reset token and new password
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handlers.resetPasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Reset password with token
+      tags:
+      - Auth
+  /auth/verify-email:
+    get:
+      description: Validate an email verification token and mark the user's email
+        as verified
+      parameters:
+      - description: Email verification token
+        in: query
+        name: token
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Verify email address
+      tags:
+      - Auth
+  /collections:
+    get:
+      parameters:
+      - description: Parent collection ID
+        in: query
+        name: parent_id
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List collections
+      tags:
+      - Collections
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Collection details
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handlers.createCollectionRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/internal_handlers.collectionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create a new collection
+      tags:
+      - Collections
+  /collections/{id}:
+    delete:
+      parameters:
+      - description: Collection ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete a collection
+      tags:
+      - Collections
+    get:
+      parameters:
+      - description: Collection ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get collection by ID
+      tags:
+      - Collections
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Collection ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_handlers.collectionResponse'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update a collection
+      tags:
+      - Collections
+  /collections/{id}/files:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Collection ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Add file to collection
+      tags:
+      - Collections
+  /collections/{id}/files/{upload_id}:
+    delete:
+      parameters:
+      - description: Collection ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Upload UUID
+        in: path
+        name: upload_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Remove file from collection
+      tags:
+      - Collections
+  /health:
+    get:
+      description: Returns system health status including database connectivity
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Health check
+      tags:
+      - System
+  /me:
+    get:
+      description: Return the authenticated user's profile information
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_handlers.userResponse'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get current user profile
+      tags:
+      - Profile
+    put:
+      consumes:
+      - application/json
+      description: Update the authenticated user's first name and last name
+      parameters:
+      - description: Profile fields to update
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handlers.updateProfileRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_handlers.userResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update current user profile
+      tags:
+      - Profile
+  /me/password:
+    put:
+      consumes:
+      - application/json
+      description: Change the authenticated user's password by providing current and
+        new password
+      parameters:
+      - description: Current and new password
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handlers.changePasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Change password
+      tags:
+      - Profile
+  /me/resend-verification:
+    post:
+      description: Generate a new email verification token and send it to the authenticated
+        user
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Resend verification email
+      tags:
+      - Profile
+  /notifications/preferences:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_handlers.notificationPrefResponse'
+      security:
+      - BearerAuth: []
+      summary: Get notification preferences
+      tags:
+      - Notifications
+    put:
+      consumes:
+      - application/json
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_handlers.notificationPrefResponse'
+      security:
+      - BearerAuth: []
+      summary: Update notification preferences
+      tags:
+      - Notifications
+  /search:
+    get:
+      description: Search uploads by tag key-value filters and/or filename query
+      parameters:
+      - description: Filename search query
+        in: query
+        name: q
+        type: string
+      - description: Tag filter (key=value)
+        in: query
+        name: tag
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Search uploads by tags
+      tags:
+      - Tags
+  /system/wallet-status:
+    get:
+      description: Returns whether a default wallet is configured for uploads
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Check wallet configuration status
+      tags:
+      - System
+  /tokens:
+    get:
+      description: List all API tokens owned by the authenticated user
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List user's tokens
+      tags:
+      - API Tokens
+    post:
+      consumes:
+      - application/json
+      description: Create a new API token with specified permissions and expiry
+      parameters:
+      - description: Token creation request
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handlers.createTokenRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/internal_handlers.createTokenResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create API token
+      tags:
+      - API Tokens
+  /tokens/{id}:
+    delete:
+      consumes:
+      - application/json
+      description: Revoke an API token by its UUID
+      parameters:
+      - description: Token UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Revoke token
+      tags:
+      - API Tokens
+  /uploads:
+    get:
+      description: List all uploads belonging to the authenticated user
+      parameters:
+      - description: Limit
+        in: query
+        name: limit
+        type: integer
+      - description: Offset
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List user's uploads
+      tags:
+      - Uploads
+    post:
+      consumes:
+      - multipart/form-data
+      description: Upload a file via multipart form data and queue it for processing
+      parameters:
+      - description: File to upload
+        in: formData
+        name: file
+        required: true
+        type: file
+      - description: public or private
+        in: formData
+        name: visibility
+        type: string
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Upload file
+      tags:
+      - Uploads
+  /uploads/{id}:
+    delete:
+      description: Permanently delete a failed or completed upload record
+      parameters:
+      - description: Upload UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete upload record
+      tags:
+      - Uploads
+    get:
+      description: Get a single upload by its UUID
+      parameters:
+      - description: Upload UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_handlers.uploadResponse'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get upload by ID
+      tags:
+      - Uploads
+  /uploads/{id}/cancel:
+    post:
+      description: Cancel a queued or backoff upload
+      parameters:
+      - description: Upload UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Cancel queued upload
+      tags:
+      - Uploads
+  /uploads/{id}/download:
+    get:
+      description: Download a completed upload's file data from the Autonomi network
+      parameters:
+      - description: Upload UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/octet-stream
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: file
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "502":
+          description: Bad Gateway
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Download completed upload
+      tags:
+      - Uploads
+  /uploads/{id}/force-retry:
+    post:
+      description: Immediately retry an upload that is in gas backoff state
+      parameters:
+      - description: Upload UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Force retry upload in gas backoff
+      tags:
+      - Uploads
+  /uploads/{id}/retry:
+    post:
+      description: Retry a failed upload by resetting it to queued status
+      parameters:
+      - description: Upload UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Retry failed upload
+      tags:
+      - Uploads
+  /uploads/{id}/tags:
+    put:
+      consumes:
+      - application/json
+      description: Replace all tags on an upload with the provided set
+      parameters:
+      - description: Upload UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update tags on an upload
+      tags:
+      - Tags
+  /uploads/quote:
+    post:
+      consumes:
+      - application/json
+      - multipart/form-data
+      description: Estimate the cost of uploading a file. Accepts JSON with file_size
+        or multipart with a file.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "502":
+          description: Bad Gateway
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Estimate upload cost
+      tags:
+      - Uploads
+securityDefinitions:
+  BearerAuth:
+    description: 'Enter your JWT or API token as: Bearer <token>'
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

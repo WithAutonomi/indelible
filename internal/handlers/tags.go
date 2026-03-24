@@ -9,11 +9,21 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/maidsafe/indelible/internal/middleware"
-	"github.com/maidsafe/indelible/internal/services"
+	"github.com/WithAutonomi/indelible/internal/middleware"
+	"github.com/WithAutonomi/indelible/internal/services"
 )
 
-// UpdateTags sets tags on an upload (replace-all semantics).
+// UpdateTags godoc
+// @Summary Update tags on an upload
+// @Description Replace all tags on an upload with the provided set
+// @Tags Tags
+// @Accept json
+// @Produce json
+// @Param id path string true "Upload UUID"
+// @Success 200 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Router /uploads/{id}/tags [put]
+// @Security BearerAuth
 func UpdateTags(db *sql.DB) http.HandlerFunc {
 	tagSvc := services.NewTagService(db)
 	uploadSvc := services.NewUploadService(db)
@@ -60,7 +70,16 @@ func UpdateTags(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-// SearchByTags searches uploads by tag filters and/or filename query.
+// SearchByTags godoc
+// @Summary Search uploads by tags
+// @Description Search uploads by tag key-value filters and/or filename query
+// @Tags Tags
+// @Produce json
+// @Param q query string false "Filename search query"
+// @Param tag query string false "Tag filter (key=value)"
+// @Success 200 {object} map[string]interface{}
+// @Router /search [get]
+// @Security BearerAuth
 func SearchByTags(db *sql.DB) http.HandlerFunc {
 	tagSvc := services.NewTagService(db)
 

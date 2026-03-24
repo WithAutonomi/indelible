@@ -77,6 +77,18 @@ const router = createRouter({
       meta: { auth: true, admin: true },
     },
     {
+      path: '/admin/webhooks',
+      name: 'admin-webhooks',
+      component: () => import('../views/admin/WebhooksView.vue'),
+      meta: { auth: true, admin: true },
+    },
+    {
+      path: '/admin/scim',
+      name: 'admin-scim',
+      component: () => import('../views/admin/ScimView.vue'),
+      meta: { auth: true, admin: true },
+    },
+    {
       path: '/admin/settings',
       name: 'admin-settings',
       component: () => import('../views/admin/SettingsView.vue'),

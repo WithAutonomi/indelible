@@ -9,7 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/maidsafe/indelible/internal/services"
+	"github.com/WithAutonomi/indelible/internal/services"
 )
 
 type quotaResponse struct {
@@ -50,6 +50,14 @@ type updateQuotaRequest struct {
 	IsEnabled bool  `json:"is_enabled"`
 }
 
+// @Summary      List all quotas
+// @Description  Return all configured storage quotas
+// @Tags         Admin: Quotas
+// @Produce      json
+// @Success      200 {object} map[string][]quotaResponse
+// @Failure      500 {object} map[string]string
+// @Router       /admin/quotas [get]
+// @Security     BearerAuth
 func AdminListQuotas(db *sql.DB) http.HandlerFunc {
 	quotaSvc := services.NewQuotaService(db)
 
@@ -69,6 +77,18 @@ func AdminListQuotas(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+// @Summary      Create a quota
+// @Description  Create a new storage quota for an entity type
+// @Tags         Admin: Quotas
+// @Accept       json
+// @Produce      json
+// @Param        body body createQuotaRequest true "Quota details"
+// @Success      201 {object} quotaResponse
+// @Failure      400 {object} map[string]string
+// @Failure      409 {object} map[string]string "Duplicate quota"
+// @Failure      500 {object} map[string]string
+// @Router       /admin/quotas [post]
+// @Security     BearerAuth
 func AdminCreateQuota(db *sql.DB) http.HandlerFunc {
 	quotaSvc := services.NewQuotaService(db)
 
@@ -101,6 +121,19 @@ func AdminCreateQuota(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+// @Summary      Update a quota
+// @Description  Update a quota's max bytes and enabled status
+// @Tags         Admin: Quotas
+// @Accept       json
+// @Produce      json
+// @Param        id   path int                true "Quota ID"
+// @Param        body body updateQuotaRequest true "Updated quota fields"
+// @Success      200 {object} quotaResponse
+// @Failure      400 {object} map[string]string
+// @Failure      404 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /admin/quotas/{id} [put]
+// @Security     BearerAuth
 func AdminUpdateQuota(db *sql.DB) http.HandlerFunc {
 	quotaSvc := services.NewQuotaService(db)
 
@@ -131,6 +164,17 @@ func AdminUpdateQuota(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+// @Summary      Delete a quota
+// @Description  Remove a storage quota
+// @Tags         Admin: Quotas
+// @Produce      json
+// @Param        id path int true "Quota ID"
+// @Success      200 {object} map[string]string
+// @Failure      400 {object} map[string]string
+// @Failure      404 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /admin/quotas/{id} [delete]
+// @Security     BearerAuth
 func AdminDeleteQuota(db *sql.DB) http.HandlerFunc {
 	quotaSvc := services.NewQuotaService(db)
 

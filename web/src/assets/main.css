@@ -1,1 +1,11 @@
 @import "tailwindcss";
+
+/* Tailwind v4 reset strips default colors — restore sensible defaults */
+body {
+  color: #1f2937; /* gray-800 */
+}
+
+input, select, textarea {
+  background-color: white;
+  color: #1f2937;
+}

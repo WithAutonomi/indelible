@@ -9,8 +9,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/maidsafe/indelible/internal/config"
-	"github.com/maidsafe/indelible/internal/services"
+	"github.com/WithAutonomi/indelible/internal/config"
+	"github.com/WithAutonomi/indelible/internal/services"
 )
 
 type walletResponse struct {
@@ -43,6 +43,14 @@ type createWalletRequest struct {
 	PrivateKey string `json:"private_key"`
 }
 
+// @Summary      List all wallets
+// @Description  Return all configured wallets with their balances
+// @Tags         Admin: Wallets
+// @Produce      json
+// @Success      200 {object} map[string][]walletResponse
+// @Failure      500 {object} map[string]string
+// @Router       /admin/wallets [get]
+// @Security     BearerAuth
 // AdminListWallets returns all wallets.
 func AdminListWallets(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	walletSvc := services.NewWalletService(db, cfg.WalletEncryptionKey)
@@ -63,6 +71,17 @@ func AdminListWallets(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	}
 }
 
+// @Summary      Create a wallet
+// @Description  Add a new wallet with encrypted private key storage
+// @Tags         Admin: Wallets
+// @Accept       json
+// @Produce      json
+// @Param        body body createWalletRequest true "Wallet details including private key"
+// @Success      201 {object} map[string]interface{}
+// @Failure      400 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /admin/wallets [post]
+// @Security     BearerAuth
 // AdminCreateWallet adds a new wallet with encrypted key storage.
 func AdminCreateWallet(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	walletSvc := services.NewWalletService(db, cfg.WalletEncryptionKey)
@@ -91,6 +110,17 @@ func AdminCreateWallet(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	}
 }
 
+// @Summary      Set default wallet
+// @Description  Make a wallet the default for upload payments
+// @Tags         Admin: Wallets
+// @Produce      json
+// @Param        id path int true "Wallet ID"
+// @Success      200 {object} map[string]string
+// @Failure      400 {object} map[string]string
+// @Failure      404 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /admin/wallets/{id}/default [put]
+// @Security     BearerAuth
 // AdminSetDefaultWallet makes a wallet the default for uploads.
 func AdminSetDefaultWallet(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	walletSvc := services.NewWalletService(db, cfg.WalletEncryptionKey)

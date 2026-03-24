@@ -93,22 +93,41 @@ onMounted(fetchCollections)
     </div>
 
     <!-- Create form -->
-    <div v-if="showCreate" class="bg-white rounded-lg border border-gray-200 p-6 mb-6">
-      <form @submit.prevent="createCollection" class="space-y-4">
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Name</label>
-          <input v-model="newName" type="text" required
-            class="block w-full rounded border border-gray-300 px-3 py-2 text-sm" />
+    <div v-if="showCreate" class="bg-white rounded-lg border border-gray-200 mb-6">
+      <div class="px-6 py-4 border-b border-gray-200">
+        <h2 class="text-base font-semibold text-gray-800">New Collection</h2>
+      </div>
+      <form @submit.prevent="createCollection">
+        <div class="divide-y divide-gray-100">
+          <div class="grid grid-cols-3 gap-6 px-6 py-5">
+            <div>
+              <label class="text-sm font-medium text-gray-700">Name</label>
+              <p class="text-xs text-gray-400 mt-1">A name for this collection.</p>
+            </div>
+            <div class="col-span-2">
+              <input v-model="newName" type="text" required
+                class="block w-full max-w-md rounded border border-gray-300 px-3 py-2 text-sm" />
+            </div>
+          </div>
+          <div class="grid grid-cols-3 gap-6 px-6 py-5">
+            <div>
+              <label class="text-sm font-medium text-gray-700">Description</label>
+              <p class="text-xs text-gray-400 mt-1">Optional description for this collection.</p>
+            </div>
+            <div class="col-span-2">
+              <input v-model="newDescription" type="text"
+                class="block w-full max-w-md rounded border border-gray-300 px-3 py-2 text-sm" />
+            </div>
+          </div>
         </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Description</label>
-          <input v-model="newDescription" type="text"
-            class="block w-full rounded border border-gray-300 px-3 py-2 text-sm" />
+        <div class="px-6 py-4 bg-gray-50 border-t border-gray-200 rounded-b-lg flex justify-end gap-2">
+          <button type="button" @click="showCreate = false"
+            class="rounded border px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100">Cancel</button>
+          <button type="submit" :disabled="creating"
+            class="rounded bg-blue-600 px-4 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50">
+            {{ creating ? 'Creating...' : 'Create' }}
+          </button>
         </div>
-        <button type="submit" :disabled="creating"
-          class="rounded bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-50">
-          {{ creating ? 'Creating...' : 'Create' }}
-        </button>
       </form>
     </div>
 

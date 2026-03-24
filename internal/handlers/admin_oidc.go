@@ -9,8 +9,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/maidsafe/indelible/internal/config"
-	"github.com/maidsafe/indelible/internal/services"
+	"github.com/WithAutonomi/indelible/internal/config"
+	"github.com/WithAutonomi/indelible/internal/services"
 )
 
 type oidcProviderResponse struct {
@@ -58,6 +58,14 @@ type updateOIDCRequest struct {
 	IsEnabled    bool   `json:"is_enabled"`
 }
 
+// @Summary      List OIDC providers
+// @Description  Return all configured OIDC identity providers
+// @Tags         Admin: OIDC
+// @Produce      json
+// @Success      200 {object} map[string][]oidcProviderResponse
+// @Failure      500 {object} map[string]string
+// @Router       /admin/oidc/providers [get]
+// @Security     BearerAuth
 func AdminListOIDCProviders(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	oidcSvc := services.NewOIDCProviderService(db, cfg.WalletEncryptionKey)
 
@@ -77,6 +85,17 @@ func AdminListOIDCProviders(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	}
 }
 
+// @Summary      Create an OIDC provider
+// @Description  Register a new OIDC identity provider with encrypted client secret
+// @Tags         Admin: OIDC
+// @Accept       json
+// @Produce      json
+// @Param        body body createOIDCRequest true "OIDC provider details"
+// @Success      201 {object} oidcProviderResponse
+// @Failure      400 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /admin/oidc/providers [post]
+// @Security     BearerAuth
 func AdminCreateOIDCProvider(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	oidcSvc := services.NewOIDCProviderService(db, cfg.WalletEncryptionKey)
 
@@ -104,6 +123,19 @@ func AdminCreateOIDCProvider(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	}
 }
 
+// @Summary      Update an OIDC provider
+// @Description  Update an existing OIDC provider's configuration (empty client_secret keeps existing)
+// @Tags         Admin: OIDC
+// @Accept       json
+// @Produce      json
+// @Param        id   path int               true "Provider ID"
+// @Param        body body updateOIDCRequest  true "Updated provider fields"
+// @Success      200 {object} oidcProviderResponse
+// @Failure      400 {object} map[string]string
+// @Failure      404 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /admin/oidc/providers/{id} [put]
+// @Security     BearerAuth
 func AdminUpdateOIDCProvider(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	oidcSvc := services.NewOIDCProviderService(db, cfg.WalletEncryptionKey)
 
@@ -134,6 +166,17 @@ func AdminUpdateOIDCProvider(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	}
 }
 
+// @Summary      Delete an OIDC provider
+// @Description  Remove an OIDC identity provider
+// @Tags         Admin: OIDC
+// @Produce      json
+// @Param        id path int true "Provider ID"
+// @Success      200 {object} map[string]string
+// @Failure      400 {object} map[string]string
+// @Failure      404 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /admin/oidc/providers/{id} [delete]
+// @Security     BearerAuth
 func AdminDeleteOIDCProvider(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	oidcSvc := services.NewOIDCProviderService(db, cfg.WalletEncryptionKey)
 

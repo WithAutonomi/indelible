@@ -11,11 +11,23 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/maidsafe/indelible/internal/config"
-	"github.com/maidsafe/indelible/internal/database"
-	"github.com/maidsafe/indelible/internal/handlers"
-	"github.com/maidsafe/indelible/internal/worker"
+	"github.com/WithAutonomi/indelible/internal/config"
+	"github.com/WithAutonomi/indelible/internal/database"
+	"github.com/WithAutonomi/indelible/internal/handlers"
+	"github.com/WithAutonomi/indelible/internal/worker"
+
+	_ "github.com/WithAutonomi/indelible/docs" // swagger docs
 )
+
+// @title Indelible API
+// @version 2.0
+// @description Enterprise gateway for Autonomi decentralized storage. Provides file upload/download, user management, API tokens, webhooks, and admin controls.
+// @host localhost:8080
+// @BasePath /api/v2
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
+// @description Enter your JWT or API token as: Bearer <token>
 
 var version = "dev"
 

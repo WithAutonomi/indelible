@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/maidsafe/indelible/internal/services"
+	"github.com/WithAutonomi/indelible/internal/services"
 )
 
 func parseLogFilters(r *http.Request) (eventType string, userID *int64, since, until *time.Time, limit, offset int) {
@@ -85,6 +85,20 @@ func toSystemLogResponse(e *services.SystemLogEntry) systemLogResponse {
 	return r
 }
 
+// @Summary      Query audit logs
+// @Description  Return audit log entries with optional filtering (permanent, never deleted)
+// @Tags         Admin: Logs
+// @Produce      json
+// @Param        event_type query string false "Filter by event type"
+// @Param        user_id    query int    false "Filter by user ID"
+// @Param        since      query string false "Start date (YYYY-MM-DD)"
+// @Param        until      query string false "End date (YYYY-MM-DD)"
+// @Param        limit      query int    false "Max results"
+// @Param        offset     query int    false "Offset for pagination"
+// @Success      200 {object} map[string]interface{}
+// @Failure      500 {object} map[string]string
+// @Router       /admin/logs/audit [get]
+// @Security     BearerAuth
 // AdminAuditLogs returns audit log entries (permanent, never deleted).
 func AdminAuditLogs(db *sql.DB) http.HandlerFunc {
 	logSvc := services.NewLogService(db)
@@ -112,6 +126,20 @@ func AdminAuditLogs(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+// @Summary      Query system logs
+// @Description  Return system log entries with optional filtering (retention-managed)
+// @Tags         Admin: Logs
+// @Produce      json
+// @Param        level     query string false "Filter by log level"
+// @Param        component query string false "Filter by component"
+// @Param        since     query string false "Start date (YYYY-MM-DD)"
+// @Param        until     query string false "End date (YYYY-MM-DD)"
+// @Param        limit     query int    false "Max results"
+// @Param        offset    query int    false "Offset for pagination"
+// @Success      200 {object} map[string]interface{}
+// @Failure      500 {object} map[string]string
+// @Router       /admin/logs/system [get]
+// @Security     BearerAuth
 // AdminSystemLogs returns system log entries (retention-managed).
 func AdminSystemLogs(db *sql.DB) http.HandlerFunc {
 	logSvc := services.NewLogService(db)
@@ -141,6 +169,19 @@ func AdminSystemLogs(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+// @Summary      Query user activity logs
+// @Description  Return user activity log entries with optional filtering
+// @Tags         Admin: Logs
+// @Produce      json
+// @Param        user_id query int    false "Filter by user ID"
+// @Param        since   query string false "Start date (YYYY-MM-DD)"
+// @Param        until   query string false "End date (YYYY-MM-DD)"
+// @Param        limit   query int    false "Max results"
+// @Param        offset  query int    false "Offset for pagination"
+// @Success      200 {object} map[string]interface{}
+// @Failure      500 {object} map[string]string
+// @Router       /admin/logs/user [get]
+// @Security     BearerAuth
 // AdminUserLogs returns user activity log entries.
 func AdminUserLogs(db *sql.DB) http.HandlerFunc {
 	logSvc := services.NewLogService(db)

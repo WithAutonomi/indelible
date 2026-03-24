@@ -19,6 +19,7 @@ type Group struct {
 	Description     string
 	PermissionLevel string
 	IsActive        bool
+	ExternalID      sql.NullString
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 }
@@ -59,10 +60,10 @@ func (s *GroupService) Create(name, description, permissionLevel string) (*Group
 func (s *GroupService) GetByID(id int64) (*Group, error) {
 	g := &Group{}
 	err := s.db.QueryRow(
-		`SELECT id, name, description, permission_level, is_active, created_at, updated_at
+		`SELECT id, name, description, permission_level, is_active, external_id, created_at, updated_at
 		 FROM groups WHERE id = ?`,
 		id,
-	).Scan(&g.ID, &g.Name, &g.Description, &g.PermissionLevel, &g.IsActive, &g.CreatedAt, &g.UpdatedAt)
+	).Scan(&g.ID, &g.Name, &g.Description, &g.PermissionLevel, &g.IsActive, &g.ExternalID, &g.CreatedAt, &g.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, ErrGroupNotFound
 	}
@@ -71,7 +72,7 @@ func (s *GroupService) GetByID(id int64) (*Group, error) {
 
 func (s *GroupService) List() ([]*Group, error) {
 	rows, err := s.db.Query(
-		`SELECT id, name, description, permission_level, is_active, created_at, updated_at
+		`SELECT id, name, description, permission_level, is_active, external_id, created_at, updated_at
 		 FROM groups ORDER BY name`,
 	)
 	if err != nil {
@@ -82,7 +83,7 @@ func (s *GroupService) List() ([]*Group, error) {
 	var groups []*Group
 	for rows.Next() {
 		g := &Group{}
-		if err := rows.Scan(&g.ID, &g.Name, &g.Description, &g.PermissionLevel, &g.IsActive, &g.CreatedAt, &g.UpdatedAt); err != nil {
+		if err := rows.Scan(&g.ID, &g.Name, &g.Description, &g.PermissionLevel, &g.IsActive, &g.ExternalID, &g.CreatedAt, &g.UpdatedAt); err != nil {
 			return nil, err
 		}
 		groups = append(groups, g)
@@ -179,4 +180,51 @@ func (s *GroupService) MemberCount(groupID int64) (int64, error) {
 		`SELECT COUNT(*) FROM group_members WHERE group_id = ?`, groupID,
 	).Scan(&count)
 	return count, err
+}
+
+// GetByExternalID retrieves a group by its SCIM external ID.
+func (s *GroupService) GetByExternalID(externalID string) (*Group, error) {
+	g := &Group{}
+	err := s.db.QueryRow(
+		`SELECT id, name, description, permission_level, is_active, external_id, created_at, updated_at
+		 FROM groups WHERE external_id = ?`,
+		externalID,
+	).Scan(&g.ID, &g.Name, &g.Description, &g.PermissionLevel, &g.IsActive, &g.ExternalID, &g.CreatedAt, &g.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, ErrGroupNotFound
+	}
+	return g, err
+}
+
+// SetExternalID sets the SCIM external ID for a group.
+func (s *GroupService) SetExternalID(id int64, externalID string) error {
+	_, err := s.db.Exec(
+		`UPDATE groups SET external_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		externalID, id,
+	)
+	return err
+}
+
+// ReplaceMembers atomically replaces all group members.
+func (s *GroupService) ReplaceMembers(groupID int64, userIDs []int64, addedBy int64) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`DELETE FROM group_members WHERE group_id = ?`, groupID); err != nil {
+		return err
+	}
+
+	for _, uid := range userIDs {
+		if _, err := tx.Exec(
+			`INSERT INTO group_members (group_id, user_id, added_by) VALUES (?, ?, ?)`,
+			groupID, uid, addedBy,
+		); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
 }

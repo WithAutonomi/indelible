@@ -1,14 +1,23 @@
 package middleware
 
 import (
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
 )
 
 type rateLimitEntry struct {
-	count    int
-	resetAt  time.Time
+	count   int
+	resetAt time.Time
+}
+
+// RateLimitResult contains the result of a rate limit check.
+type RateLimitResult struct {
+	Allowed   bool
+	Limit     int
+	Remaining int
+	ResetAt   time.Time
 }
 
 // RateLimiter is a simple in-memory rate limiter keyed by IP address.
@@ -49,6 +58,11 @@ func (rl *RateLimiter) cleanup() {
 
 // Allow checks if the given key is within the rate limit.
 func (rl *RateLimiter) Allow(key string) bool {
+	return rl.Check(key).Allowed
+}
+
+// Check returns detailed rate limit info for the given key.
+func (rl *RateLimiter) Check(key string) RateLimitResult {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
@@ -56,26 +70,47 @@ func (rl *RateLimiter) Allow(key string) bool {
 	entry, ok := rl.entries[key]
 	if !ok || now.After(entry.resetAt) {
 		rl.entries[key] = &rateLimitEntry{count: 1, resetAt: now.Add(rl.window)}
-		return true
+		return RateLimitResult{
+			Allowed:   true,
+			Limit:     rl.max,
+			Remaining: rl.max - 1,
+			ResetAt:   now.Add(rl.window),
+		}
 	}
 	entry.count++
-	return entry.count <= rl.max
+	remaining := rl.max - entry.count
+	if remaining < 0 {
+		remaining = 0
+	}
+	return RateLimitResult{
+		Allowed:   entry.count <= rl.max,
+		Limit:     rl.max,
+		Remaining: remaining,
+		ResetAt:   entry.resetAt,
+	}
 }
 
 // RateLimit returns middleware that limits requests per IP.
-func RateLimit(max int, window time.Duration) func(http.Handler) http.Handler {
+// trustedProxies controls whether X-Forwarded-For is honoured.
+func RateLimit(max int, window time.Duration, trustedProxies []string) func(http.Handler) http.Handler {
 	limiter := NewRateLimiter(max, window)
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ip := r.RemoteAddr
-			if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-				ip = fwd
-			}
-			if !limiter.Allow(ip) {
+			ip := ClientIP(r, trustedProxies)
+			result := limiter.Check(ip)
+
+			// Always set rate limit headers
+			w.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%d", result.Limit))
+			w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", result.Remaining))
+			w.Header().Set("X-RateLimit-Reset", fmt.Sprintf("%d", result.ResetAt.Unix()))
+
+			if !result.Allowed {
+				retryAfter := int(time.Until(result.ResetAt).Seconds()) + 1
+				w.Header().Set("Retry-After", fmt.Sprintf("%d", retryAfter))
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusTooManyRequests)
-				w.Write([]byte(`{"error":"too many requests, please try again later"}`))
+				w.Write([]byte(`{"error":"too many requests, please try again later","code":"rate_limit_exceeded"}`))
 				return
 			}
 			next.ServeHTTP(w, r)

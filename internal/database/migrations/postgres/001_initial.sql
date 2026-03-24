@@ -135,11 +135,15 @@ CREATE TABLE uploads (
     content_type TEXT NOT NULL DEFAULT '',
     visibility TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('public', 'private')),
     status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'processing', 'completed', 'failed')),
+    status_detail TEXT,
     datamap_address TEXT,
     estimated_cost TEXT,
     actual_cost TEXT,
     error_message TEXT,
     temp_path TEXT,
+    backoff_until TIMESTAMPTZ,
+    backoff_attempt INTEGER NOT NULL DEFAULT 0,
+    last_quoted_cost TEXT,
     queued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     processing_at TIMESTAMPTZ,
     completed_at TIMESTAMPTZ,
@@ -149,6 +153,7 @@ CREATE TABLE uploads (
 
 CREATE INDEX idx_uploads_user_id ON uploads(user_id);
 CREATE INDEX idx_uploads_status ON uploads(status);
+CREATE INDEX idx_uploads_backoff ON uploads(status, backoff_until);
 
 -- File tags
 CREATE TABLE file_tags (
@@ -277,6 +282,19 @@ CREATE TABLE quotas (
     UNIQUE(entity_type, entity_id)
 );
 
+-- Password reset tokens
+CREATE TABLE password_reset_tokens (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(id),
+    token TEXT NOT NULL UNIQUE,
+    expires_at TIMESTAMPTZ NOT NULL,
+    used_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_reset_tokens_token ON password_reset_tokens(token);
+CREATE INDEX idx_reset_tokens_user_id ON password_reset_tokens(user_id);
+
 -- Seed default settings
 INSERT INTO settings (key, value) VALUES
     ('maintenance_mode', 'false'),
@@ -285,6 +303,7 @@ INSERT INTO settings (key, value) VALUES
     ('jwt_expiry_hours', '24'),
     ('default_token_expiry_days', '90'),
     ('max_concurrent_uploads', '1'),
+    ('max_gas_fee', '0'),
     ('environment_name', 'production'),
     ('cors_allowed_origins', 'http://localhost:5173'),
     ('timezone', 'UTC'),
@@ -300,6 +319,7 @@ INSERT INTO settings (key, value) VALUES
     ('disk_check_interval_secs', '300');
 
 -- +goose Down
+DROP TABLE IF EXISTS password_reset_tokens;
 DROP TABLE IF EXISTS user_notification_prefs;
 DROP TABLE IF EXISTS quotas;
 DROP TABLE IF EXISTS webhook_config;

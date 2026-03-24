@@ -5,12 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
-	"github.com/maidsafe/indelible/internal/auth"
-	"github.com/maidsafe/indelible/internal/config"
-	"github.com/maidsafe/indelible/internal/middleware"
-	"github.com/maidsafe/indelible/internal/services"
+	"github.com/WithAutonomi/indelible/internal/auth"
+	"github.com/WithAutonomi/indelible/internal/config"
+	"github.com/WithAutonomi/indelible/internal/middleware"
+	"github.com/WithAutonomi/indelible/internal/services"
 )
 
 // --- Request/Response types ---
@@ -70,9 +71,22 @@ func toUserResponse(u *services.User, perms string) userResponse {
 
 // --- Handlers ---
 
+// Login godoc
+// @Summary Log in with email and password
+// @Description Authenticate a user with email and password credentials and return a JWT token
+// @Tags Auth
+// @Accept json
+// @Produce json
+// @Param body body loginRequest true "Login credentials"
+// @Success 200 {object} authResponse
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Failure 403 {object} map[string]string
+// @Router /auth/login [post]
 func Login(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	userSvc := services.NewUserService(db)
 	permSvc := services.NewPermissionService(db)
+	settingsSvc := services.NewSettingsService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req loginRequest
@@ -83,29 +97,34 @@ func Login(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 
 		req.Email = strings.TrimSpace(strings.ToLower(req.Email))
 		if req.Email == "" || req.Password == "" {
-			jsonError(w, "email and password are required", http.StatusBadRequest)
+			jsonErrorWithCode(w, "email and password are required", "validation_error", http.StatusBadRequest)
 			return
 		}
 
 		user, err := userSvc.GetByEmail(req.Email)
 		if err != nil {
 			// Constant-time: don't reveal whether email exists
-			jsonError(w, "invalid email or password", http.StatusUnauthorized)
+			jsonErrorWithCode(w, "invalid email or password", "invalid_credentials", http.StatusUnauthorized)
 			return
 		}
 
 		if !user.IsActive {
-			jsonError(w, "account is inactive", http.StatusForbidden)
+			jsonErrorWithCode(w, "account is inactive", "account_inactive", http.StatusForbidden)
 			return
 		}
 
 		if !user.PasswordHash.Valid || !auth.CheckPassword(req.Password, user.PasswordHash.String) {
-			jsonError(w, "invalid email or password", http.StatusUnauthorized)
+			jsonErrorWithCode(w, "invalid email or password", "invalid_credentials", http.StatusUnauthorized)
 			return
 		}
 
 		// Get JWT expiry from settings (default 24h)
-		expiryHours := 24 // TODO: read from settings table
+		expiryHours := 24
+		if v, err := settingsSvc.Get("jwt_expiry_hours"); err == nil {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				expiryHours = n
+			}
+		}
 
 		token, err := auth.GenerateToken(cfg.JWTSecret, user.ID, user.Email, expiryHours)
 		if err != nil {
@@ -124,9 +143,23 @@ func Login(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	}
 }
 
+// Register godoc
+// @Summary Register a new user
+// @Description Create a new user account with email, password, and name
+// @Tags Auth
+// @Accept json
+// @Produce json
+// @Param body body registerRequest true "Registration details"
+// @Success 201 {object} authResponse
+// @Failure 400 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Router /auth/register [post]
 func Register(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	userSvc := services.NewUserService(db)
 	permSvc := services.NewPermissionService(db)
+	settingsSvc := services.NewSettingsService(db)
+	verifySvc := services.NewEmailVerificationService(db)
+	notifier := services.NewNotifier(cfg)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req registerRequest
@@ -157,7 +190,7 @@ func Register(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		user, err := userSvc.Create(req.Email, hash, req.FirstName, req.LastName)
 		if err != nil {
 			if errors.Is(err, services.ErrEmailTaken) {
-				jsonError(w, "email already registered", http.StatusConflict)
+				jsonErrorWithCode(w, "email already registered", "email_taken", http.StatusConflict)
 				return
 			}
 			jsonError(w, "failed to create user", http.StatusInternalServerError)
@@ -172,7 +205,21 @@ func Register(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 		_ = permSvc.SetDirect(user.ID, permLevel, user.ID)
 
-		expiryHours := 24 // TODO: read from settings table
+		// Send verification email (best-effort — don't block registration)
+		if token, err := verifySvc.Create(user.ID); err == nil {
+			baseURL := cfg.BaseURL
+			if baseURL == "" {
+				baseURL = "http://localhost:8080"
+			}
+			_ = notifier.SendEmailVerification(user.Email, baseURL+"/verify-email?token="+token)
+		}
+
+		expiryHours := 24
+		if v, err := settingsSvc.Get("jwt_expiry_hours"); err == nil {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				expiryHours = n
+			}
+		}
 
 		token, err := auth.GenerateToken(cfg.JWTSecret, user.ID, user.Email, expiryHours)
 		if err != nil {
@@ -187,6 +234,15 @@ func Register(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	}
 }
 
+// GetProfile godoc
+// @Summary Get current user profile
+// @Description Return the authenticated user's profile information
+// @Tags Profile
+// @Produce json
+// @Success 200 {object} userResponse
+// @Failure 404 {object} map[string]string
+// @Router /me [get]
+// @Security BearerAuth
 func GetProfile(db *sql.DB) http.HandlerFunc {
 	userSvc := services.NewUserService(db)
 	permSvc := services.NewPermissionService(db)
@@ -204,6 +260,17 @@ func GetProfile(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+// UpdateProfile godoc
+// @Summary Update current user profile
+// @Description Update the authenticated user's first name and last name
+// @Tags Profile
+// @Accept json
+// @Produce json
+// @Param body body updateProfileRequest true "Profile fields to update"
+// @Success 200 {object} userResponse
+// @Failure 400 {object} map[string]string
+// @Router /me [put]
+// @Security BearerAuth
 func UpdateProfile(db *sql.DB) http.HandlerFunc {
 	userSvc := services.NewUserService(db)
 	permSvc := services.NewPermissionService(db)
@@ -228,6 +295,18 @@ func UpdateProfile(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+// ChangePassword godoc
+// @Summary Change password
+// @Description Change the authenticated user's password by providing current and new password
+// @Tags Profile
+// @Accept json
+// @Produce json
+// @Param body body changePasswordRequest true "Current and new password"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Router /me/password [put]
+// @Security BearerAuth
 func ChangePassword(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	userSvc := services.NewUserService(db)
 
@@ -282,6 +361,15 @@ type resetPasswordRequest struct {
 	NewPassword string `json:"new_password"`
 }
 
+// ForgotPassword godoc
+// @Summary Request password reset email
+// @Description Send a password reset link to the provided email address if it exists
+// @Tags Auth
+// @Accept json
+// @Produce json
+// @Param body body forgotPasswordRequest true "Email address"
+// @Success 200 {object} map[string]string
+// @Router /auth/forgot-password [post]
 func ForgotPassword(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	userSvc := services.NewUserService(db)
 	resetSvc := services.NewResetTokenService(db)
@@ -327,6 +415,17 @@ func ForgotPassword(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	}
 }
 
+// ResetPassword godoc
+// @Summary Reset password with token
+// @Description Reset a user's password using a valid reset token from the forgot-password email
+// @Tags Auth
+// @Accept json
+// @Produce json
+// @Param body body resetPasswordRequest true "Reset token and new password"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Router /auth/reset-password [post]
 func ResetPassword(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	userSvc := services.NewUserService(db)
 	resetSvc := services.NewResetTokenService(db)
@@ -363,5 +462,79 @@ func ResetPassword(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		// TODO: revoke all existing sessions for this user
 
 		jsonResponse(w, http.StatusOK, map[string]string{"message": "password reset successfully"})
+	}
+}
+
+// VerifyEmail godoc
+// @Summary Verify email address
+// @Description Validate an email verification token and mark the user's email as verified
+// @Tags Auth
+// @Produce json
+// @Param token query string true "Email verification token"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Router /auth/verify-email [get]
+func VerifyEmail(db *sql.DB) http.HandlerFunc {
+	verifySvc := services.NewEmailVerificationService(db)
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		token := r.URL.Query().Get("token")
+		if token == "" {
+			jsonError(w, "token is required", http.StatusBadRequest)
+			return
+		}
+
+		_, err := verifySvc.Validate(token)
+		if err != nil {
+			jsonError(w, "invalid or expired verification token", http.StatusUnauthorized)
+			return
+		}
+
+		jsonResponse(w, http.StatusOK, map[string]string{"message": "email verified successfully"})
+	}
+}
+
+// ResendVerification godoc
+// @Summary Resend verification email
+// @Description Generate a new email verification token and send it to the authenticated user
+// @Tags Profile
+// @Produce json
+// @Success 200 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Router /me/resend-verification [post]
+// @Security BearerAuth
+func ResendVerification(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+	userSvc := services.NewUserService(db)
+	verifySvc := services.NewEmailVerificationService(db)
+	notifier := services.NewNotifier(cfg)
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID := middleware.GetUserID(r.Context())
+
+		user, err := userSvc.GetByID(userID)
+		if err != nil {
+			jsonError(w, "user not found", http.StatusNotFound)
+			return
+		}
+
+		if user.EmailVerified {
+			jsonResponse(w, http.StatusOK, map[string]string{"message": "email already verified"})
+			return
+		}
+
+		token, err := verifySvc.Create(user.ID)
+		if err != nil {
+			jsonError(w, "failed to generate verification token", http.StatusInternalServerError)
+			return
+		}
+
+		baseURL := cfg.BaseURL
+		if baseURL == "" {
+			baseURL = "http://localhost:8080"
+		}
+		_ = notifier.SendEmailVerification(user.Email, baseURL+"/verify-email?token="+token)
+
+		jsonResponse(w, http.StatusOK, map[string]string{"message": "verification email sent"})
 	}
 }

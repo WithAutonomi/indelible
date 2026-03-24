@@ -1,0 +1,18 @@
+# Indelible — local development config
+# Usage: go run ./cmd/indelible -config indelible.dev.toml
+
+port = 8080
+db_url = "sqlite://./dev.db"
+antd_url = "http://localhost:8081"
+data_dir = "./data"
+jwt_secret = "dev-only-secret-do-not-use-in-production!!"
+debug = true
+
+cors_allowed_origins = ["http://localhost:5173", "http://localhost:1420", "http://tauri.localhost", "https://tauri.localhost"]
+base_url = "http://localhost:5173"
+
+# SMTP — uncomment to test password reset emails
+# [smtp]
+# host = "localhost"
+# port = 1025
+# from = "noreply@localhost"

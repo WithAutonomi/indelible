@@ -8,26 +8,32 @@ import (
 	"sync"
 	"time"
 
-	"github.com/maidsafe/indelible/internal/config"
-	"github.com/maidsafe/indelible/internal/services"
+	"github.com/WithAutonomi/indelible/internal/config"
+	"github.com/WithAutonomi/indelible/internal/services"
 )
 
 // DiskAlertWorker monitors data directory disk usage and fires alerts.
 type DiskAlertWorker struct {
-	cfg    *config.Config
-	logSvc *services.LogService
-	wg     sync.WaitGroup
-	cancel context.CancelFunc
+	cfg        *config.Config
+	logSvc     *services.LogService
+	webhookSvc *services.WebhookDeliveryService
+	wg         sync.WaitGroup
+	cancel     context.CancelFunc
 
 	// IsPaused indicates uploads should be paused due to critical disk usage.
 	IsPaused bool
+
+	// lastAlertLevel tracks the last alert fired to avoid spamming.
+	// Values: "", "warning", "critical"
+	lastAlertLevel string
 }
 
 // NewDiskAlertWorker creates a new disk alert worker.
 func NewDiskAlertWorker(db *sql.DB, cfg *config.Config) *DiskAlertWorker {
 	return &DiskAlertWorker{
-		cfg:    cfg,
-		logSvc: services.NewLogService(db),
+		cfg:        cfg,
+		logSvc:     services.NewLogService(db),
+		webhookSvc: services.NewWebhookDeliveryService(db),
 	}
 }
 
@@ -82,17 +88,41 @@ func (w *DiskAlertWorker) check() {
 				"Critical: disk usage at "+pctStr+"%, uploads paused", "")
 			slog.Error("disk critical — uploads paused", "usage_pct", usagePct)
 		}
+		if w.lastAlertLevel != "critical" {
+			w.lastAlertLevel = "critical"
+			w.webhookSvc.FireSystemEvent("disk_critical", &services.WebhookSystemData{
+				AlertType: "disk_critical",
+				Message:   "Disk usage at " + pctStr + "%, uploads paused",
+				Value:     usagePct,
+			})
+		}
 	} else if usagePct >= 80 {
 		w.IsPaused = false
 		w.logSvc.WriteSystem("warn", "disk_alert",
 			"Warning: disk usage at "+pctStr+"%", "")
 		slog.Warn("disk warning", "usage_pct", usagePct)
+		if w.lastAlertLevel != "warning" {
+			w.lastAlertLevel = "warning"
+			w.webhookSvc.FireSystemEvent("disk_warning", &services.WebhookSystemData{
+				AlertType: "disk_warning",
+				Message:   "Disk usage at " + pctStr + "%",
+				Value:     usagePct,
+			})
+		}
 	} else {
 		if w.IsPaused {
 			w.IsPaused = false
 			w.logSvc.WriteSystem("info", "disk_alert",
 				"Disk usage back to normal ("+pctStr+"%)", "")
 			slog.Info("disk usage normal — uploads resumed", "usage_pct", usagePct)
+		}
+		if w.lastAlertLevel != "" {
+			w.webhookSvc.FireSystemEvent("disk_recovered", &services.WebhookSystemData{
+				AlertType: "disk_recovered",
+				Message:   "Disk usage back to normal (" + pctStr + "%)",
+				Value:     usagePct,
+			})
+			w.lastAlertLevel = ""
 		}
 	}
 }

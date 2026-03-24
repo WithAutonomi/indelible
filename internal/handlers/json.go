@@ -16,3 +16,8 @@ func jsonResponse(w http.ResponseWriter, status int, data any) {
 func jsonError(w http.ResponseWriter, message string, status int) {
 	jsonResponse(w, status, map[string]string{"error": message})
 }
+
+// jsonErrorWithCode writes a JSON error response with a machine-readable error code.
+func jsonErrorWithCode(w http.ResponseWriter, message, code string, status int) {
+	jsonResponse(w, status, map[string]string{"error": message, "code": code})
+}

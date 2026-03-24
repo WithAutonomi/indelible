@@ -5,11 +5,19 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/maidsafe/indelible/internal/config"
+	"github.com/WithAutonomi/indelible/internal/config"
 )
 
 // --- Health ---
 
+// Health godoc
+// @Summary Health check
+// @Description Returns system health status including database connectivity
+// @Tags System
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Failure 503 {object} map[string]interface{}
+// @Router /health [get]
 func Health(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -47,3 +55,5 @@ func Health(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 // - Admin Analytics: admin_analytics.go
 // - Admin Logs: admin_logs.go
 // - Admin Quotas: admin_quotas.go
+// - Admin SCIM: admin_scim.go
+// - SCIM Handlers: scim.go

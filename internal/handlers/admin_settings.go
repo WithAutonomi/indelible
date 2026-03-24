@@ -5,10 +5,18 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/maidsafe/indelible/internal/middleware"
-	"github.com/maidsafe/indelible/internal/services"
+	"github.com/WithAutonomi/indelible/internal/middleware"
+	"github.com/WithAutonomi/indelible/internal/services"
 )
 
+// @Summary      Get all settings
+// @Description  Return all system configuration settings
+// @Tags         Admin: Settings
+// @Produce      json
+// @Success      200 {object} map[string]interface{}
+// @Failure      500 {object} map[string]string
+// @Router       /admin/settings [get]
+// @Security     BearerAuth
 // AdminGetSettings returns all system settings.
 func AdminGetSettings(db *sql.DB) http.HandlerFunc {
 	settingsSvc := services.NewSettingsService(db)
@@ -23,6 +31,17 @@ func AdminGetSettings(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+// @Summary      Update settings
+// @Description  Apply partial updates to system settings with audit logging
+// @Tags         Admin: Settings
+// @Accept       json
+// @Produce      json
+// @Param        body body map[string]string true "Key-value pairs to update"
+// @Success      200 {object} map[string]string
+// @Failure      400 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /admin/settings [patch]
+// @Security     BearerAuth
 // AdminUpdateSettings applies partial updates to settings with audit logging.
 func AdminUpdateSettings(db *sql.DB) http.HandlerFunc {
 	settingsSvc := services.NewSettingsService(db)
@@ -40,10 +59,7 @@ func AdminUpdateSettings(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		ipAddress := r.RemoteAddr
-		if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-			ipAddress = fwd
-		}
+		ipAddress := middleware.ClientIP(r, nil)
 		userAgent := r.Header.Get("User-Agent")
 
 		if err := settingsSvc.Update(changes, userID, ipAddress, userAgent); err != nil {
@@ -55,6 +71,14 @@ func AdminUpdateSettings(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+// @Summary      Export settings
+// @Description  Download all settings as a JSON file for backup or migration
+// @Tags         Admin: Settings
+// @Produce      application/json
+// @Success      200 {file} file "JSON settings export"
+// @Failure      500 {object} map[string]string
+// @Router       /admin/settings/export [get]
+// @Security     BearerAuth
 // AdminExportSettings returns all settings as a downloadable JSON file.
 func AdminExportSettings(db *sql.DB) http.HandlerFunc {
 	settingsSvc := services.NewSettingsService(db)
@@ -71,33 +95,64 @@ func AdminExportSettings(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+// @Summary      Import settings
+// @Description  Restore settings from a JSON export (supports structured and legacy flat formats)
+// @Tags         Admin: Settings
+// @Accept       json
+// @Produce      json
+// @Param        body body object true "Settings export JSON"
+// @Success      200 {object} map[string]interface{}
+// @Failure      400 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /admin/settings/import [post]
+// @Security     BearerAuth
 // AdminImportSettings restores settings from a JSON export.
 func AdminImportSettings(db *sql.DB) http.HandlerFunc {
 	settingsSvc := services.NewSettingsService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID := middleware.GetUserID(r.Context())
+		ipAddress := middleware.ClientIP(r, nil)
+		userAgent := r.Header.Get("User-Agent")
 
-		var data map[string]string
-		if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+		// Try structured format first (has "settings" key)
+		var raw json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
 			jsonError(w, "invalid JSON", http.StatusBadRequest)
 			return
 		}
 
-		ipAddress := r.RemoteAddr
-		if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-			ipAddress = fwd
+		// Detect format: structured has a "settings" object, legacy is flat key-value
+		var structured services.ExportData
+		if err := json.Unmarshal(raw, &structured); err == nil && structured.Settings != nil {
+			if err := settingsSvc.ImportStructured(&structured, userID, ipAddress, userAgent); err != nil {
+				jsonError(w, "failed to import settings", http.StatusInternalServerError)
+				return
+			}
+			jsonResponse(w, http.StatusOK, map[string]any{
+				"message":  "settings imported",
+				"settings": len(structured.Settings),
+				"webhooks": len(structured.Webhooks),
+				"groups":   len(structured.Groups),
+			})
+			return
 		}
-		userAgent := r.Header.Get("User-Agent")
 
-		if err := settingsSvc.Import(data, userID, ipAddress, userAgent); err != nil {
+		// Legacy flat format
+		var flat map[string]string
+		if err := json.Unmarshal(raw, &flat); err != nil {
+			jsonError(w, "invalid JSON format", http.StatusBadRequest)
+			return
+		}
+
+		if err := settingsSvc.Import(flat, userID, ipAddress, userAgent); err != nil {
 			jsonError(w, "failed to import settings", http.StatusInternalServerError)
 			return
 		}
 
 		jsonResponse(w, http.StatusOK, map[string]any{
 			"message":  "settings imported",
-			"imported": len(data),
+			"settings": len(flat),
 		})
 	}
 }
