@@ -17,7 +17,7 @@ func setupTestRouter(t *testing.T) http.Handler {
 	cfg := &config.Config{
 		Port:                8080,
 		DBURL:               "sqlite://:memory:",
-		AntdURL:             "http://localhost:8081",
+		AntdURL:             "http://localhost:8082",
 		JWTSecret:           "test-secret-for-jwt-signing-1234567890",
 		WalletEncryptionKey: "0000000000000000000000000000000000000000000000000000000000000000",
 	}

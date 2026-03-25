@@ -46,7 +46,7 @@ Open `http://localhost:8080` in your browser. **The first user to register autom
 
 ### Requirements
 
-- **antd daemon** — running and accessible (default: `http://localhost:8081`)
+- **antd daemon** — either managed automatically (`INDELIBLE_ANTD_MANAGED=true`) or running externally (default: `http://localhost:8082`)
 - **Database** — SQLite (default, zero-config) or PostgreSQL 14+
 
 ---
@@ -60,8 +60,11 @@ Indelible reads configuration from a TOML file and/or environment variables. Env
 ```toml
 port = 8080
 db_url = "sqlite:///var/lib/indelible/data.db"
-antd_url = "http://localhost:8081"
+antd_url = "http://localhost:8082"
 data_dir = "/var/lib/indelible"
+antd_managed = false        # set true to spawn antd automatically
+antd_bin = "antd"           # path to antd binary (searches PATH)
+antd_data_dir = ""          # antd data dir (default: data_dir + "/antd")
 jwt_secret = "your-secret-key-at-least-32-chars"
 debug = false
 cors_allowed_origins = ["https://files.acme.com"]
@@ -84,7 +87,7 @@ use_tls = true
 |----------|-------------|---------|
 | `INDELIBLE_PORT` | HTTP listen port | `8080` |
 | `INDELIBLE_DB_URL` | Database connection string | `sqlite:///var/lib/indelible/data.db` |
-| `INDELIBLE_ANTD_URL` | antd daemon URL | `http://localhost:8081` |
+| `INDELIBLE_ANTD_URL` | antd daemon URL | `http://localhost:8082` |
 | `INDELIBLE_DATA_DIR` | Data directory for temp files | `/var/lib/indelible` |
 | `INDELIBLE_JWT_SECRET` | **Required.** Secret for JWT signing | — |
 | `INDELIBLE_DEBUG` | Enable debug logging | `false` |
@@ -98,6 +101,20 @@ use_tls = true
 | `INDELIBLE_SMTP_PASSWORD` | SMTP password | — |
 | `INDELIBLE_SMTP_FROM` | Sender email address | — |
 | `INDELIBLE_SMTP_USE_TLS` | Use STARTTLS | `false` |
+| `INDELIBLE_ANTD_MANAGED` | Spawn and manage antd as child process | `false` |
+| `INDELIBLE_ANTD_BIN` | Path to antd binary | `antd` (searches PATH) |
+| `INDELIBLE_ANTD_DATA_DIR` | antd data directory | `$DATA_DIR/antd` |
+
+### Managed antd
+
+When `antd_managed = true` (or `INDELIBLE_ANTD_MANAGED=true`), indelible will:
+1. Check if antd is already running (via port file auto-discovery)
+2. If not, spawn antd on a random free port
+3. Wait for antd to write its port file and pass health checks
+4. Monitor the process and restart on crash (up to 3 times)
+5. Stop antd when indelible shuts down
+
+This is recommended for development and single-node deployments. For production with separate antd instances (e.g. Docker Compose), set `INDELIBLE_ANTD_URL` explicitly instead.
 
 ### Database Selection
 
@@ -797,7 +814,7 @@ The response includes `next_cursor` and `prev_cursor` fields when applicable.
 
 ```bash
 export INDELIBLE_JWT_SECRET="$(openssl rand -hex 32)"
-export INDELIBLE_ANTD_URL="http://localhost:8081"
+export INDELIBLE_ANTD_URL="http://localhost:8082"
 ./indelible
 ```
 
@@ -841,14 +858,14 @@ services:
       - indelible-data:/data
     environment:
       INDELIBLE_JWT_SECRET: "your-secret-key"
-      INDELIBLE_ANTD_URL: http://antd:8081
+      INDELIBLE_ANTD_URL: http://antd:8082
       INDELIBLE_WALLET_ENCRYPTION_KEY: "your-64-char-hex-key"
       INDELIBLE_CORS_ORIGINS: https://files.acme.com
 
   antd:
     image: autonomi/antd:latest
     ports:
-      - "8081:8081"
+      - "8082:8082"
 
 volumes:
   indelible-data:

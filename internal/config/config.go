@@ -24,6 +24,11 @@ type Config struct {
 	BaseURL             string   `toml:"base_url"` // External URL (e.g. https://files.acme.com)
 	WalletEncryptionKey string   `toml:"wallet_encryption_key"` // Hex-encoded 32-byte AES key for wallet private keys
 
+	// Managed antd — spawn and monitor antd as a child process
+	AntdManaged bool   `toml:"antd_managed"`   // Spawn and manage antd (default: false)
+	AntdBin     string `toml:"antd_bin"`        // Path to antd binary (default: "antd" — searches PATH)
+	AntdDataDir string `toml:"antd_data_dir"`   // antd data directory (default: cfg.DataDir + "/antd")
+
 	// SMTP configuration for transactional emails (password reset, email verification)
 	SMTP SMTPConfig `toml:"smtp"`
 }
@@ -56,7 +61,7 @@ func Load(path string) (*Config, error) {
 	cfg := &Config{
 		Port:    8080,
 		DBURL:   "sqlite:///var/lib/indelible/data.db",
-		AntdURL: "http://localhost:8081",
+		AntdURL: "http://localhost:8082",
 		DataDir: "/var/lib/indelible",
 	}
 
@@ -120,6 +125,23 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("INDELIBLE_SMTP_USE_TLS"); v != "" {
 		cfg.SMTP.UseTLS = v == "true" || v == "1"
+	}
+	if v := os.Getenv("INDELIBLE_ANTD_MANAGED"); v != "" {
+		cfg.AntdManaged = v == "true" || v == "1"
+	}
+	if v := os.Getenv("INDELIBLE_ANTD_BIN"); v != "" {
+		cfg.AntdBin = v
+	}
+	if v := os.Getenv("INDELIBLE_ANTD_DATA_DIR"); v != "" {
+		cfg.AntdDataDir = v
+	}
+
+	// Default antd binary and data dir
+	if cfg.AntdBin == "" {
+		cfg.AntdBin = "antd"
+	}
+	if cfg.AntdDataDir == "" {
+		cfg.AntdDataDir = cfg.DataDir + "/antd"
 	}
 
 	// Default SMTP port

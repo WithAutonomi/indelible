@@ -11,10 +11,13 @@ import (
 	"syscall"
 	"time"
 
+	managedantd "github.com/WithAutonomi/indelible/internal/antd"
 	"github.com/WithAutonomi/indelible/internal/config"
 	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/handlers"
 	"github.com/WithAutonomi/indelible/internal/worker"
+
+	sdk "github.com/WithAutonomi/ant-sdk/antd-go"
 
 	_ "github.com/WithAutonomi/indelible/docs" // swagger docs
 )
@@ -61,6 +64,25 @@ func main() {
 	slog.SetDefault(logger)
 
 	slog.Info("starting indelible", "version", version, "port", cfg.Port, "db_driver", cfg.DBDriver())
+
+	// Managed antd
+	var antdMgr *managedantd.Manager
+	if cfg.AntdManaged {
+		antdMgr = managedantd.NewManager(cfg)
+		if err := antdMgr.Start(context.Background()); err != nil {
+			slog.Error("failed to start antd", "error", err)
+			os.Exit(1)
+		}
+		defer antdMgr.Stop()
+		cfg.AntdURL = antdMgr.URL()
+		slog.Info("antd managed", "url", cfg.AntdURL, "pid", antdMgr.PID())
+	} else if cfg.AntdURL == "" || cfg.AntdURL == "http://localhost:8082" {
+		// Not managed — try auto-discovery as convenience
+		if url := sdk.DiscoverDaemonURL(); url != "" {
+			cfg.AntdURL = url
+			slog.Info("antd auto-discovered", "url", url)
+		}
+	}
 
 	// Open database
 	db, err := database.Open(cfg.DBURL)

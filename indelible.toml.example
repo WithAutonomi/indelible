@@ -10,7 +10,7 @@ port = 8080
 db_url = "sqlite:///var/lib/indelible/data.db"
 
 # antd daemon URL
-antd_url = "http://localhost:8081"
+antd_url = "http://localhost:8082"
 
 # Data directory (temp uploads, logs, SQLite DB)
 data_dir = "/var/lib/indelible"

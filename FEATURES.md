@@ -17,6 +17,8 @@
   - SQLite: `--db sqlite:///var/indelible/data.db` (or default path in data dir)
   - PostgreSQL: `--db postgres://user:pass@host/indelible`
 - Connects to `antd` daemon over REST for all network operations
+  - **Managed mode:** `antd_managed = true` — indelible spawns, monitors, and stops antd as a child process (auto port discovery, crash restart)
+  - **External mode:** point `antd_url` at a separately-run antd instance (recommended for production / Docker Compose)
 - Single-org model: one instance per company deployment
 
 ### 1.2 Network Layer (Delegated to antd)
@@ -471,7 +473,7 @@ curl -LO https://releases.autonomi.com/indelible/latest/indelible-linux-amd64
 chmod +x indelible-linux-amd64
 
 # 2. Run (SQLite default, port 8080)
-./indelible-linux-amd64 --antd-url http://localhost:8080
+./indelible-linux-amd64 --antd-url http://localhost:8082
 
 # 3. Open browser, register first user (auto-admin), configure from dashboard
 ```
@@ -483,7 +485,7 @@ chmod +x indelible-linux-amd64
 # 2. Configure indelible
 cat > indelible.toml <<EOF
 port = 8080
-antd_url = "http://localhost:8081"
+antd_url = "http://localhost:8082"
 data_dir = "/var/lib/indelible"
 cors_allowed_origins = ["https://files.acme.com"]
 trusted_proxies = ["127.0.0.1/32"]
@@ -512,14 +514,14 @@ services:
     volumes:
       - indelible-data:/data
     environment:
-      INDELIBLE_ANTD_URL: http://antd:8081
+      INDELIBLE_ANTD_URL: http://antd:8082
       INDELIBLE_CORS_ORIGINS: https://files.acme.com
       INDELIBLE_TRUSTED_PROXIES: 172.16.0.0/12
 
   antd:
     image: autonomi/antd:latest
     ports:
-      - "8081:8081"
+      - "8082:8082"
 
 volumes:
   indelible-data:

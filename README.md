@@ -6,7 +6,7 @@ Enterprise storage gateway for the [Autonomi](https://autonomi.com) decentralize
 
 Indelible sits between your applications and the Autonomi network. It handles authentication, file management, cost estimation, wallet payments, and audit logging — so you don't have to interact with the network directly.
 
-- **Single binary** — Go backend + Vue 3 frontend, embedded. One process, no external dependencies beyond a database.
+- **Single binary** — Go backend + Vue 3 frontend, embedded. One process, one database. Can manage the antd daemon automatically or connect to an external instance.
 - **SQLite or PostgreSQL** — SQLite by default for zero-config local use; PostgreSQL for production scale.
 - **REST API** — full CRUD for uploads, collections, tags, tokens, users, groups, and admin operations. Swagger docs at `/api/docs/`.
 - **Admin dashboard** — user management, wallet configuration, quotas, webhooks, OIDC providers, SCIM provisioning, analytics, and audit logs.
@@ -14,19 +14,46 @@ Indelible sits between your applications and the Autonomi network. It handles au
 
 ## Quick start
 
-**Prerequisites:** [antd](https://github.com/WithAutonomi/ant-sdk) daemon running (handles all Autonomi network operations).
+**Prerequisites:** [antd](https://github.com/WithAutonomi/ant-sdk) daemon installed (handles all Autonomi network operations).
 
 ```bash
 # Build
 go build -o indelible ./cmd/indelible
 
-# Run with defaults (SQLite, port 8080)
+# Run with managed antd (starts antd automatically)
 export INDELIBLE_JWT_SECRET="$(openssl rand -hex 32)"
-export INDELIBLE_ANTD_URL="http://localhost:8081"
+export INDELIBLE_ANTD_MANAGED=true
 ./indelible
 ```
 
 Open http://localhost:8080 — the first user to register becomes admin.
+
+### Managed antd (recommended for development)
+
+Indelible can automatically start and manage the antd daemon:
+
+```bash
+export INDELIBLE_ANTD_MANAGED=true
+./indelible
+```
+
+This requires the `antd` binary in your PATH. Indelible will:
+- Start antd on a free port
+- Discover the port automatically
+- Monitor the process and restart on crash (up to 3 times)
+- Stop antd when indelible shuts down
+
+### External antd (production)
+
+For production, run antd separately:
+
+```bash
+antd --port 8082 &
+export INDELIBLE_ANTD_URL=http://localhost:8082
+./indelible
+```
+
+If antd is already running and no `INDELIBLE_ANTD_URL` is set, indelible will auto-discover it via the `daemon.port` file.
 
 ### With a config file
 
@@ -37,7 +64,7 @@ Open http://localhost:8080 — the first user to register becomes admin.
 ```toml
 port = 8080
 db_url = "sqlite://./data.db"
-antd_url = "http://localhost:8081"
+antd_url = "http://localhost:8082"
 data_dir = "./data"
 jwt_secret = "your-secret-key-at-least-32-chars"
 
@@ -52,7 +79,7 @@ wallet_encryption_key = "64-hex-char-key-for-aes-256-gcm"
 ```bash
 export INDELIBLE_DB_URL="postgres://user:pass@localhost/indelible"
 export INDELIBLE_JWT_SECRET="$(openssl rand -hex 32)"
-export INDELIBLE_ANTD_URL="http://localhost:8081"
+export INDELIBLE_ANTD_URL="http://localhost:8082"
 ./indelible
 ```
 
@@ -68,7 +95,7 @@ services:
       - indelible-data:/data
     environment:
       INDELIBLE_JWT_SECRET: "your-secret-key"
-      INDELIBLE_ANTD_URL: http://antd:8081
+      INDELIBLE_ANTD_URL: http://antd:8082   # external antd container, not managed
       INDELIBLE_DB_URL: postgres://indelible:password@db/indelible
     depends_on:
       - db
@@ -129,7 +156,10 @@ curl -X POST /api/v2/tokens \
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `INDELIBLE_JWT_SECRET` | **Required.** Secret for JWT signing | -- |
-| `INDELIBLE_ANTD_URL` | antd daemon URL | `http://localhost:8081` |
+| `INDELIBLE_ANTD_URL` | antd daemon URL | `http://localhost:8082` |
+| `INDELIBLE_ANTD_MANAGED` | Spawn and manage antd as child process | `false` |
+| `INDELIBLE_ANTD_BIN` | Path to antd binary | `antd` (searches PATH) |
+| `INDELIBLE_ANTD_DATA_DIR` | antd data directory | `$DATA_DIR/antd` |
 | `INDELIBLE_PORT` | HTTP listen port | `8080` |
 | `INDELIBLE_DB_URL` | Database connection string | `sqlite://data.db` |
 | `INDELIBLE_DATA_DIR` | Directory for temp files | `./data` |
@@ -145,6 +175,7 @@ See the [User Guide](USER-GUIDE.md) for SMTP, debug, and advanced configuration.
 ```
 cmd/indelible/         Entry point
 internal/
+  antd/                Managed antd process lifecycle
   config/              Configuration loading
   database/            Database init + migrations (SQLite + PostgreSQL)
   handlers/            HTTP handlers (auth, uploads, admin, SCIM)
