@@ -2,6 +2,13 @@
 import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { api } from '../../api/client'
+import DataTable from 'primevue/datatable'
+import Column from 'primevue/column'
+import Button from 'primevue/button'
+import InputText from 'primevue/inputtext'
+import Password from 'primevue/password'
+import Tag from 'primevue/tag'
+import Message from 'primevue/message'
 
 const route = useRoute()
 const wallets = ref<any[]>([])
@@ -65,100 +72,89 @@ onMounted(() => {
   <div class="p-6">
     <div class="flex items-center justify-between mb-6">
       <h1 class="text-2xl font-bold">Wallets</h1>
-      <button @click="showCreate = !showCreate"
-        class="rounded bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700">
-        <i class="pi pi-plus mr-1"></i> Add Wallet
-      </button>
+      <Button icon="pi pi-plus" label="Add Wallet" @click="showCreate = !showCreate" />
     </div>
 
     <!-- No wallet setup prompt -->
-    <div v-if="!loading && wallets.length === 0 && !showCreate" class="mb-6 rounded-lg border border-amber-300 bg-amber-50 p-4">
-      <p class="text-sm font-medium text-amber-800">No wallets configured</p>
-      <p class="text-sm text-amber-700 mb-3">Add a wallet to enable file uploads to the Autonomi network. The first wallet added will automatically become the default.</p>
-      <button @click="showCreate = true"
-        class="rounded bg-amber-600 px-4 py-2 text-sm text-white hover:bg-amber-700">
-        Add Your First Wallet
-      </button>
-    </div>
+    <Message v-if="!loading && wallets.length === 0 && !showCreate" severity="warn" :closable="false" class="mb-6">
+      <div>
+        <p class="font-medium">No wallets configured</p>
+        <p class="text-sm mb-3">Add a wallet to enable file uploads to the Autonomi network. The first wallet added will automatically become the default.</p>
+        <Button label="Add Your First Wallet" severity="warn" @click="showCreate = true" />
+      </div>
+    </Message>
 
     <!-- Create form -->
-    <div v-if="showCreate" class="bg-white rounded-lg border border-gray-200 mb-6">
-      <div class="px-6 py-4 border-b border-gray-200">
-        <h2 class="text-base font-semibold text-gray-800">Add Wallet</h2>
+    <div v-if="showCreate" class="bg-surface-0 rounded-lg border border-surface-200 mb-6">
+      <div class="px-6 py-4 border-b border-surface-200">
+        <h2 class="text-base font-semibold">Add Wallet</h2>
       </div>
       <form @submit.prevent="createWallet">
-        <div class="divide-y divide-gray-100">
+        <div class="divide-y divide-surface-100">
           <div class="grid grid-cols-3 gap-6 px-6 py-5">
             <div>
-              <label class="text-sm font-medium text-gray-700">Name</label>
-              <p class="text-xs text-gray-400 mt-1">A label for this wallet.</p>
+              <label class="text-sm font-medium">Name</label>
+              <p class="text-xs text-surface-400 mt-1">A label for this wallet.</p>
             </div>
             <div class="col-span-2">
-              <input v-model="newName" type="text" required placeholder="e.g. Production Wallet"
-                class="block w-full max-w-md rounded border border-gray-300 px-3 py-2 text-sm" />
+              <InputText v-model="newName" required placeholder="e.g. Production Wallet" class="w-full max-w-md" />
             </div>
           </div>
           <div class="grid grid-cols-3 gap-6 px-6 py-5">
             <div>
-              <label class="text-sm font-medium text-gray-700">Address</label>
-              <p class="text-xs text-gray-400 mt-1">The wallet's public address.</p>
+              <label class="text-sm font-medium">Address</label>
+              <p class="text-xs text-surface-400 mt-1">The wallet's public address.</p>
             </div>
             <div class="col-span-2">
-              <input v-model="newAddress" type="text" required
-                class="block w-full max-w-lg rounded border border-gray-300 px-3 py-2 text-sm font-mono" />
+              <InputText v-model="newAddress" required class="w-full max-w-lg font-mono" />
             </div>
           </div>
           <div class="grid grid-cols-3 gap-6 px-6 py-5">
             <div>
-              <label class="text-sm font-medium text-gray-700">Private Key</label>
-              <p class="text-xs text-gray-400 mt-1">Encrypted at rest with AES-256-GCM.</p>
+              <label class="text-sm font-medium">Private Key</label>
+              <p class="text-xs text-surface-400 mt-1">Encrypted at rest with AES-256-GCM.</p>
             </div>
             <div class="col-span-2">
-              <input v-model="newPrivateKey" type="password" required
-                class="block w-full max-w-lg rounded border border-gray-300 px-3 py-2 text-sm font-mono" />
+              <Password v-model="newPrivateKey" required :feedback="false" toggleMask inputClass="w-full max-w-lg font-mono" class="w-full max-w-lg" />
             </div>
           </div>
         </div>
-        <div class="px-6 py-4 bg-gray-50 border-t border-gray-200 rounded-b-lg flex justify-end gap-2">
-          <button type="button" @click="showCreate = false"
-            class="rounded border px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100">Cancel</button>
-          <button type="submit" :disabled="creating"
-            class="rounded bg-blue-600 px-4 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50">
-            {{ creating ? 'Creating...' : 'Add Wallet' }}
-          </button>
+        <div class="px-6 py-4 bg-surface-50 border-t border-surface-200 rounded-b-lg flex justify-end gap-2">
+          <Button type="button" label="Cancel" severity="secondary" outlined @click="showCreate = false" />
+          <Button type="submit" :label="creating ? 'Creating...' : 'Add Wallet'" :loading="creating" />
         </div>
       </form>
     </div>
 
     <!-- Wallet list -->
-    <div class="bg-white rounded-lg border border-gray-200">
-      <div v-if="loading" class="p-6 text-center text-gray-400">Loading...</div>
-      <div v-else-if="wallets.length === 0" class="p-6 text-center text-gray-400">No wallets configured.</div>
-      <table v-else class="w-full">
-        <thead class="text-left text-xs text-gray-500 uppercase bg-gray-50">
-          <tr>
-            <th class="px-6 py-3">Name</th>
-            <th class="px-6 py-3">Address</th>
-            <th class="px-6 py-3">Default</th>
-            <th class="px-6 py-3">Created</th>
-            <th class="px-6 py-3">Actions</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-gray-100">
-          <tr v-for="w in wallets" :key="w.id">
-            <td class="px-6 py-3 text-sm font-medium text-gray-800">{{ w.name }}</td>
-            <td class="px-6 py-3 text-sm font-mono text-gray-500">{{ w.address?.substring(0, 16) }}...</td>
-            <td class="px-6 py-3">
-              <span v-if="w.is_default" class="text-xs font-medium px-2 py-1 rounded text-green-700 bg-green-50">Default</span>
-            </td>
-            <td class="px-6 py-3 text-sm text-gray-400">{{ new Date(w.created_at).toLocaleDateString() }}</td>
-            <td class="px-6 py-3">
-              <button v-if="!w.is_default" @click="setDefault(w.id)"
-                class="text-blue-600 hover:text-blue-800 text-sm">Set Default</button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+    <DataTable :value="wallets" :loading="loading" stripedRows class="rounded-lg border border-surface-200"
+      :pt="{ root: { class: 'bg-surface-0' } }">
+      <template #empty>No wallets configured.</template>
+      <Column field="name" header="Name">
+        <template #body="{ data }">
+          <span class="font-medium">{{ data.name }}</span>
+        </template>
+      </Column>
+      <Column field="address" header="Address">
+        <template #body="{ data }">
+          <span class="font-mono text-surface-500">{{ data.address?.substring(0, 16) }}...</span>
+        </template>
+      </Column>
+      <Column field="is_default" header="Default">
+        <template #body="{ data }">
+          <Tag v-if="data.is_default" value="Default" severity="success" />
+        </template>
+      </Column>
+      <Column field="created_at" header="Created">
+        <template #body="{ data }">
+          <span class="text-surface-400">{{ new Date(data.created_at).toLocaleDateString() }}</span>
+        </template>
+      </Column>
+      <Column header="Actions">
+        <template #body="{ data }">
+          <Button v-if="!data.is_default" label="Set Default" severity="info" text size="small" @click="setDefault(data.id)" />
+        </template>
+      </Column>
+    </DataTable>
   </div>
 </template>

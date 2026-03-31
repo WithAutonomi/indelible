@@ -3,6 +3,8 @@ import { useRoute } from 'vue-router'
 import { computed, onMounted } from 'vue'
 import { useAuthStore } from './stores/auth'
 import AppLayout from './layouts/AppLayout.vue'
+import Toast from 'primevue/toast'
+import ConfirmDialog from 'primevue/confirmdialog'
 
 const route = useRoute()
 const auth = useAuthStore()
@@ -21,6 +23,8 @@ onMounted(async () => {
 </script>
 
 <template>
+  <Toast position="top-right" />
+  <ConfirmDialog />
   <AppLayout v-if="showLayout">
     <RouterView />
   </AppLayout>

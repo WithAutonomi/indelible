@@ -2,6 +2,11 @@
 import { ref, reactive, watch, onMounted } from 'vue'
 import { api } from '../../api/client'
 import { useAuthStore } from '../../stores/auth'
+import Button from 'primevue/button'
+import InputText from 'primevue/inputtext'
+import Password from 'primevue/password'
+import Card from 'primevue/card'
+import Message from 'primevue/message'
 
 const auth = useAuthStore()
 
@@ -104,102 +109,93 @@ function discardPassword() {
     <h1 class="text-2xl font-bold mb-6">Profile</h1>
 
     <!-- Profile info -->
-    <div class="bg-white rounded-lg border border-gray-200 mb-6">
-      <div class="px-6 py-4 border-b border-gray-200">
-        <h2 class="text-base font-semibold text-gray-800">Personal Information</h2>
-      </div>
-      <div v-if="profileMsg" class="mx-6 mt-4 rounded bg-green-50 p-3 text-green-700 text-sm">{{ profileMsg }}</div>
-      <div class="divide-y divide-gray-100">
-        <div class="grid grid-cols-3 gap-6 px-6 py-5">
-          <div>
-            <label class="text-sm font-medium text-gray-700">Email</label>
-            <p class="text-xs text-gray-400 mt-1">Your login email cannot be changed.</p>
+    <Card class="mb-6">
+      <template #title>Personal Information</template>
+      <template #content>
+        <Message v-if="profileMsg" severity="success" :closable="false" class="mb-4">{{ profileMsg }}</Message>
+
+        <div class="flex flex-col gap-5">
+          <div class="grid grid-cols-3 gap-6">
+            <div>
+              <label class="text-sm font-medium text-gray-700">Email</label>
+              <p class="text-xs text-gray-400 mt-1">Your login email cannot be changed.</p>
+            </div>
+            <div class="col-span-2">
+              <InputText :modelValue="auth.user?.email" disabled class="w-full max-w-md" />
+            </div>
           </div>
-          <div class="col-span-2">
-            <input :value="auth.user?.email" disabled
-              class="block w-full max-w-md rounded border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-500" />
+          <div class="grid grid-cols-3 gap-6">
+            <div>
+              <label class="text-sm font-medium text-gray-700">First Name</label>
+            </div>
+            <div class="col-span-2">
+              <InputText v-model="profile.firstName" required class="w-full max-w-md" />
+            </div>
           </div>
-        </div>
-        <div class="grid grid-cols-3 gap-6 px-6 py-5">
-          <div>
-            <label class="text-sm font-medium text-gray-700">First Name</label>
-          </div>
-          <div class="col-span-2">
-            <input v-model="profile.firstName" type="text" required
-              class="block w-full max-w-md rounded border border-gray-300 px-3 py-2 text-sm" />
-          </div>
-        </div>
-        <div class="grid grid-cols-3 gap-6 px-6 py-5">
-          <div>
-            <label class="text-sm font-medium text-gray-700">Last Name</label>
-          </div>
-          <div class="col-span-2">
-            <input v-model="profile.lastName" type="text" required
-              class="block w-full max-w-md rounded border border-gray-300 px-3 py-2 text-sm" />
+          <div class="grid grid-cols-3 gap-6">
+            <div>
+              <label class="text-sm font-medium text-gray-700">Last Name</label>
+            </div>
+            <div class="col-span-2">
+              <InputText v-model="profile.lastName" required class="w-full max-w-md" />
+            </div>
           </div>
         </div>
-      </div>
-      <div v-if="profileDirty" class="px-6 py-4 bg-gray-50 border-t border-gray-200 rounded-b-lg flex items-center justify-between">
-        <p class="text-xs text-gray-500">You have unsaved changes</p>
-        <div class="flex gap-2">
-          <button type="button" @click="discardProfile"
-            class="rounded border px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100">Discard</button>
-          <button type="button" @click="updateProfile" :disabled="saving"
-            class="rounded bg-blue-600 px-4 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50">
-            {{ saving ? 'Saving...' : 'Save' }}
-          </button>
+
+        <div v-if="profileDirty" class="flex items-center justify-between mt-6 pt-4 border-t border-gray-200">
+          <p class="text-xs text-gray-500">You have unsaved changes</p>
+          <div class="flex gap-2">
+            <Button label="Discard" severity="secondary" text @click="discardProfile" />
+            <Button :label="saving ? 'Saving...' : 'Save'" :loading="saving" @click="updateProfile" />
+          </div>
         </div>
-      </div>
-    </div>
+      </template>
+    </Card>
 
     <!-- Change password -->
-    <div class="bg-white rounded-lg border border-gray-200">
-      <div class="px-6 py-4 border-b border-gray-200">
-        <h2 class="text-base font-semibold text-gray-800">Change Password</h2>
-      </div>
-      <div v-if="passwordMsg" class="mx-6 mt-4 rounded bg-green-50 p-3 text-green-700 text-sm">{{ passwordMsg }}</div>
-      <div v-if="passwordError" class="mx-6 mt-4 rounded bg-red-50 p-3 text-red-700 text-sm">{{ passwordError }}</div>
-      <div class="divide-y divide-gray-100">
-        <div class="grid grid-cols-3 gap-6 px-6 py-5">
-          <div>
-            <label class="text-sm font-medium text-gray-700">Current Password</label>
+    <Card>
+      <template #title>Change Password</template>
+      <template #content>
+        <Message v-if="passwordMsg" severity="success" :closable="false" class="mb-4">{{ passwordMsg }}</Message>
+        <Message v-if="passwordError" severity="error" :closable="false" class="mb-4">{{ passwordError }}</Message>
+
+        <div class="flex flex-col gap-5">
+          <div class="grid grid-cols-3 gap-6">
+            <div>
+              <label class="text-sm font-medium text-gray-700">Current Password</label>
+            </div>
+            <div class="col-span-2">
+              <Password v-model="currentPassword" :feedback="false" toggleMask inputClass="w-full" class="w-full max-w-md" />
+            </div>
           </div>
-          <div class="col-span-2">
-            <input v-model="currentPassword" type="password" required
-              class="block w-full max-w-md rounded border border-gray-300 px-3 py-2 text-sm" />
+          <div class="grid grid-cols-3 gap-6">
+            <div>
+              <label class="text-sm font-medium text-gray-700">New Password</label>
+              <p class="text-xs text-gray-400 mt-1">Minimum 8 characters.</p>
+            </div>
+            <div class="col-span-2">
+              <Password v-model="newPassword" toggleMask inputClass="w-full" class="w-full max-w-md" />
+            </div>
           </div>
-        </div>
-        <div class="grid grid-cols-3 gap-6 px-6 py-5">
-          <div>
-            <label class="text-sm font-medium text-gray-700">New Password</label>
-            <p class="text-xs text-gray-400 mt-1">Minimum 8 characters.</p>
-          </div>
-          <div class="col-span-2">
-            <input v-model="newPassword" type="password" required minlength="8"
-              class="block w-full max-w-md rounded border border-gray-300 px-3 py-2 text-sm" />
-          </div>
-        </div>
-        <div class="grid grid-cols-3 gap-6 px-6 py-5">
-          <div>
-            <label class="text-sm font-medium text-gray-700">Confirm Password</label>
-          </div>
-          <div class="col-span-2">
-            <input v-model="confirmPassword" type="password" required
-              class="block w-full max-w-md rounded border border-gray-300 px-3 py-2 text-sm" />
+          <div class="grid grid-cols-3 gap-6">
+            <div>
+              <label class="text-sm font-medium text-gray-700">Confirm Password</label>
+            </div>
+            <div class="col-span-2">
+              <Password v-model="confirmPassword" :feedback="false" toggleMask inputClass="w-full" class="w-full max-w-md" />
+            </div>
           </div>
         </div>
-      </div>
-      <div v-if="passwordDirty" class="px-6 py-4 bg-gray-50 border-t border-gray-200 rounded-b-lg flex items-center justify-between">
-        <p class="text-xs text-gray-500">You have unsaved changes</p>
-        <div class="flex gap-2">
-          <button type="button" @click="discardPassword"
-            class="rounded border px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100">Discard</button>
-          <button type="button" @click="changePassword" :disabled="changingPassword"
-            class="rounded bg-blue-600 px-4 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50">
-            {{ changingPassword ? 'Changing...' : 'Change Password' }}
-          </button>
+
+        <div v-if="passwordDirty" class="flex items-center justify-between mt-6 pt-4 border-t border-gray-200">
+          <p class="text-xs text-gray-500">You have unsaved changes</p>
+          <div class="flex gap-2">
+            <Button label="Discard" severity="secondary" text @click="discardPassword" />
+            <Button :label="changingPassword ? 'Changing...' : 'Change Password'"
+              :loading="changingPassword" @click="changePassword" />
+          </div>
         </div>
-      </div>
-    </div>
+      </template>
+    </Card>
   </div>
 </template>

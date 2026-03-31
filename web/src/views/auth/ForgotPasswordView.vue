@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { api } from '../../api/client'
+import InputText from 'primevue/inputtext'
+import Button from 'primevue/button'
+import Message from 'primevue/message'
 
 const email = ref('')
 const sent = ref(false)
@@ -22,36 +25,32 @@ async function handleSubmit() {
 </script>
 
 <template>
-  <div class="flex min-h-screen items-center justify-center bg-gray-50">
-    <div class="w-full max-w-md space-y-6 rounded-lg bg-white p-8 shadow">
-      <h1 class="text-2xl font-bold text-center">Forgot Password</h1>
+  <div class="flex min-h-screen items-center justify-center bg-surface-50">
+    <div class="w-full max-w-md space-y-6 rounded-xl bg-surface-0 p-8 shadow-md">
+      <h1 class="text-2xl font-bold text-center text-surface-900">Forgot Password</h1>
 
-      <div v-if="sent" class="rounded bg-green-50 p-4 text-green-700 text-sm text-center">
+      <Message v-if="sent" severity="success" :closable="false">
         If that email exists, a reset link has been sent. Check your inbox.
-      </div>
+      </Message>
 
       <template v-else>
-        <p class="text-center text-gray-500 text-sm">
+        <p class="text-center text-surface-500 text-sm">
           Enter your email address and we'll send you a password reset link.
         </p>
 
-        <div v-if="error" class="rounded bg-red-50 p-3 text-red-700 text-sm">{{ error }}</div>
+        <Message v-if="error" severity="error" :closable="false">{{ error }}</Message>
 
         <form @submit.prevent="handleSubmit" class="space-y-4">
-          <div>
-            <label class="block text-sm font-medium text-gray-700">Email</label>
-            <input v-model="email" type="email" required
-              class="mt-1 block w-full rounded border border-gray-300 px-3 py-2" />
+          <div class="flex flex-col gap-1">
+            <label class="text-sm font-medium text-surface-700">Email</label>
+            <InputText v-model="email" type="email" placeholder="Email" class="w-full" required />
           </div>
-          <button type="submit" :disabled="loading"
-            class="w-full rounded bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 disabled:opacity-50">
-            {{ loading ? 'Sending...' : 'Send Reset Link' }}
-          </button>
+          <Button label="Send Reset Link" type="submit" :loading="loading" class="w-full" />
         </form>
       </template>
 
-      <p class="text-center text-sm text-gray-500">
-        <router-link to="/login" class="text-blue-600 hover:underline">Back to login</router-link>
+      <p class="text-center text-sm text-surface-500">
+        <router-link to="/login" class="text-primary font-medium hover:underline">Back to login</router-link>
       </p>
     </div>
   </div>

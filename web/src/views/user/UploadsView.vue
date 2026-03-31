@@ -1,11 +1,22 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { useConfirm } from 'primevue/useconfirm'
 import { api } from '../../api/client'
 import { useAuthStore } from '../../stores/auth'
+import DataTable from 'primevue/datatable'
+import Column from 'primevue/column'
+import Button from 'primevue/button'
+import InputText from 'primevue/inputtext'
+import Select from 'primevue/select'
+import Tag from 'primevue/tag'
+import Card from 'primevue/card'
+import Message from 'primevue/message'
+import ConfirmDialog from 'primevue/confirmdialog'
 
 const auth = useAuthStore()
 const router = useRouter()
+const confirm = useConfirm()
 const noWallet = ref(false)
 
 async function checkWalletStatus() {
@@ -32,6 +43,11 @@ const visibility = ref('private')
 const uploading = ref(false)
 const uploadMsg = ref('')
 const uploadError = ref('')
+
+const visibilityOptions = [
+  { label: 'Private', value: 'private' },
+  { label: 'Public', value: 'public' },
+]
 
 function onFileSelect(e: Event) {
   const target = e.target as HTMLInputElement
@@ -120,14 +136,21 @@ async function download(uuid: string, name: string) {
   }
 }
 
-async function cancelUpload(uuid: string) {
-  if (!confirm('Cancel this upload?')) return
-  try {
-    await api.post(`/api/v2/uploads/${uuid}/cancel`)
-    await fetchUploads()
-  } catch (e: any) {
-    alert(e.response?.data?.error || 'Failed to cancel upload')
-  }
+function cancelUpload(uuid: string) {
+  confirm.require({
+    message: 'Cancel this upload?',
+    header: 'Confirm Cancel',
+    icon: 'pi pi-exclamation-triangle',
+    acceptClass: 'p-button-danger',
+    accept: async () => {
+      try {
+        await api.post(`/api/v2/uploads/${uuid}/cancel`)
+        await fetchUploads()
+      } catch (e: any) {
+        alert(e.response?.data?.error || 'Failed to cancel upload')
+      }
+    },
+  })
 }
 
 async function retryUpload(uuid: string) {
@@ -148,14 +171,21 @@ async function forceRetry(uuid: string) {
   }
 }
 
-async function deleteUpload(uuid: string) {
-  if (!confirm('Permanently delete this upload record?')) return
-  try {
-    await api.delete(`/api/v2/uploads/${uuid}`)
-    await fetchUploads()
-  } catch (e: any) {
-    alert(e.response?.data?.error || 'Failed to delete upload')
-  }
+function deleteUpload(uuid: string) {
+  confirm.require({
+    message: 'Permanently delete this upload record?',
+    header: 'Confirm Delete',
+    icon: 'pi pi-exclamation-triangle',
+    acceptClass: 'p-button-danger',
+    accept: async () => {
+      try {
+        await api.delete(`/api/v2/uploads/${uuid}`)
+        await fetchUploads()
+      } catch (e: any) {
+        alert(e.response?.data?.error || 'Failed to delete upload')
+      }
+    },
+  })
 }
 
 function formatSize(bytes: number) {
@@ -176,13 +206,13 @@ function formatDate(iso: string) {
   return `${dd}-${mm}-${yyyy} ${hh}:${min}`
 }
 
-function statusClass(status: string, detail?: string) {
-  if (detail === 'gas_backoff') return 'text-orange-700 bg-orange-50'
+function statusSeverity(status: string, detail?: string): string {
+  if (detail === 'gas_backoff') return 'warn'
   switch (status) {
-    case 'completed': return 'text-green-700 bg-green-50'
-    case 'failed': return 'text-red-700 bg-red-50'
-    case 'processing': return 'text-blue-700 bg-blue-50'
-    default: return 'text-yellow-700 bg-yellow-50'
+    case 'completed': return 'success'
+    case 'failed': return 'danger'
+    case 'processing': return 'warn'
+    default: return 'info'
   }
 }
 
@@ -193,6 +223,11 @@ function statusLabel(u: any) {
   return u.status
 }
 
+function onPage(event: any) {
+  page.value = event.page + 1
+  fetchUploads()
+}
+
 onMounted(() => {
   fetchUploads()
   checkWalletStatus()
@@ -201,153 +236,126 @@ onMounted(() => {
 
 <template>
   <div class="p-6">
+    <ConfirmDialog />
+
     <h1 class="text-2xl font-bold mb-6">Uploads</h1>
 
     <!-- No wallet warning -->
-    <div v-if="noWallet" class="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-4 flex items-center justify-between">
-      <div>
-        <p class="text-sm font-medium text-amber-800">No wallet configured</p>
-        <p class="text-sm text-amber-700">A wallet must be added before files can be uploaded to the network.</p>
+    <Message v-if="noWallet" severity="warn" :closable="false" class="mb-4">
+      <div class="flex items-center justify-between w-full">
+        <div>
+          <p class="font-medium">No wallet configured</p>
+          <p class="text-sm">A wallet must be added before files can be uploaded to the network.</p>
+        </div>
+        <Button v-if="auth.isAdmin" label="Add Wallet" severity="warn" size="small"
+          @click="router.push('/admin/wallets?add=1')" class="ml-4" />
+        <span v-else class="text-xs ml-4 whitespace-nowrap">Contact your administrator</span>
       </div>
-      <button v-if="auth.isAdmin" @click="router.push('/admin/wallets?add=1')"
-        class="rounded bg-amber-600 px-4 py-2 text-sm text-white hover:bg-amber-700 whitespace-nowrap ml-4">
-        Add Wallet
-      </button>
-      <span v-else class="text-xs text-amber-600 ml-4 whitespace-nowrap">Contact your administrator</span>
-    </div>
+    </Message>
 
     <!-- Upload card -->
-    <div class="bg-white rounded-lg border border-gray-200 p-4 mb-4" :class="{ 'opacity-50 pointer-events-none select-none': noWallet }">
-      <div v-if="uploadMsg" class="mb-3 rounded bg-green-50 p-3 text-green-700 text-sm">{{ uploadMsg }}</div>
-      <div v-if="uploadError" class="mb-3 rounded bg-red-50 p-3 text-red-700 text-sm">{{ uploadError }}</div>
-      <form @submit.prevent="handleUpload" class="flex flex-col sm:flex-row items-start gap-4">
-        <div class="flex-1">
-          <input id="upload-file-input" type="file" @change="onFileSelect" :disabled="noWallet"
-            class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
-        </div>
-        <select v-model="visibility" :disabled="noWallet" class="rounded border border-gray-300 px-3 py-2 text-sm">
-          <option value="private">Private</option>
-          <option value="public">Public</option>
-        </select>
-        <button type="submit" :disabled="!file || uploading || noWallet"
-          class="rounded bg-blue-600 px-5 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-50">
-          {{ uploading ? 'Uploading...' : 'Upload' }}
-        </button>
-      </form>
-    </div>
+    <Card class="mb-4" :class="{ 'opacity-50 pointer-events-none select-none': noWallet }">
+      <template #content>
+        <Message v-if="uploadMsg" severity="success" :closable="false" class="mb-4">{{ uploadMsg }}</Message>
+        <Message v-if="uploadError" severity="error" :closable="false" class="mb-4">{{ uploadError }}</Message>
+        <form @submit.prevent="handleUpload" class="flex flex-col sm:flex-row items-start gap-4">
+          <div class="flex-1">
+            <input id="upload-file-input" type="file" @change="onFileSelect" :disabled="noWallet"
+              class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
+          </div>
+          <Select v-model="visibility" :options="visibilityOptions" optionLabel="label" optionValue="value"
+            :disabled="noWallet" class="w-36" />
+          <Button type="submit" :label="uploading ? 'Uploading...' : 'Upload'" icon="pi pi-upload"
+            :disabled="!file || uploading || noWallet" :loading="uploading" />
+        </form>
+      </template>
+    </Card>
 
     <!-- Search / filter bar -->
-    <div class="bg-white rounded-lg border border-gray-200 p-4 mb-4 flex flex-wrap gap-3 items-end">
-      <div>
-        <label class="block text-xs text-gray-500 mb-1">Filename</label>
-        <input v-model="searchQuery" type="text" placeholder="Search..."
-          class="rounded border border-gray-300 px-3 py-1.5 text-sm w-48" />
-      </div>
-      <div>
-        <label class="block text-xs text-gray-500 mb-1">Tag Key</label>
-        <input v-model="tagKey" type="text" placeholder="e.g. project"
-          class="rounded border border-gray-300 px-3 py-1.5 text-sm w-32" />
-      </div>
-      <div>
-        <label class="block text-xs text-gray-500 mb-1">Tag Value</label>
-        <input v-model="tagValue" type="text" placeholder="e.g. alpha"
-          class="rounded border border-gray-300 px-3 py-1.5 text-sm w-32" />
-      </div>
-      <button @click="searchByTags"
-        class="rounded bg-gray-100 px-4 py-1.5 text-sm text-gray-700 hover:bg-gray-200">
-        <i class="pi pi-search mr-1"></i> Search
-      </button>
-      <button @click="tagKey = ''; tagValue = ''; searchQuery = ''; fetchUploads()"
-        class="rounded px-4 py-1.5 text-sm text-gray-500 hover:text-gray-700">
-        Clear
-      </button>
-    </div>
+    <Card class="mb-4">
+      <template #content>
+        <div class="flex flex-wrap gap-3 items-end">
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">Filename</label>
+            <InputText v-model="searchQuery" placeholder="Search..." size="small" class="w-48" />
+          </div>
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">Tag Key</label>
+            <InputText v-model="tagKey" placeholder="e.g. project" size="small" class="w-32" />
+          </div>
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">Tag Value</label>
+            <InputText v-model="tagValue" placeholder="e.g. alpha" size="small" class="w-32" />
+          </div>
+          <Button label="Search" icon="pi pi-search" severity="secondary" size="small" @click="searchByTags" />
+          <Button label="Clear" text size="small"
+            @click="tagKey = ''; tagValue = ''; searchQuery = ''; fetchUploads()" />
+        </div>
+      </template>
+    </Card>
 
     <!-- Table -->
-    <div class="bg-white rounded-lg border border-gray-200">
-      <div v-if="loading" class="p-6 text-center text-gray-400">Loading...</div>
-      <div v-else-if="uploads.length === 0" class="p-6 text-center text-gray-400">No uploads found.</div>
-      <table v-else class="w-full">
-        <thead class="text-left text-xs text-gray-500 uppercase bg-gray-50">
-          <tr>
-            <th class="px-6 py-3">Name</th>
-            <th class="px-6 py-3">Size</th>
-            <th class="px-6 py-3">Visibility</th>
-            <th class="px-6 py-3">Status</th>
-            <th class="px-6 py-3">Created</th>
-            <th class="px-6 py-3">Actions</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-gray-100">
-          <tr v-for="u in uploads" :key="u.uuid">
-            <td class="px-6 py-3 text-sm font-medium text-gray-800">{{ u.original_filename }}</td>
-            <td class="px-6 py-3 text-sm text-gray-500">{{ formatSize(u.file_size) }}</td>
-            <td class="px-6 py-3 text-sm text-gray-500">{{ u.visibility }}</td>
-            <td class="px-6 py-3">
-              <span class="text-xs font-medium px-2 py-1 rounded" :class="statusClass(u.status, u.status_detail)">
-                {{ statusLabel(u) }}
-              </span>
-              <p v-if="u.error_message" class="text-xs text-red-500 mt-1" :title="u.error_message">
-                {{ u.error_message.length > 50 ? u.error_message.substring(0, 50) + '...' : u.error_message }}
-              </p>
-            </td>
-            <td class="px-6 py-3 text-sm text-gray-400">{{ formatDate(u.created_at) }}</td>
-            <td class="px-6 py-3">
-              <div class="flex gap-2 items-center">
-                <!-- Completed: download, delete -->
-                <button v-if="u.status === 'completed'" @click="download(u.uuid, u.original_filename)"
-                  :disabled="downloading === u.uuid"
-                  class="text-blue-600 hover:text-blue-800 text-sm disabled:opacity-50" title="Download">
-                  <i :class="downloading === u.uuid ? 'pi pi-spin pi-spinner' : 'pi pi-download'"></i>
-                </button>
-                <button v-if="u.status === 'completed'" @click="deleteUpload(u.uuid)"
-                  class="text-red-500 hover:text-red-700 text-sm" title="Delete">
-                  <i class="pi pi-trash"></i>
-                </button>
-                <!-- Queued (not backoff): cancel -->
-                <button v-if="u.status === 'queued' && u.status_detail !== 'gas_backoff'" @click="cancelUpload(u.uuid)"
-                  class="text-red-500 hover:text-red-700 text-sm" title="Cancel">
-                  <i class="pi pi-times"></i>
-                </button>
-                <!-- Processing: cancel -->
-                <button v-if="u.status === 'processing'" @click="cancelUpload(u.uuid)"
-                  class="text-red-500 hover:text-red-700 text-sm" title="Cancel">
-                  <i class="pi pi-times"></i>
-                </button>
-                <!-- Gas backoff: force retry, cancel -->
-                <button v-if="u.status_detail === 'gas_backoff'" @click="forceRetry(u.uuid)"
-                  class="text-blue-600 hover:text-blue-800 text-sm" title="Retry now">
-                  <i class="pi pi-refresh"></i>
-                </button>
-                <button v-if="u.status_detail === 'gas_backoff'" @click="cancelUpload(u.uuid)"
-                  class="text-red-500 hover:text-red-700 text-sm" title="Cancel">
-                  <i class="pi pi-times"></i>
-                </button>
-                <!-- Failed: retry, delete -->
-                <button v-if="u.status === 'failed'" @click="retryUpload(u.uuid)"
-                  class="text-blue-600 hover:text-blue-800 text-sm" title="Retry">
-                  <i class="pi pi-refresh"></i>
-                </button>
-                <button v-if="u.status === 'failed'" @click="deleteUpload(u.uuid)"
-                  class="text-red-500 hover:text-red-700 text-sm" title="Delete">
-                  <i class="pi pi-trash"></i>
-                </button>
+    <Card>
+      <template #content>
+        <DataTable :value="uploads" :loading="loading" stripedRows
+          paginator :rows="limit" :totalRecords="total" :lazy="true" @page="onPage"
+          :pt="{ root: { class: '-mt-2' } }">
+          <template #empty>No uploads found.</template>
+          <Column field="original_filename" header="Name" sortable />
+          <Column header="Size">
+            <template #body="{ data }">{{ formatSize(data.file_size) }}</template>
+          </Column>
+          <Column field="visibility" header="Visibility" sortable />
+          <Column header="Status">
+            <template #body="{ data }">
+              <div>
+                <Tag :value="statusLabel(data)" :severity="statusSeverity(data.status, data.status_detail)" />
+                <p v-if="data.error_message" class="text-xs text-red-500 mt-1" :title="data.error_message">
+                  {{ data.error_message.length > 50 ? data.error_message.substring(0, 50) + '...' : data.error_message }}
+                </p>
               </div>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+            </template>
+          </Column>
+          <Column header="Created">
+            <template #body="{ data }">
+              <span class="text-gray-400">{{ formatDate(data.created_at) }}</span>
+            </template>
+          </Column>
+          <Column header="Actions">
+            <template #body="{ data }">
+              <div class="flex gap-1 items-center">
+                <!-- Completed: download, delete -->
+                <Button v-if="data.status === 'completed'" icon="pi pi-download" text rounded size="small"
+                  :loading="downloading === data.uuid" @click="download(data.uuid, data.original_filename)"
+                  v-tooltip.top="'Download'" />
+                <Button v-if="data.status === 'completed'" icon="pi pi-trash" text rounded size="small"
+                  severity="danger" @click="deleteUpload(data.uuid)" v-tooltip.top="'Delete'" />
 
-      <!-- Pagination -->
-      <div v-if="total > limit" class="flex items-center justify-between px-6 py-3 border-t border-gray-100">
-        <p class="text-sm text-gray-500">{{ total }} total</p>
-        <div class="flex gap-2">
-          <button @click="page--; fetchUploads()" :disabled="page <= 1"
-            class="rounded border px-3 py-1 text-sm disabled:opacity-50">Prev</button>
-          <button @click="page++; fetchUploads()" :disabled="page * limit >= total"
-            class="rounded border px-3 py-1 text-sm disabled:opacity-50">Next</button>
-        </div>
-      </div>
-    </div>
+                <!-- Queued (not backoff): cancel -->
+                <Button v-if="data.status === 'queued' && data.status_detail !== 'gas_backoff'"
+                  icon="pi pi-times" text rounded size="small" severity="danger"
+                  @click="cancelUpload(data.uuid)" v-tooltip.top="'Cancel'" />
+
+                <!-- Processing: cancel -->
+                <Button v-if="data.status === 'processing'" icon="pi pi-times" text rounded size="small"
+                  severity="danger" @click="cancelUpload(data.uuid)" v-tooltip.top="'Cancel'" />
+
+                <!-- Gas backoff: force retry, cancel -->
+                <Button v-if="data.status_detail === 'gas_backoff'" icon="pi pi-refresh" text rounded size="small"
+                  @click="forceRetry(data.uuid)" v-tooltip.top="'Retry now'" />
+                <Button v-if="data.status_detail === 'gas_backoff'" icon="pi pi-times" text rounded size="small"
+                  severity="danger" @click="cancelUpload(data.uuid)" v-tooltip.top="'Cancel'" />
+
+                <!-- Failed: retry, delete -->
+                <Button v-if="data.status === 'failed'" icon="pi pi-refresh" text rounded size="small"
+                  @click="retryUpload(data.uuid)" v-tooltip.top="'Retry'" />
+                <Button v-if="data.status === 'failed'" icon="pi pi-trash" text rounded size="small"
+                  severity="danger" @click="deleteUpload(data.uuid)" v-tooltip.top="'Delete'" />
+              </div>
+            </template>
+          </Column>
+        </DataTable>
+      </template>
+    </Card>
   </div>
 </template>

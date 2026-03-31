@@ -1,6 +1,13 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { api } from '../../api/client'
+import DataTable from 'primevue/datatable'
+import Column from 'primevue/column'
+import Button from 'primevue/button'
+import InputText from 'primevue/inputtext'
+import Select from 'primevue/select'
+import Dialog from 'primevue/dialog'
+import Tag from 'primevue/tag'
 
 const users = ref<any[]>([])
 const loading = ref(true)
@@ -15,6 +22,12 @@ const newFirstName = ref('')
 const newLastName = ref('')
 const newPermissions = ref('read')
 const creating = ref(false)
+
+const permissionOptions = [
+  { label: 'Read', value: 'read' },
+  { label: 'Read + Write', value: 'read,write' },
+  { label: 'Admin', value: 'admin,read,write' },
+]
 
 async function createUser() {
   creating.value = true
@@ -93,10 +106,10 @@ function formatDate(iso: string) {
   return `${dd}-${mm}-${yyyy} ${hh}:${min}`
 }
 
-function permissionBadge(perms: string) {
-  if (perms?.includes('admin')) return 'text-purple-700 bg-purple-50'
-  if (perms?.includes('write')) return 'text-blue-700 bg-blue-50'
-  return 'text-gray-700 bg-gray-50'
+function permissionSeverity(perms: string): string {
+  if (perms?.includes('admin')) return 'danger'
+  if (perms?.includes('write')) return 'info'
+  return 'secondary'
 }
 
 onMounted(fetchUsers)
@@ -106,157 +119,123 @@ onMounted(fetchUsers)
   <div class="p-6">
     <div class="flex items-center justify-between mb-6">
       <h1 class="text-2xl font-bold">User Management</h1>
-      <button @click="showCreate = !showCreate"
-        class="rounded bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700">
-        <i class="pi pi-plus mr-1"></i> Add User
-      </button>
+      <Button icon="pi pi-plus" label="Add User" @click="showCreate = !showCreate" />
     </div>
 
     <!-- Create user form -->
-    <div v-if="showCreate" class="bg-white rounded-lg border border-gray-200 mb-6">
-      <div class="px-6 py-4 border-b border-gray-200">
-        <h2 class="text-base font-semibold text-gray-800">Create User</h2>
+    <div v-if="showCreate" class="bg-surface-0 rounded-lg border border-surface-200 mb-6">
+      <div class="px-6 py-4 border-b border-surface-200">
+        <h2 class="text-base font-semibold">Create User</h2>
       </div>
       <form @submit.prevent="createUser">
-        <div class="divide-y divide-gray-100">
+        <div class="divide-y divide-surface-100">
           <div class="grid grid-cols-3 gap-6 px-6 py-5">
             <div>
-              <label class="text-sm font-medium text-gray-700">First Name</label>
+              <label class="text-sm font-medium">First Name</label>
             </div>
             <div class="col-span-2">
-              <input v-model="newFirstName" type="text" required
-                class="block w-full max-w-md rounded border border-gray-300 px-3 py-2 text-sm" />
+              <InputText v-model="newFirstName" required class="w-full max-w-md" />
             </div>
           </div>
           <div class="grid grid-cols-3 gap-6 px-6 py-5">
             <div>
-              <label class="text-sm font-medium text-gray-700">Last Name</label>
+              <label class="text-sm font-medium">Last Name</label>
             </div>
             <div class="col-span-2">
-              <input v-model="newLastName" type="text" required
-                class="block w-full max-w-md rounded border border-gray-300 px-3 py-2 text-sm" />
+              <InputText v-model="newLastName" required class="w-full max-w-md" />
             </div>
           </div>
           <div class="grid grid-cols-3 gap-6 px-6 py-5">
             <div>
-              <label class="text-sm font-medium text-gray-700">Email</label>
+              <label class="text-sm font-medium">Email</label>
             </div>
             <div class="col-span-2">
-              <input v-model="newEmail" type="email" required
-                class="block w-full max-w-md rounded border border-gray-300 px-3 py-2 text-sm" />
+              <InputText v-model="newEmail" type="email" required class="w-full max-w-md" />
             </div>
           </div>
           <div class="grid grid-cols-3 gap-6 px-6 py-5">
             <div>
-              <label class="text-sm font-medium text-gray-700">Password</label>
-              <p class="text-xs text-gray-400 mt-1">Minimum 8 characters.</p>
+              <label class="text-sm font-medium">Password</label>
+              <p class="text-xs text-surface-400 mt-1">Minimum 8 characters.</p>
             </div>
             <div class="col-span-2">
-              <input v-model="newPassword" type="password" required minlength="8"
-                class="block w-full max-w-md rounded border border-gray-300 px-3 py-2 text-sm" />
+              <InputText v-model="newPassword" type="password" required class="w-full max-w-md" />
             </div>
           </div>
           <div class="grid grid-cols-3 gap-6 px-6 py-5">
             <div>
-              <label class="text-sm font-medium text-gray-700">Permissions</label>
-              <p class="text-xs text-gray-400 mt-1">Access level for this user.</p>
+              <label class="text-sm font-medium">Permissions</label>
+              <p class="text-xs text-surface-400 mt-1">Access level for this user.</p>
             </div>
             <div class="col-span-2">
-              <select v-model="newPermissions" class="block w-48 rounded border border-gray-300 px-3 py-2 text-sm">
-                <option value="read">Read</option>
-                <option value="read,write">Read + Write</option>
-                <option value="admin,read,write">Admin</option>
-              </select>
+              <Select v-model="newPermissions" :options="permissionOptions" optionLabel="label" optionValue="value" class="w-48" />
             </div>
           </div>
         </div>
-        <div class="px-6 py-4 bg-gray-50 border-t border-gray-200 rounded-b-lg flex justify-end gap-2">
-          <button type="button" @click="showCreate = false"
-            class="rounded border px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100">Cancel</button>
-          <button type="submit" :disabled="creating"
-            class="rounded bg-blue-600 px-4 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50">
-            {{ creating ? 'Creating...' : 'Create User' }}
-          </button>
+        <div class="px-6 py-4 bg-surface-50 border-t border-surface-200 rounded-b-lg flex justify-end gap-2">
+          <Button type="button" label="Cancel" severity="secondary" outlined @click="showCreate = false" />
+          <Button type="submit" :label="creating ? 'Creating...' : 'Create User'" :loading="creating" />
         </div>
       </form>
     </div>
 
-    <!-- Edit permissions modal -->
-    <div v-if="editingUser" class="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
-      <div class="bg-white rounded-lg shadow-xl w-full max-w-lg">
-        <div class="px-6 py-4 border-b border-gray-200">
-          <h2 class="text-base font-semibold text-gray-800">
-            Edit Permissions: {{ editingUser.first_name }} {{ editingUser.last_name }}
-          </h2>
+    <!-- Edit permissions dialog -->
+    <Dialog v-model:visible="editingUser" modal :header="editingUser ? `Edit Permissions: ${editingUser.first_name} ${editingUser.last_name}` : ''" class="w-full max-w-lg">
+      <div class="grid grid-cols-3 gap-6 py-2">
+        <div>
+          <label class="text-sm font-medium">Permissions</label>
+          <p class="text-xs text-surface-400 mt-1">Access level for this user.</p>
         </div>
-        <div class="grid grid-cols-3 gap-6 px-6 py-5">
-          <div>
-            <label class="text-sm font-medium text-gray-700">Permissions</label>
-            <p class="text-xs text-gray-400 mt-1">Access level for this user.</p>
-          </div>
-          <div class="col-span-2">
-            <select v-model="editPermissions" class="block w-48 rounded border border-gray-300 px-3 py-2 text-sm">
-              <option value="read">Read</option>
-              <option value="read,write">Read + Write</option>
-              <option value="admin,read,write">Admin</option>
-            </select>
-          </div>
-        </div>
-        <div class="px-6 py-4 bg-gray-50 border-t border-gray-200 rounded-b-lg flex justify-end gap-2">
-          <button @click="editingUser = null"
-            class="rounded border px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100">Cancel</button>
-          <button @click="savePermissions" :disabled="saving"
-            class="rounded bg-blue-600 px-4 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50">
-            {{ saving ? 'Saving...' : 'Save' }}
-          </button>
+        <div class="col-span-2">
+          <Select v-model="editPermissions" :options="permissionOptions" optionLabel="label" optionValue="value" class="w-48" />
         </div>
       </div>
-    </div>
+      <template #footer>
+        <div class="flex justify-end gap-2">
+          <Button label="Cancel" severity="secondary" outlined @click="editingUser = null" />
+          <Button :label="saving ? 'Saving...' : 'Save'" :loading="saving" @click="savePermissions" />
+        </div>
+      </template>
+    </Dialog>
 
     <!-- Users table -->
-    <div class="bg-white rounded-lg border border-gray-200">
-      <div v-if="loading" class="p-6 text-center text-gray-400">Loading...</div>
-      <div v-else-if="users.length === 0" class="p-6 text-center text-gray-400">No users found.</div>
-      <table v-else class="w-full">
-        <thead class="text-left text-xs text-gray-500 uppercase bg-gray-50">
-          <tr>
-            <th class="px-6 py-3">Name</th>
-            <th class="px-6 py-3">Email</th>
-            <th class="px-6 py-3">Permissions</th>
-            <th class="px-6 py-3">Status</th>
-            <th class="px-6 py-3">Joined</th>
-            <th class="px-6 py-3">Actions</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-gray-100">
-          <tr v-for="u in users" :key="u.id">
-            <td class="px-6 py-3 text-sm font-medium text-gray-800">
-              {{ u.first_name }} {{ u.last_name }}
-              <span v-if="u.is_service_account" class="ml-1 text-xs text-gray-400">(service)</span>
-            </td>
-            <td class="px-6 py-3 text-sm text-gray-500">{{ u.email }}</td>
-            <td class="px-6 py-3">
-              <span class="text-xs font-medium px-2 py-1 rounded" :class="permissionBadge(u.permissions)">
-                {{ u.permissions || 'read' }}
-              </span>
-            </td>
-            <td class="px-6 py-3 text-sm">
-              <span :class="u.is_active ? 'text-green-600' : 'text-red-500'">
-                {{ u.is_active ? 'Active' : 'Disabled' }}
-              </span>
-            </td>
-            <td class="px-6 py-3 text-sm text-gray-400">{{ formatDate(u.created_at) }}</td>
-            <td class="px-6 py-3 flex gap-2">
-              <button @click="startEdit(u)" class="text-blue-600 hover:text-blue-800 text-sm">
-                <i class="pi pi-pencil"></i>
-              </button>
-              <button @click="deleteUser(u.id)" class="text-red-600 hover:text-red-800 text-sm">
-                <i class="pi pi-trash"></i>
-              </button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+    <DataTable :value="users" :loading="loading" stripedRows class="rounded-lg border border-surface-200"
+      :pt="{ root: { class: 'bg-surface-0' } }">
+      <template #empty>No users found.</template>
+      <Column field="name" header="Name">
+        <template #body="{ data }">
+          <span class="font-medium">{{ data.first_name }} {{ data.last_name }}</span>
+          <span v-if="data.is_service_account" class="ml-1 text-xs text-surface-400">(service)</span>
+        </template>
+      </Column>
+      <Column field="email" header="Email">
+        <template #body="{ data }">
+          <span class="text-surface-500">{{ data.email }}</span>
+        </template>
+      </Column>
+      <Column field="permissions" header="Permissions">
+        <template #body="{ data }">
+          <Tag :value="data.permissions || 'read'" :severity="permissionSeverity(data.permissions)" />
+        </template>
+      </Column>
+      <Column field="is_active" header="Status">
+        <template #body="{ data }">
+          <Tag :value="data.is_active ? 'Active' : 'Disabled'" :severity="data.is_active ? 'success' : 'danger'" />
+        </template>
+      </Column>
+      <Column field="created_at" header="Joined">
+        <template #body="{ data }">
+          <span class="text-surface-400">{{ formatDate(data.created_at) }}</span>
+        </template>
+      </Column>
+      <Column header="Actions">
+        <template #body="{ data }">
+          <div class="flex gap-2">
+            <Button icon="pi pi-pencil" severity="info" text rounded size="small" @click="startEdit(data)" />
+            <Button icon="pi pi-trash" severity="danger" text rounded size="small" @click="deleteUser(data.id)" />
+          </div>
+        </template>
+      </Column>
+    </DataTable>
   </div>
 </template>

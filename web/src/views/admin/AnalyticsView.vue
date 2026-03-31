@@ -1,12 +1,20 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { api } from '../../api/client'
+import Select from 'primevue/select'
+import Card from 'primevue/card'
 
 const days = ref(7)
 const uploadStats = ref<any>(null)
 const tokenStats = ref<any>(null)
 const costStats = ref<any>(null)
 const loading = ref(true)
+
+const periodOptions = [
+  { label: 'Last 7 days', value: 7 },
+  { label: 'Last 30 days', value: 30 },
+  { label: 'Last 90 days', value: 90 },
+]
 
 async function fetchAll() {
   loading.value = true
@@ -42,85 +50,94 @@ onMounted(fetchAll)
     <div class="flex items-center justify-between mb-6">
       <h1 class="text-2xl font-bold">Analytics</h1>
       <div class="flex items-center gap-2">
-        <label class="text-sm text-gray-500">Period:</label>
-        <select v-model="days" @change="fetchAll" class="rounded border border-gray-300 px-3 py-1.5 text-sm">
-          <option :value="7">Last 7 days</option>
-          <option :value="30">Last 30 days</option>
-          <option :value="90">Last 90 days</option>
-        </select>
+        <label class="text-sm text-surface-500">Period:</label>
+        <Select v-model="days" :options="periodOptions" optionLabel="label" optionValue="value"
+          @update:modelValue="fetchAll" class="w-44" />
       </div>
     </div>
 
-    <div v-if="loading" class="text-center text-gray-400 py-12">Loading analytics...</div>
+    <div v-if="loading" class="text-center text-surface-400 py-12">Loading analytics...</div>
 
     <template v-else>
       <!-- Upload stats -->
       <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <div class="bg-white rounded-lg border border-gray-200 p-4">
-          <p class="text-xs text-gray-500 uppercase">Completed</p>
-          <p class="text-2xl font-bold text-green-600">{{ uploadStats?.status_counts?.completed || 0 }}</p>
-        </div>
-        <div class="bg-white rounded-lg border border-gray-200 p-4">
-          <p class="text-xs text-gray-500 uppercase">Queued</p>
-          <p class="text-2xl font-bold text-yellow-600">{{ uploadStats?.status_counts?.queued || 0 }}</p>
-        </div>
-        <div class="bg-white rounded-lg border border-gray-200 p-4">
-          <p class="text-xs text-gray-500 uppercase">Failed</p>
-          <p class="text-2xl font-bold text-red-600">{{ uploadStats?.status_counts?.failed || 0 }}</p>
-        </div>
-        <div class="bg-white rounded-lg border border-gray-200 p-4">
-          <p class="text-xs text-gray-500 uppercase">Avg Size</p>
-          <p class="text-2xl font-bold text-gray-800">{{ formatBytes(uploadStats?.avg_file_size || 0) }}</p>
-        </div>
+        <Card>
+          <template #content>
+            <p class="text-xs text-surface-500 uppercase">Completed</p>
+            <p class="text-2xl font-bold text-green-600">{{ uploadStats?.status_counts?.completed || 0 }}</p>
+          </template>
+        </Card>
+        <Card>
+          <template #content>
+            <p class="text-xs text-surface-500 uppercase">Queued</p>
+            <p class="text-2xl font-bold text-yellow-600">{{ uploadStats?.status_counts?.queued || 0 }}</p>
+          </template>
+        </Card>
+        <Card>
+          <template #content>
+            <p class="text-xs text-surface-500 uppercase">Failed</p>
+            <p class="text-2xl font-bold text-red-600">{{ uploadStats?.status_counts?.failed || 0 }}</p>
+          </template>
+        </Card>
+        <Card>
+          <template #content>
+            <p class="text-xs text-surface-500 uppercase">Avg Size</p>
+            <p class="text-2xl font-bold">{{ formatBytes(uploadStats?.avg_file_size || 0) }}</p>
+          </template>
+        </Card>
       </div>
 
       <!-- Token stats -->
-      <div class="bg-white rounded-lg border border-gray-200 p-6 mb-6">
-        <h2 class="text-lg font-semibold mb-4">API Token Usage</h2>
-        <div class="grid grid-cols-2 gap-4 mb-4">
-          <div>
-            <p class="text-xs text-gray-500 uppercase">Total Requests</p>
-            <p class="text-2xl font-bold">{{ tokenStats?.total_requests || 0 }}</p>
-          </div>
-          <div>
-            <p class="text-xs text-gray-500 uppercase">Active Tokens</p>
-            <p class="text-2xl font-bold">{{ tokenStats?.active_tokens || 0 }}</p>
-          </div>
-        </div>
-        <div v-if="tokenStats?.top_tokens?.length">
-          <h3 class="text-sm font-medium text-gray-700 mb-2">Top Tokens</h3>
-          <div class="space-y-1">
-            <div v-for="t in tokenStats.top_tokens" :key="t.name" class="flex justify-between text-sm">
-              <span class="text-gray-700">{{ t.name }}</span>
-              <span class="text-gray-500">{{ t.request_count }} requests</span>
+      <Card class="mb-6">
+        <template #title>API Token Usage</template>
+        <template #content>
+          <div class="grid grid-cols-2 gap-4 mb-4">
+            <div>
+              <p class="text-xs text-surface-500 uppercase">Total Requests</p>
+              <p class="text-2xl font-bold">{{ tokenStats?.total_requests || 0 }}</p>
+            </div>
+            <div>
+              <p class="text-xs text-surface-500 uppercase">Active Tokens</p>
+              <p class="text-2xl font-bold">{{ tokenStats?.active_tokens || 0 }}</p>
             </div>
           </div>
-        </div>
-      </div>
+          <div v-if="tokenStats?.top_tokens?.length">
+            <h3 class="text-sm font-medium mb-2">Top Tokens</h3>
+            <div class="space-y-1">
+              <div v-for="t in tokenStats.top_tokens" :key="t.name" class="flex justify-between text-sm">
+                <span>{{ t.name }}</span>
+                <span class="text-surface-500">{{ t.request_count }} requests</span>
+              </div>
+            </div>
+          </div>
+        </template>
+      </Card>
 
       <!-- Cost stats -->
-      <div class="bg-white rounded-lg border border-gray-200 p-6">
-        <h2 class="text-lg font-semibold mb-4">Storage Costs</h2>
-        <div class="grid grid-cols-2 gap-4 mb-4">
-          <div>
-            <p class="text-xs text-gray-500 uppercase">Total Transactions</p>
-            <p class="text-2xl font-bold">{{ costStats?.total_transactions || 0 }}</p>
-          </div>
-          <div>
-            <p class="text-xs text-gray-500 uppercase">Total Spent (atto)</p>
-            <p class="text-2xl font-bold font-mono">{{ costStats?.total_amount || '0' }}</p>
-          </div>
-        </div>
-        <div v-if="costStats?.by_department?.length">
-          <h3 class="text-sm font-medium text-gray-700 mb-2">By Department</h3>
-          <div class="space-y-1">
-            <div v-for="d in costStats.by_department" :key="d.department" class="flex justify-between text-sm">
-              <span class="text-gray-700">{{ d.department || 'Unassigned' }}</span>
-              <span class="text-gray-500 font-mono">{{ d.total_amount }}</span>
+      <Card>
+        <template #title>Storage Costs</template>
+        <template #content>
+          <div class="grid grid-cols-2 gap-4 mb-4">
+            <div>
+              <p class="text-xs text-surface-500 uppercase">Total Transactions</p>
+              <p class="text-2xl font-bold">{{ costStats?.total_transactions || 0 }}</p>
+            </div>
+            <div>
+              <p class="text-xs text-surface-500 uppercase">Total Spent (atto)</p>
+              <p class="text-2xl font-bold font-mono">{{ costStats?.total_amount || '0' }}</p>
             </div>
           </div>
-        </div>
-      </div>
+          <div v-if="costStats?.by_department?.length">
+            <h3 class="text-sm font-medium mb-2">By Department</h3>
+            <div class="space-y-1">
+              <div v-for="d in costStats.by_department" :key="d.department" class="flex justify-between text-sm">
+                <span>{{ d.department || 'Unassigned' }}</span>
+                <span class="text-surface-500 font-mono">{{ d.total_amount }}</span>
+              </div>
+            </div>
+          </div>
+        </template>
+      </Card>
     </template>
   </div>
 </template>

@@ -2,6 +2,9 @@
 import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../../api/client'
+import Password from 'primevue/password'
+import Button from 'primevue/button'
+import Message from 'primevue/message'
 
 const route = useRoute()
 const router = useRouter()
@@ -42,41 +45,36 @@ async function handleReset() {
 </script>
 
 <template>
-  <div class="flex min-h-screen items-center justify-center bg-gray-50">
-    <div class="w-full max-w-md space-y-6 rounded-lg bg-white p-8 shadow">
-      <h1 class="text-2xl font-bold text-center">Reset Password</h1>
+  <div class="flex min-h-screen items-center justify-center bg-surface-50">
+    <div class="w-full max-w-md space-y-6 rounded-xl bg-surface-0 p-8 shadow-md">
+      <h1 class="text-2xl font-bold text-center text-surface-900">Reset Password</h1>
 
-      <div v-if="!token" class="rounded bg-red-50 p-4 text-red-700 text-sm text-center">
+      <Message v-if="!token" severity="error" :closable="false">
         Invalid reset link. Please request a new one.
-      </div>
+      </Message>
 
-      <div v-else-if="success" class="rounded bg-green-50 p-4 text-green-700 text-sm text-center">
+      <Message v-else-if="success" severity="success" :closable="false">
         Password reset successfully! Redirecting to login...
-      </div>
+      </Message>
 
       <template v-else>
-        <div v-if="error" class="rounded bg-red-50 p-3 text-red-700 text-sm">{{ error }}</div>
+        <Message v-if="error" severity="error" :closable="false">{{ error }}</Message>
 
         <form @submit.prevent="handleReset" class="space-y-4">
-          <div>
-            <label class="block text-sm font-medium text-gray-700">New Password</label>
-            <input v-model="newPassword" type="password" required minlength="8"
-              class="mt-1 block w-full rounded border border-gray-300 px-3 py-2" />
+          <div class="flex flex-col gap-1">
+            <label class="text-sm font-medium text-surface-700">New Password</label>
+            <Password v-model="newPassword" toggleMask placeholder="New password" class="w-full" :feedback="false" inputClass="w-full" required />
           </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700">Confirm Password</label>
-            <input v-model="confirmPassword" type="password" required
-              class="mt-1 block w-full rounded border border-gray-300 px-3 py-2" />
+          <div class="flex flex-col gap-1">
+            <label class="text-sm font-medium text-surface-700">Confirm Password</label>
+            <Password v-model="confirmPassword" toggleMask placeholder="Confirm password" class="w-full" :feedback="false" inputClass="w-full" required />
           </div>
-          <button type="submit" :disabled="loading"
-            class="w-full rounded bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 disabled:opacity-50">
-            {{ loading ? 'Resetting...' : 'Reset Password' }}
-          </button>
+          <Button label="Reset Password" type="submit" :loading="loading" class="w-full" />
         </form>
       </template>
 
-      <p class="text-center text-sm text-gray-500">
-        <router-link to="/login" class="text-blue-600 hover:underline">Back to login</router-link>
+      <p class="text-center text-sm text-surface-500">
+        <router-link to="/login" class="text-primary font-medium hover:underline">Back to login</router-link>
       </p>
     </div>
   </div>

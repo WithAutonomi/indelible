@@ -1,6 +1,16 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { useConfirm } from 'primevue/useconfirm'
 import { api } from '../../api/client'
+import DataTable from 'primevue/datatable'
+import Column from 'primevue/column'
+import Button from 'primevue/button'
+import InputText from 'primevue/inputtext'
+import Dialog from 'primevue/dialog'
+import Card from 'primevue/card'
+import ConfirmDialog from 'primevue/confirmdialog'
+
+const confirm = useConfirm()
 
 const collections = ref<any[]>([])
 const loading = ref(true)
@@ -56,27 +66,42 @@ async function selectCollection(c: any) {
   }
 }
 
-async function deleteCollection(id: number) {
-  if (!confirm('Delete this collection? This cannot be undone.')) return
-  try {
-    await api.delete(`/api/v2/collections/${id}`)
-    if (selectedCollection.value?.id === id) {
-      selectedCollection.value = null
-    }
-    await fetchCollections()
-  } catch {
-    alert('Failed to delete collection')
-  }
+function deleteCollection(id: number) {
+  confirm.require({
+    message: 'Delete this collection? This cannot be undone.',
+    header: 'Confirm Delete',
+    icon: 'pi pi-exclamation-triangle',
+    acceptClass: 'p-button-danger',
+    accept: async () => {
+      try {
+        await api.delete(`/api/v2/collections/${id}`)
+        if (selectedCollection.value?.id === id) {
+          selectedCollection.value = null
+        }
+        await fetchCollections()
+      } catch {
+        alert('Failed to delete collection')
+      }
+    },
+  })
 }
 
-async function removeFile(uploadId: string) {
+function removeFile(uploadId: string) {
   if (!selectedCollection.value) return
-  try {
-    await api.delete(`/api/v2/collections/${selectedCollection.value.id}/files/${uploadId}`)
-    collectionFiles.value = collectionFiles.value.filter((f: any) => f.upload_uuid !== uploadId)
-  } catch {
-    alert('Failed to remove file')
-  }
+  confirm.require({
+    message: 'Remove this file from the collection?',
+    header: 'Confirm Remove',
+    icon: 'pi pi-exclamation-triangle',
+    acceptClass: 'p-button-danger',
+    accept: async () => {
+      try {
+        await api.delete(`/api/v2/collections/${selectedCollection.value.id}/files/${uploadId}`)
+        collectionFiles.value = collectionFiles.value.filter((f: any) => f.upload_uuid !== uploadId)
+      } catch {
+        alert('Failed to remove file')
+      }
+    },
+  })
 }
 
 onMounted(fetchCollections)
@@ -84,113 +109,89 @@ onMounted(fetchCollections)
 
 <template>
   <div class="p-6">
+    <ConfirmDialog />
+
     <div class="flex items-center justify-between mb-6">
       <h1 class="text-2xl font-bold">Collections</h1>
-      <button @click="showCreate = !showCreate"
-        class="rounded bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700">
-        <i class="pi pi-plus mr-1"></i> New Collection
-      </button>
+      <Button label="New Collection" icon="pi pi-plus" @click="showCreate = true" />
     </div>
 
-    <!-- Create form -->
-    <div v-if="showCreate" class="bg-white rounded-lg border border-gray-200 mb-6">
-      <div class="px-6 py-4 border-b border-gray-200">
-        <h2 class="text-base font-semibold text-gray-800">New Collection</h2>
-      </div>
-      <form @submit.prevent="createCollection">
-        <div class="divide-y divide-gray-100">
-          <div class="grid grid-cols-3 gap-6 px-6 py-5">
-            <div>
-              <label class="text-sm font-medium text-gray-700">Name</label>
-              <p class="text-xs text-gray-400 mt-1">A name for this collection.</p>
-            </div>
-            <div class="col-span-2">
-              <input v-model="newName" type="text" required
-                class="block w-full max-w-md rounded border border-gray-300 px-3 py-2 text-sm" />
-            </div>
-          </div>
-          <div class="grid grid-cols-3 gap-6 px-6 py-5">
-            <div>
-              <label class="text-sm font-medium text-gray-700">Description</label>
-              <p class="text-xs text-gray-400 mt-1">Optional description for this collection.</p>
-            </div>
-            <div class="col-span-2">
-              <input v-model="newDescription" type="text"
-                class="block w-full max-w-md rounded border border-gray-300 px-3 py-2 text-sm" />
-            </div>
-          </div>
+    <!-- Create collection dialog -->
+    <Dialog v-model:visible="showCreate" header="New Collection" modal :style="{ width: '28rem' }">
+      <form @submit.prevent="createCollection" class="flex flex-col gap-4 pt-2">
+        <div>
+          <label class="block text-sm font-medium mb-1">Name</label>
+          <InputText v-model="newName" required placeholder="Collection name" class="w-full" />
         </div>
-        <div class="px-6 py-4 bg-gray-50 border-t border-gray-200 rounded-b-lg flex justify-end gap-2">
-          <button type="button" @click="showCreate = false"
-            class="rounded border px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100">Cancel</button>
-          <button type="submit" :disabled="creating"
-            class="rounded bg-blue-600 px-4 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50">
-            {{ creating ? 'Creating...' : 'Create' }}
-          </button>
+        <div>
+          <label class="block text-sm font-medium mb-1">Description</label>
+          <InputText v-model="newDescription" placeholder="Optional description" class="w-full" />
+        </div>
+        <div class="flex justify-end gap-2 pt-2">
+          <Button label="Cancel" severity="secondary" text @click="showCreate = false" />
+          <Button type="submit" :label="creating ? 'Creating...' : 'Create'" :loading="creating" />
         </div>
       </form>
-    </div>
+    </Dialog>
 
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
       <!-- Collection list -->
       <div class="lg:col-span-1">
-        <div class="bg-white rounded-lg border border-gray-200">
-          <div v-if="loading" class="p-4 text-center text-gray-400">Loading...</div>
-          <div v-else-if="collections.length === 0" class="p-4 text-center text-gray-400">No collections yet.</div>
-          <div v-else class="divide-y divide-gray-100">
-            <div v-for="c in collections" :key="c.id"
-              @click="selectCollection(c)"
-              class="px-4 py-3 cursor-pointer hover:bg-gray-50 flex items-center justify-between"
-              :class="selectedCollection?.id === c.id ? 'bg-blue-50' : ''">
-              <div>
-                <p class="text-sm font-medium text-gray-800">{{ c.name }}</p>
-                <p class="text-xs text-gray-400">{{ c.file_count || 0 }} files</p>
+        <Card>
+          <template #content>
+            <div v-if="loading" class="p-4 text-center text-gray-400">Loading...</div>
+            <div v-else-if="collections.length === 0" class="p-4 text-center text-gray-400">No collections yet.</div>
+            <div v-else class="flex flex-col -mt-2">
+              <div v-for="c in collections" :key="c.id"
+                @click="selectCollection(c)"
+                class="px-4 py-3 cursor-pointer hover:bg-gray-50 flex items-center justify-between rounded-lg transition-colors"
+                :class="selectedCollection?.id === c.id ? 'bg-primary-50' : ''">
+                <div>
+                  <p class="text-sm font-medium">{{ c.name }}</p>
+                  <p class="text-xs text-gray-400">{{ c.file_count || 0 }} files</p>
+                </div>
+                <Button icon="pi pi-trash" text rounded size="small" severity="danger"
+                  @click.stop="deleteCollection(c.id)" />
               </div>
-              <button @click.stop="deleteCollection(c.id)"
-                class="text-gray-300 hover:text-red-500 text-sm">
-                <i class="pi pi-trash"></i>
-              </button>
             </div>
-          </div>
-        </div>
+          </template>
+        </Card>
       </div>
 
       <!-- Collection files -->
       <div class="lg:col-span-2">
-        <div class="bg-white rounded-lg border border-gray-200">
-          <div v-if="!selectedCollection" class="p-6 text-center text-gray-400">
-            Select a collection to view its files.
-          </div>
-          <template v-else>
-            <div class="px-6 py-4 border-b border-gray-200">
-              <h2 class="text-lg font-semibold">{{ selectedCollection.name }}</h2>
-              <p v-if="selectedCollection.description" class="text-sm text-gray-500">{{ selectedCollection.description }}</p>
+        <Card>
+          <template #content>
+            <div v-if="!selectedCollection" class="p-6 text-center text-gray-400">
+              Select a collection to view its files.
             </div>
-            <div v-if="loadingFiles" class="p-6 text-center text-gray-400">Loading files...</div>
-            <div v-else-if="collectionFiles.length === 0" class="p-6 text-center text-gray-400">
-              No files in this collection. Add files from the Uploads page.
-            </div>
-            <table v-else class="w-full">
-              <thead class="text-left text-xs text-gray-500 uppercase bg-gray-50">
-                <tr>
-                  <th class="px-6 py-3">Name</th>
-                  <th class="px-6 py-3">Added</th>
-                  <th class="px-6 py-3">Actions</th>
-                </tr>
-              </thead>
-              <tbody class="divide-y divide-gray-100">
-                <tr v-for="f in collectionFiles" :key="f.upload_uuid">
-                  <td class="px-6 py-3 text-sm font-medium text-gray-800">{{ f.original_name || f.upload_uuid }}</td>
-                  <td class="px-6 py-3 text-sm text-gray-400">{{ new Date(f.added_at).toLocaleDateString() }}</td>
-                  <td class="px-6 py-3">
-                    <button @click="removeFile(f.upload_uuid)"
-                      class="text-red-600 hover:text-red-800 text-sm">Remove</button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+            <template v-else>
+              <div class="mb-4">
+                <h2 class="text-lg font-semibold">{{ selectedCollection.name }}</h2>
+                <p v-if="selectedCollection.description" class="text-sm text-gray-500">{{ selectedCollection.description }}</p>
+              </div>
+              <DataTable :value="collectionFiles" :loading="loadingFiles" stripedRows>
+                <template #empty>No files in this collection. Add files from the Uploads page.</template>
+                <Column header="Name">
+                  <template #body="{ data }">
+                    <span class="font-medium">{{ data.original_name || data.upload_uuid }}</span>
+                  </template>
+                </Column>
+                <Column header="Added">
+                  <template #body="{ data }">
+                    <span class="text-gray-400">{{ new Date(data.added_at).toLocaleDateString() }}</span>
+                  </template>
+                </Column>
+                <Column header="Actions">
+                  <template #body="{ data }">
+                    <Button label="Remove" icon="pi pi-times" text severity="danger" size="small"
+                      @click="removeFile(data.upload_uuid)" />
+                  </template>
+                </Column>
+              </DataTable>
+            </template>
           </template>
-        </div>
+        </Card>
       </div>
     </div>
   </div>

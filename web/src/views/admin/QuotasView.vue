@@ -1,14 +1,28 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { api } from '../../api/client'
+import DataTable from 'primevue/datatable'
+import Column from 'primevue/column'
+import Button from 'primevue/button'
+import InputText from 'primevue/inputtext'
+import InputNumber from 'primevue/inputnumber'
+import Select from 'primevue/select'
+import ProgressBar from 'primevue/progressbar'
 
 const quotas = ref<any[]>([])
 const loading = ref(true)
 const showCreate = ref(false)
 const newEntityType = ref('system')
 const newEntityId = ref('')
-const newMaxGB = ref(10)
+const newMaxGB = ref<number>(10)
 const creating = ref(false)
+
+const entityTypeOptions = [
+  { label: 'System', value: 'system' },
+  { label: 'User', value: 'user' },
+  { label: 'Group', value: 'group' },
+  { label: 'Department', value: 'department' },
+]
 
 async function fetchQuotas() {
   loading.value = true
@@ -28,7 +42,7 @@ async function createQuota() {
     await api.post('/api/v2/admin/quotas', {
       entity_type: newEntityType.value,
       entity_id: newEntityId.value || undefined,
-      max_bytes: newMaxGB.value * 1073741824,
+      max_bytes: (newMaxGB.value || 0) * 1073741824,
     })
     showCreate.value = false
     await fetchQuotas()
@@ -57,7 +71,14 @@ function formatBytes(bytes: number) {
 
 function usagePct(used: number, max: number) {
   if (!max) return 0
-  return Math.min(100, (used / max) * 100)
+  return Math.min(100, Math.round((used / max) * 100))
+}
+
+function usageSeverity(used: number, max: number): string | undefined {
+  const pct = usagePct(used, max)
+  if (pct > 90) return 'danger'
+  if (pct > 70) return 'warn'
+  return undefined
 }
 
 onMounted(fetchQuotas)
@@ -67,97 +88,84 @@ onMounted(fetchQuotas)
   <div class="p-6">
     <div class="flex items-center justify-between mb-6">
       <h1 class="text-2xl font-bold">Storage Quotas</h1>
-      <button @click="showCreate = !showCreate"
-        class="rounded bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700">
-        <i class="pi pi-plus mr-1"></i> New Quota
-      </button>
+      <Button icon="pi pi-plus" label="New Quota" @click="showCreate = !showCreate" />
     </div>
 
     <!-- Create form -->
-    <div v-if="showCreate" class="bg-white rounded-lg border border-gray-200 mb-6">
-      <div class="px-6 py-4 border-b border-gray-200">
-        <h2 class="text-base font-semibold text-gray-800">New Quota</h2>
+    <div v-if="showCreate" class="bg-surface-0 rounded-lg border border-surface-200 mb-6">
+      <div class="px-6 py-4 border-b border-surface-200">
+        <h2 class="text-base font-semibold">New Quota</h2>
       </div>
       <form @submit.prevent="createQuota">
-        <div class="divide-y divide-gray-100">
+        <div class="divide-y divide-surface-100">
           <div class="grid grid-cols-3 gap-6 px-6 py-5">
             <div>
-              <label class="text-sm font-medium text-gray-700">Entity Type</label>
-              <p class="text-xs text-gray-400 mt-1">What this quota applies to.</p>
+              <label class="text-sm font-medium">Entity Type</label>
+              <p class="text-xs text-surface-400 mt-1">What this quota applies to.</p>
             </div>
             <div class="col-span-2">
-              <select v-model="newEntityType" class="block w-48 rounded border border-gray-300 px-3 py-2 text-sm">
-                <option value="system">System</option>
-                <option value="user">User</option>
-                <option value="group">Group</option>
-                <option value="department">Department</option>
-              </select>
+              <Select v-model="newEntityType" :options="entityTypeOptions" optionLabel="label" optionValue="value" class="w-48" />
             </div>
           </div>
           <div class="grid grid-cols-3 gap-6 px-6 py-5">
             <div>
-              <label class="text-sm font-medium text-gray-700">Entity ID</label>
-              <p class="text-xs text-gray-400 mt-1">Leave empty for system-wide quota.</p>
+              <label class="text-sm font-medium">Entity ID</label>
+              <p class="text-xs text-surface-400 mt-1">Leave empty for system-wide quota.</p>
             </div>
             <div class="col-span-2">
-              <input v-model="newEntityId" type="text" placeholder="User/group ID"
-                class="block w-full max-w-md rounded border border-gray-300 px-3 py-2 text-sm" />
+              <InputText v-model="newEntityId" placeholder="User/group ID" class="w-full max-w-md" />
             </div>
           </div>
           <div class="grid grid-cols-3 gap-6 px-6 py-5">
             <div>
-              <label class="text-sm font-medium text-gray-700">Max Storage</label>
-              <p class="text-xs text-gray-400 mt-1">Maximum storage allowed for this entity.</p>
+              <label class="text-sm font-medium">Max Storage</label>
+              <p class="text-xs text-surface-400 mt-1">Maximum storage allowed for this entity.</p>
             </div>
             <div class="col-span-2">
               <div class="flex items-center gap-2">
-                <input v-model.number="newMaxGB" type="number" min="1" required
-                  class="block w-32 rounded border border-gray-300 px-3 py-2 text-sm" />
-                <span class="text-sm text-gray-400">GB</span>
+                <InputNumber v-model="newMaxGB" :min="1" class="w-32" />
+                <span class="text-sm text-surface-400">GB</span>
               </div>
             </div>
           </div>
         </div>
-        <div class="px-6 py-4 bg-gray-50 border-t border-gray-200 rounded-b-lg flex justify-end gap-2">
-          <button type="button" @click="showCreate = false"
-            class="rounded border px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100">Cancel</button>
-          <button type="submit" :disabled="creating"
-            class="rounded bg-blue-600 px-4 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50">
-            {{ creating ? 'Creating...' : 'Create Quota' }}
-          </button>
+        <div class="px-6 py-4 bg-surface-50 border-t border-surface-200 rounded-b-lg flex justify-end gap-2">
+          <Button type="button" label="Cancel" severity="secondary" outlined @click="showCreate = false" />
+          <Button type="submit" :label="creating ? 'Creating...' : 'Create Quota'" :loading="creating" />
         </div>
       </form>
     </div>
 
     <!-- Quota list -->
-    <div class="bg-white rounded-lg border border-gray-200">
-      <div v-if="loading" class="p-6 text-center text-gray-400">Loading...</div>
-      <div v-else-if="quotas.length === 0" class="p-6 text-center text-gray-400">
-        No quotas configured. Quotas are optional — create one to enforce storage limits.
-      </div>
-      <div v-else class="divide-y divide-gray-100">
-        <div v-for="q in quotas" :key="q.id" class="px-6 py-4">
-          <div class="flex items-center justify-between mb-2">
-            <div>
-              <span class="text-sm font-medium text-gray-800">{{ q.entity_type }}</span>
-              <span v-if="q.entity_id" class="text-sm text-gray-500 ml-1">({{ q.entity_id }})</span>
-              <span v-if="!q.is_enabled" class="ml-2 text-xs text-gray-400">(disabled)</span>
+    <DataTable :value="quotas" :loading="loading" class="rounded-lg border border-surface-200"
+      :pt="{ root: { class: 'bg-surface-0' } }">
+      <template #empty>
+        No quotas configured. Quotas are optional -- create one to enforce storage limits.
+      </template>
+      <Column field="entity_type" header="Entity">
+        <template #body="{ data }">
+          <span class="font-medium">{{ data.entity_type }}</span>
+          <span v-if="data.entity_id" class="text-surface-500 ml-1">({{ data.entity_id }})</span>
+          <span v-if="!data.is_enabled" class="ml-2 text-xs text-surface-400">(disabled)</span>
+        </template>
+      </Column>
+      <Column header="Usage" style="min-width: 16rem">
+        <template #body="{ data }">
+          <div class="flex flex-col gap-1">
+            <div class="flex justify-between text-xs text-surface-500">
+              <span>{{ formatBytes(data.used_bytes) }}</span>
+              <span>{{ formatBytes(data.max_bytes) }}</span>
             </div>
-            <div class="flex items-center gap-3">
-              <span class="text-sm text-gray-500">{{ formatBytes(q.used_bytes) }} / {{ formatBytes(q.max_bytes) }}</span>
-              <button @click="deleteQuota(q.id)" class="text-red-500 hover:text-red-700">
-                <i class="pi pi-trash text-sm"></i>
-              </button>
-            </div>
+            <ProgressBar :value="usagePct(data.used_bytes, data.max_bytes)" :showValue="false"
+              :severity="usageSeverity(data.used_bytes, data.max_bytes)" style="height: 0.5rem" />
           </div>
-          <div class="w-full bg-gray-100 rounded-full h-2">
-            <div class="h-2 rounded-full transition-all"
-              :class="usagePct(q.used_bytes, q.max_bytes) > 90 ? 'bg-red-500' : usagePct(q.used_bytes, q.max_bytes) > 70 ? 'bg-yellow-500' : 'bg-blue-500'"
-              :style="{ width: usagePct(q.used_bytes, q.max_bytes) + '%' }">
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+        </template>
+      </Column>
+      <Column header="Actions" style="width: 5rem">
+        <template #body="{ data }">
+          <Button icon="pi pi-trash" severity="danger" text rounded size="small" @click="deleteQuota(data.id)" />
+        </template>
+      </Column>
+    </DataTable>
   </div>
 </template>
