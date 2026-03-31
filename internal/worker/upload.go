@@ -15,6 +15,7 @@ import (
 	antd "github.com/WithAutonomi/ant-sdk/antd-go"
 
 	"github.com/WithAutonomi/indelible/internal/config"
+	"github.com/WithAutonomi/indelible/internal/evm"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
 
@@ -30,6 +31,7 @@ type UploadWorker struct {
 	webhookSvc  *services.WebhookDeliveryService
 	settingsSvc *services.SettingsService
 	antdClient  *antd.Client
+	evmSigner   *evm.Signer // lazily initialized on first upload
 	cfg         *config.Config
 	wg          sync.WaitGroup
 	cancel      context.CancelFunc
@@ -168,68 +170,88 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		return fmt.Errorf("File not found on server")
 	}
 
-	// Check gas fee against max_gas_fee — backoff if too high
+	// Get default wallet — required for external signer payment
+	wallet, err := w.walletSvc.GetDefault()
+	if err != nil {
+		return fmt.Errorf("No wallet configured for payment")
+	}
+
+	walletKey, err := w.walletSvc.DecryptKey(wallet)
+	if err != nil {
+		return fmt.Errorf("Failed to decrypt wallet key")
+	}
+
+	// Phase 1: Prepare upload — encrypts file, collects network quotes
+	prepared, err := w.antdClient.PrepareUpload(ctx, tempPath)
+	if err != nil {
+		return fmt.Errorf("Failed to prepare upload: %w", err)
+	}
+
+	// Gas fee check — use the quoted total from PrepareUpload
 	if maxFeeStr, err := w.settingsSvc.Get("max_gas_fee"); err == nil {
 		if maxFee, err := strconv.ParseInt(maxFeeStr, 10, 64); err == nil && maxFee > 0 {
-			isPublic := upload.Visibility == "public"
-			quotedCost, err := w.antdClient.FileCost(ctx, tempPath, isPublic, true)
-			if err != nil {
-				return fmt.Errorf("Unable to check network fees")
-			}
 			var costVal int64
-			fmt.Sscanf(quotedCost, "%d", &costVal)
+			fmt.Sscanf(prepared.TotalAmount, "%d", &costVal)
 			if costVal > maxFee {
 				attempt := upload.BackoffAttempt + 1
 				if attempt > maxGasBackoffAttempts {
 					return fmt.Errorf("Gas fees too high — try again later")
 				}
 				backoffUntil := calcGasBackoff(attempt)
-				if err := w.uploadSvc.SetGasBackoff(upload.ID, backoffUntil, attempt, quotedCost); err != nil {
+				if err := w.uploadSvc.SetGasBackoff(upload.ID, backoffUntil, attempt, prepared.TotalAmount); err != nil {
 					return fmt.Errorf("Internal error scheduling retry")
 				}
 				slog.Info("gas fee too high, backing off",
-					"uuid", upload.UUID, "quoted", quotedCost, "max", maxFeeStr,
+					"uuid", upload.UUID, "quoted", prepared.TotalAmount, "max", maxFeeStr,
 					"attempt", attempt, "retry_at", backoffUntil.Format(time.RFC3339))
 				return errGasBackoff
 			}
-			// Gas fee acceptable — clear any previous backoff state
 			if upload.BackoffAttempt > 0 {
 				w.uploadSvc.ClearBackoff(upload.ID)
-				slog.Info("gas fee acceptable after backoff", "uuid", upload.UUID, "quoted", quotedCost, "attempts", upload.BackoffAttempt)
+				slog.Info("gas fee acceptable after backoff", "uuid", upload.UUID, "quoted", prepared.TotalAmount, "attempts", upload.BackoffAttempt)
 			}
-			slog.Info("gas fee check passed", "uuid", upload.UUID, "quoted", quotedCost, "max", maxFeeStr)
+			slog.Info("gas fee check passed", "uuid", upload.UUID, "quoted", prepared.TotalAmount, "max", maxFeeStr)
 		}
 	}
 
-	var result *antd.PutResult
-	var err error
-
-	if upload.Visibility == "public" {
-		result, err = w.antdClient.FileUploadPublic(ctx, tempPath)
-	} else {
-		// Private upload: read file bytes and use DataPutPrivate
-		data, readErr := os.ReadFile(tempPath)
-		if readErr != nil {
-			return fmt.Errorf("File not found on server")
+	// Phase 2: Sign and submit EVM payment locally
+	if w.evmSigner == nil || w.evmSigner.RPCUrl() != prepared.RPCUrl {
+		signer, err := evm.NewSigner(prepared.RPCUrl)
+		if err != nil {
+			return fmt.Errorf("Failed to connect to EVM RPC: %w", err)
 		}
-		result, err = w.antdClient.DataPutPrivate(ctx, data)
+		w.evmSigner = signer
 	}
 
+	txHashes, err := w.evmSigner.PayForQuotes(ctx, walletKey, prepared.Payments, prepared.PaymentTokenAddress, prepared.DataPaymentsAddress)
 	if err != nil {
-		return fmt.Errorf("Network upload failed")
+		return fmt.Errorf("EVM payment failed: %w", err)
 	}
 
-	// Mark upload completed
-	if err := w.uploadSvc.MarkCompleted(upload.ID, result.Address, result.Cost); err != nil {
+	slog.Info("EVM payment submitted", "uuid", upload.UUID, "tx_count", len(txHashes), "total", prepared.TotalAmount)
+
+	// Phase 3: Finalize upload — builds proofs from tx hashes, stores chunks
+	result, err := w.antdClient.FinalizeUpload(ctx, prepared.UploadID, txHashes, false)
+	if err != nil {
+		return fmt.Errorf("Failed to finalize upload: %w", err)
+	}
+
+	// Mark upload completed — store the DataMap locally
+	if err := w.uploadSvc.MarkCompleted(upload.ID, result.DataMap, prepared.TotalAmount); err != nil {
 		return fmt.Errorf("Failed to save upload record")
 	}
 
-	// Record transaction against default wallet (best-effort)
-	if wallet, err := w.walletSvc.GetDefault(); err == nil {
-		w.txnSvc.Record(wallet.ID, &upload.ID, "upload", result.Cost, wallet.PaymentBalance)
+	// Collect first tx hash for audit trail
+	var firstTxHash string
+	for _, h := range txHashes {
+		firstTxHash = h
+		break
 	}
 
-	slog.Info("upload completed", "uuid", upload.UUID, "address", result.Address, "cost", result.Cost)
+	// Record transaction against wallet
+	w.txnSvc.Record(wallet.ID, &upload.ID, "upload", prepared.TotalAmount, wallet.PaymentBalance, firstTxHash)
+
+	slog.Info("upload completed", "uuid", upload.UUID, "cost", prepared.TotalAmount, "chunks", result.ChunksStored)
 	return nil
 }
 

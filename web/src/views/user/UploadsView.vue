@@ -99,7 +99,10 @@ async function searchByTags() {
   }
 }
 
+const downloading = ref<string | null>(null)
+
 async function download(uuid: string, name: string) {
+  downloading.value = uuid
   try {
     const res = await api.get(`/api/v2/uploads/${uuid}/download`, {
       responseType: 'blob',
@@ -112,6 +115,8 @@ async function download(uuid: string, name: string) {
     window.URL.revokeObjectURL(url)
   } catch {
     alert('Download failed — file may not be completed yet.')
+  } finally {
+    downloading.value = null
   }
 }
 
@@ -291,8 +296,9 @@ onMounted(() => {
               <div class="flex gap-2 items-center">
                 <!-- Completed: download, delete -->
                 <button v-if="u.status === 'completed'" @click="download(u.uuid, u.original_filename)"
-                  class="text-blue-600 hover:text-blue-800 text-sm" title="Download">
-                  <i class="pi pi-download"></i>
+                  :disabled="downloading === u.uuid"
+                  class="text-blue-600 hover:text-blue-800 text-sm disabled:opacity-50" title="Download">
+                  <i :class="downloading === u.uuid ? 'pi pi-spin pi-spinner' : 'pi pi-download'"></i>
                 </button>
                 <button v-if="u.status === 'completed'" @click="deleteUpload(u.uuid)"
                   class="text-red-500 hover:text-red-700 text-sm" title="Delete">

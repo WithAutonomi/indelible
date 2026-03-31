@@ -212,9 +212,55 @@ func propagateRequestID(next http.Handler) http.Handler {
 }
 
 // spaHandler serves static files, falling back to index.html for SPA routing.
+// Vue Router uses client-side routes (e.g. /login, /admin/users) that don't
+// correspond to real files. When the file server would return 404, we serve
+// index.html instead and let the Vue app handle routing.
 func spaHandler(next http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Try to serve the static file; if not found, serve index.html
-		next.ServeHTTP(w, r)
+		// Capture the response to detect 404s
+		rec := &spaResponseWriter{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+
+		// If the file server returned 404, serve index.html instead
+		if rec.status == http.StatusNotFound {
+			r.URL.Path = "/"
+			rec.reset()
+			next.ServeHTTP(w, r)
+		}
 	}
+}
+
+// spaResponseWriter wraps http.ResponseWriter to capture the status code
+// without writing the body, so we can detect 404s and serve index.html.
+type spaResponseWriter struct {
+	http.ResponseWriter
+	status      int
+	wroteHeader bool
+	wroteBody   bool
+}
+
+func (w *spaResponseWriter) WriteHeader(code int) {
+	w.status = code
+	w.wroteHeader = true
+	if code != http.StatusNotFound {
+		w.ResponseWriter.WriteHeader(code)
+	}
+}
+
+func (w *spaResponseWriter) Write(b []byte) (int, error) {
+	if w.status == http.StatusNotFound {
+		// Suppress the 404 body — we'll serve index.html instead
+		return len(b), nil
+	}
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
+	w.wroteBody = true
+	return w.ResponseWriter.Write(b)
+}
+
+func (w *spaResponseWriter) reset() {
+	w.status = http.StatusOK
+	w.wroteHeader = false
+	w.wroteBody = false
 }

@@ -16,6 +16,9 @@ app.use(router)
 app.use(PrimeVue, {
   theme: {
     preset: Aura,
+    options: {
+      darkModeSelector: '.app-dark',  // only activate dark mode with explicit class, not system preference
+    },
   },
 })
 

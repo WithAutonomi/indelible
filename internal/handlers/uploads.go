@@ -564,24 +564,14 @@ func DownloadUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		if !upload.DatamapAddress.Valid {
-			jsonError(w, "upload has no network address", http.StatusInternalServerError)
-			return
-		}
-
 		// Download from antd to temp file, then stream to client
 		tempDir := worker.TempUploadDir(cfg)
 		tempPath := filepath.Join(tempDir, "dl-"+uuid.New().String())
 		defer os.Remove(tempPath)
 
-		if upload.Visibility == "public" {
-			if err := client.FileDownloadPublic(r.Context(), upload.DatamapAddress.String, tempPath); err != nil {
-				jsonError(w, fmt.Sprintf("download from network failed: %v", err), http.StatusBadGateway)
-				return
-			}
-		} else {
-			// Private: get bytes via DataGetPrivate, write to temp
-			data, err := client.DataGetPrivate(r.Context(), upload.DatamapAddress.String)
+		if upload.DataMap.Valid {
+			// External signer flow: use local DataMap to download directly
+			data, err := client.DataGetPrivate(r.Context(), upload.DataMap.String)
 			if err != nil {
 				jsonError(w, fmt.Sprintf("download from network failed: %v", err), http.StatusBadGateway)
 				return
@@ -590,6 +580,27 @@ func DownloadUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 				jsonError(w, "failed to write download", http.StatusInternalServerError)
 				return
 			}
+		} else if upload.DatamapAddress.Valid {
+			// Legacy flow: download via network address
+			if upload.Visibility == "public" {
+				if err := client.FileDownloadPublic(r.Context(), upload.DatamapAddress.String, tempPath); err != nil {
+					jsonError(w, fmt.Sprintf("download from network failed: %v", err), http.StatusBadGateway)
+					return
+				}
+			} else {
+				data, err := client.DataGetPrivate(r.Context(), upload.DatamapAddress.String)
+				if err != nil {
+					jsonError(w, fmt.Sprintf("download from network failed: %v", err), http.StatusBadGateway)
+					return
+				}
+				if err := os.WriteFile(tempPath, data, 0600); err != nil {
+					jsonError(w, "failed to write download", http.StatusInternalServerError)
+					return
+				}
+			}
+		} else {
+			jsonError(w, "upload has no data map or network address", http.StatusInternalServerError)
+			return
 		}
 
 		// Stream the file back
