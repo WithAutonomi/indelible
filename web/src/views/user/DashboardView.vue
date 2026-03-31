@@ -165,17 +165,17 @@ onMounted(() => {
         <DataTable :value="recentUploads" :loading="loading" stripedRows
           :pt="{ root: { class: '-mt-2' } }">
           <template #empty>No uploads yet. Upload your first file above.</template>
-          <Column field="original_filename" header="Name" />
-          <Column header="Size">
+          <Column field="original_filename" header="Name" sortable />
+          <Column field="file_size" header="Size" sortable>
             <template #body="{ data }">{{ formatSize(data.file_size) }}</template>
           </Column>
-          <Column field="visibility" header="Visibility" />
-          <Column header="Status">
+          <Column field="visibility" header="Visibility" sortable />
+          <Column field="status" header="Status" sortable>
             <template #body="{ data }">
               <Tag :value="statusLabel(data)" :severity="statusSeverity(data.status, data.status_detail)" />
             </template>
           </Column>
-          <Column header="Created">
+          <Column field="created_at" header="Created" sortable>
             <template #body="{ data }">
               <span class="text-gray-400">{{ formatDate(data.created_at) }}</span>
             </template>

@@ -13,6 +13,50 @@ import (
 	"github.com/WithAutonomi/indelible/internal/services"
 )
 
+// GetTags godoc
+// @Summary Get tags for an upload
+// @Description Returns all tags on an upload as a key-value map
+// @Tags Tags
+// @Produce json
+// @Param id path string true "Upload UUID"
+// @Success 200 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Router /uploads/{id}/tags [get]
+// @Security BearerAuth
+func GetTags(db *sql.DB) http.HandlerFunc {
+	tagSvc := services.NewTagService(db)
+	uploadSvc := services.NewUploadService(db)
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID := middleware.GetUserID(r.Context())
+		uploadUUID := chi.URLParam(r, "id")
+
+		upload, err := uploadSvc.GetByUUID(uploadUUID)
+		if err != nil {
+			if errors.Is(err, services.ErrUploadNotFound) {
+				jsonError(w, "upload not found", http.StatusNotFound)
+				return
+			}
+			jsonError(w, "failed to get upload", http.StatusInternalServerError)
+			return
+		}
+		if upload.UserID != userID {
+			jsonError(w, "upload not found", http.StatusNotFound)
+			return
+		}
+
+		tags, err := tagSvc.GetTags(upload.ID)
+		if err != nil {
+			jsonError(w, "failed to get tags", http.StatusInternalServerError)
+			return
+		}
+
+		jsonResponse(w, http.StatusOK, map[string]any{
+			"tags": tags,
+		})
+	}
+}
+
 // UpdateTags godoc
 // @Summary Update tags on an upload
 // @Description Replace all tags on an upload with the provided set

@@ -11,6 +11,7 @@ import InputText from 'primevue/inputtext'
 import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 import Card from 'primevue/card'
+import Dialog from 'primevue/dialog'
 import Message from 'primevue/message'
 import ConfirmDialog from 'primevue/confirmdialog'
 
@@ -188,6 +189,59 @@ function deleteUpload(uuid: string) {
   })
 }
 
+// Tags management
+const tagsDialogVisible = ref(false)
+const tagsUploadUuid = ref('')
+const tagsUploadName = ref('')
+const tags = ref<{ key: string; value: string }[]>([])
+const newTagKey = ref('')
+const newTagValue = ref('')
+const tagsSaving = ref(false)
+
+async function openTags(uuid: string, name: string) {
+  tagsUploadUuid.value = uuid
+  tagsUploadName.value = name
+  tagsDialogVisible.value = true
+  try {
+    const res = await api.get(`/api/v2/uploads/${uuid}/tags`)
+    const tagMap = res.data.tags || {}
+    tags.value = Object.entries(tagMap).map(([key, value]) => ({ key, value: value as string }))
+  } catch {
+    tags.value = []
+  }
+}
+
+function addTag() {
+  const k = newTagKey.value.trim()
+  const v = newTagValue.value.trim()
+  if (!k || !v) return
+  if (tags.value.some(t => t.key === k)) {
+    tags.value = tags.value.map(t => t.key === k ? { key: k, value: v } : t)
+  } else {
+    tags.value.push({ key: k, value: v })
+  }
+  newTagKey.value = ''
+  newTagValue.value = ''
+}
+
+function removeTag(key: string) {
+  tags.value = tags.value.filter(t => t.key !== key)
+}
+
+async function saveTags() {
+  tagsSaving.value = true
+  try {
+    const tagMap: Record<string, string> = {}
+    for (const t of tags.value) tagMap[t.key] = t.value
+    await api.put(`/api/v2/uploads/${tagsUploadUuid.value}/tags`, { tags: tagMap })
+    tagsDialogVisible.value = false
+  } catch (e: any) {
+    alert(e.response?.data?.error || 'Failed to save tags')
+  } finally {
+    tagsSaving.value = false
+  }
+}
+
 function formatSize(bytes: number) {
   if (!bytes) return '-'
   if (bytes < 1024) return bytes + ' B'
@@ -301,12 +355,19 @@ onMounted(() => {
           paginator :rows="limit" :totalRecords="total" :lazy="true" @page="onPage"
           :pt="{ root: { class: '-mt-2' } }">
           <template #empty>No uploads found.</template>
-          <Column field="original_filename" header="Name" sortable />
-          <Column header="Size">
+          <Column field="original_filename" header="Name" sortable>
+            <template #body="{ data }">
+              <span :class="data.visibility === 'public' ? 'text-amber-600 font-medium' : ''">
+                {{ data.original_filename }}
+              </span>
+              <i v-if="data.visibility === 'public'" class="pi pi-info-circle text-amber-500 ml-1.5 text-xs"
+                v-tooltip.top="'This file is publicly accessible on the network'" />
+            </template>
+          </Column>
+          <Column field="file_size" header="Size" sortable>
             <template #body="{ data }">{{ formatSize(data.file_size) }}</template>
           </Column>
-          <Column field="visibility" header="Visibility" sortable />
-          <Column header="Status">
+          <Column field="status" header="Status" sortable>
             <template #body="{ data }">
               <div>
                 <Tag :value="statusLabel(data)" :severity="statusSeverity(data.status, data.status_detail)" />
@@ -316,7 +377,7 @@ onMounted(() => {
               </div>
             </template>
           </Column>
-          <Column header="Created">
+          <Column field="created_at" header="Created" sortable>
             <template #body="{ data }">
               <span class="text-gray-400">{{ formatDate(data.created_at) }}</span>
             </template>
@@ -325,11 +386,13 @@ onMounted(() => {
             <template #body="{ data }">
               <div class="flex gap-1 items-center">
                 <!-- Completed: download, delete -->
-                <Button v-if="data.status === 'completed'" icon="pi pi-download" text rounded size="small"
-                  :loading="downloading === data.uuid" @click="download(data.uuid, data.original_filename)"
-                  v-tooltip.top="'Download'" />
+                <Button v-if="data.status === 'completed'" icon="pi pi-download" label="Download"
+                  outlined size="small"
+                  :loading="downloading === data.uuid" @click="download(data.uuid, data.original_filename)" />
+                <Button v-if="data.status === 'completed'" icon="pi pi-tag" text rounded size="small"
+                  severity="secondary" @click="openTags(data.uuid, data.original_filename)" v-tooltip.top="'Tags'" />
                 <Button v-if="data.status === 'completed'" icon="pi pi-trash" text rounded size="small"
-                  severity="danger" @click="deleteUpload(data.uuid)" v-tooltip.top="'Delete'" />
+                  severity="secondary" @click="deleteUpload(data.uuid)" v-tooltip.top="'Delete'" />
 
                 <!-- Queued (not backoff): cancel -->
                 <Button v-if="data.status === 'queued' && data.status_detail !== 'gas_backoff'"
@@ -357,5 +420,39 @@ onMounted(() => {
         </DataTable>
       </template>
     </Card>
+
+    <!-- Tags dialog -->
+    <Dialog v-model:visible="tagsDialogVisible" :header="'Tags: ' + tagsUploadName" modal class="w-full max-w-lg">
+      <div class="space-y-4">
+        <!-- Existing tags -->
+        <div v-if="tags.length" class="space-y-2">
+          <div v-for="t in tags" :key="t.key" class="flex items-center gap-2">
+            <Tag :value="t.key" severity="info" />
+            <span class="text-sm">=</span>
+            <span class="text-sm">{{ t.value }}</span>
+            <Button icon="pi pi-times" text rounded size="small" severity="danger" @click="removeTag(t.key)" />
+          </div>
+        </div>
+        <p v-else class="text-sm text-surface-400">No tags yet.</p>
+
+        <!-- Add tag -->
+        <div class="flex gap-2 items-end pt-2 border-t border-surface-200">
+          <div class="flex-1">
+            <label class="block text-xs text-surface-500 mb-1">Key</label>
+            <InputText v-model="newTagKey" placeholder="e.g. department" size="small" class="w-full" @keyup.enter="addTag" />
+          </div>
+          <div class="flex-1">
+            <label class="block text-xs text-surface-500 mb-1">Value</label>
+            <InputText v-model="newTagValue" placeholder="e.g. engineering" size="small" class="w-full" @keyup.enter="addTag" />
+          </div>
+          <Button icon="pi pi-plus" size="small" outlined @click="addTag" :disabled="!newTagKey.trim() || !newTagValue.trim()" />
+        </div>
+      </div>
+
+      <template #footer>
+        <Button label="Cancel" text @click="tagsDialogVisible = false" />
+        <Button label="Save" icon="pi pi-check" :loading="tagsSaving" @click="saveTags" />
+      </template>
+    </Dialog>
   </div>
 </template>

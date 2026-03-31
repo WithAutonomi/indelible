@@ -149,21 +149,21 @@ onMounted(fetchTokens)
           :pt="{ root: { class: '-mt-2' } }">
           <template #empty>No API tokens yet.</template>
           <Column field="name" header="Name" sortable />
-          <Column header="Prefix">
+          <Column field="token_prefix" header="Prefix" sortable>
             <template #body="{ data }">
               <code class="text-sm text-gray-500">{{ data.token_prefix }}...</code>
             </template>
           </Column>
           <Column field="permissions" header="Scope" sortable />
-          <Column header="Requests">
+          <Column field="request_count" header="Requests" sortable>
             <template #body="{ data }">{{ data.request_count || 0 }}</template>
           </Column>
-          <Column header="Last Used">
+          <Column field="last_used_at" header="Last Used" sortable>
             <template #body="{ data }">
               <span class="text-gray-400">{{ data.last_used_at ? new Date(data.last_used_at).toLocaleDateString() : 'Never' }}</span>
             </template>
           </Column>
-          <Column header="Expires">
+          <Column field="expires_at" header="Expires" sortable>
             <template #body="{ data }">
               <span class="text-gray-400">{{ new Date(data.expires_at).toLocaleDateString() }}</span>
             </template>

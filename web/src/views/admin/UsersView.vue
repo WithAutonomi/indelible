@@ -202,28 +202,28 @@ onMounted(fetchUsers)
     <DataTable :value="users" :loading="loading" stripedRows class="rounded-lg border border-surface-200"
       :pt="{ root: { class: 'bg-surface-0' } }">
       <template #empty>No users found.</template>
-      <Column field="name" header="Name">
+      <Column field="name" header="Name" sortable>
         <template #body="{ data }">
           <span class="font-medium">{{ data.first_name }} {{ data.last_name }}</span>
           <span v-if="data.is_service_account" class="ml-1 text-xs text-surface-400">(service)</span>
         </template>
       </Column>
-      <Column field="email" header="Email">
+      <Column field="email" header="Email" sortable>
         <template #body="{ data }">
           <span class="text-surface-500">{{ data.email }}</span>
         </template>
       </Column>
-      <Column field="permissions" header="Permissions">
+      <Column field="permissions" header="Permissions" sortable>
         <template #body="{ data }">
           <Tag :value="data.permissions || 'read'" :severity="permissionSeverity(data.permissions)" />
         </template>
       </Column>
-      <Column field="is_active" header="Status">
+      <Column field="is_active" header="Status" sortable>
         <template #body="{ data }">
           <Tag :value="data.is_active ? 'Active' : 'Disabled'" :severity="data.is_active ? 'success' : 'danger'" />
         </template>
       </Column>
-      <Column field="created_at" header="Joined">
+      <Column field="created_at" header="Joined" sortable>
         <template #body="{ data }">
           <span class="text-surface-400">{{ formatDate(data.created_at) }}</span>
         </template>

@@ -172,12 +172,12 @@ onMounted(fetchCollections)
               </div>
               <DataTable :value="collectionFiles" :loading="loadingFiles" stripedRows>
                 <template #empty>No files in this collection. Add files from the Uploads page.</template>
-                <Column header="Name">
+                <Column field="original_name" header="Name" sortable>
                   <template #body="{ data }">
                     <span class="font-medium">{{ data.original_name || data.upload_uuid }}</span>
                   </template>
                 </Column>
-                <Column header="Added">
+                <Column field="added_at" header="Added" sortable>
                   <template #body="{ data }">
                     <span class="text-gray-400">{{ new Date(data.added_at).toLocaleDateString() }}</span>
                   </template>

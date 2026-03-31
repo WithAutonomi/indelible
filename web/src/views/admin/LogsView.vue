@@ -126,37 +126,37 @@ onMounted(fetchLogs)
           <DataTable :value="entries" :loading="loading" stripedRows class="rounded-lg border border-surface-200"
             :pt="{ root: { class: 'bg-surface-0' } }">
             <template #empty>No log entries found.</template>
-            <Column header="Time">
+            <Column field="created_at" header="Time" sortable>
               <template #body="{ data }">
                 <span class="text-xs text-surface-400 whitespace-nowrap">{{ new Date(data.created_at).toLocaleString() }}</span>
               </template>
             </Column>
-            <Column v-if="activeTab !== 'system'" header="Event">
+            <Column v-if="activeTab !== 'system'" field="event_type" header="Event" sortable>
               <template #body="{ data }">
                 <span class="text-sm">{{ data.event_type }}</span>
               </template>
             </Column>
-            <Column v-if="activeTab === 'system'" header="Level">
+            <Column v-if="activeTab === 'system'" field="level" header="Level" sortable>
               <template #body="{ data }">
                 <Tag :value="data.level" :severity="severitySeverity(data.level)" />
               </template>
             </Column>
-            <Column v-if="activeTab === 'system'" header="Component">
+            <Column v-if="activeTab === 'system'" field="component" header="Component" sortable>
               <template #body="{ data }">
                 <span class="text-sm text-surface-500">{{ data.component }}</span>
               </template>
             </Column>
-            <Column :header="activeTab === 'system' ? 'Message' : 'Detail'">
+            <Column :field="activeTab === 'system' ? 'message' : 'detail'" :header="activeTab === 'system' ? 'Message' : 'Detail'" sortable>
               <template #body="{ data }">
                 <span class="text-sm text-surface-600 max-w-md truncate block">{{ activeTab === 'system' ? data.message : data.detail }}</span>
               </template>
             </Column>
-            <Column v-if="activeTab !== 'system'" header="Severity">
+            <Column v-if="activeTab !== 'system'" field="severity" header="Severity" sortable>
               <template #body="{ data }">
                 <Tag :value="data.severity" :severity="severitySeverity(data.severity)" />
               </template>
             </Column>
-            <Column v-if="activeTab === 'audit'" header="IP">
+            <Column v-if="activeTab === 'audit'" field="ip_address" header="IP" sortable>
               <template #body="{ data }">
                 <span class="text-xs text-surface-400">{{ data.ip_address || '-' }}</span>
               </template>

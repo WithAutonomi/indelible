@@ -185,22 +185,22 @@ onMounted(() => {
         <!-- Tokens table -->
         <DataTable :value="tokens" :loading="loading" stripedRows>
           <template #empty>No SCIM tokens. Click "Generate Token" to create one for your identity provider.</template>
-          <Column field="name" header="Name">
+          <Column field="name" header="Name" sortable>
             <template #body="{ data }">
               <span class="font-medium">{{ data.name }}</span>
             </template>
           </Column>
-          <Column field="created_at" header="Created">
+          <Column field="created_at" header="Created" sortable>
             <template #body="{ data }">
               <span class="text-surface-500">{{ formatDate(data.created_at) }}</span>
             </template>
           </Column>
-          <Column field="last_used_at" header="Last Used">
+          <Column field="last_used_at" header="Last Used" sortable>
             <template #body="{ data }">
               <span class="text-surface-500">{{ formatDate(data.last_used_at) }}</span>
             </template>
           </Column>
-          <Column field="is_active" header="Status">
+          <Column field="is_active" header="Status" sortable>
             <template #body="{ data }">
               <Tag :value="data.is_active && !data.revoked_at ? 'Active' : 'Revoked'"
                 :severity="data.is_active && !data.revoked_at ? 'success' : 'danger'" />

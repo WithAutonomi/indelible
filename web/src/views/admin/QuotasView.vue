@@ -142,14 +142,14 @@ onMounted(fetchQuotas)
       <template #empty>
         No quotas configured. Quotas are optional -- create one to enforce storage limits.
       </template>
-      <Column field="entity_type" header="Entity">
+      <Column field="entity_type" header="Entity" sortable>
         <template #body="{ data }">
           <span class="font-medium">{{ data.entity_type }}</span>
           <span v-if="data.entity_id" class="text-surface-500 ml-1">({{ data.entity_id }})</span>
           <span v-if="!data.is_enabled" class="ml-2 text-xs text-surface-400">(disabled)</span>
         </template>
       </Column>
-      <Column header="Usage" style="min-width: 16rem">
+      <Column field="used_bytes" header="Usage" sortable style="min-width: 16rem">
         <template #body="{ data }">
           <div class="flex flex-col gap-1">
             <div class="flex justify-between text-xs text-surface-500">

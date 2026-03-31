@@ -130,22 +130,22 @@ onMounted(() => {
     <DataTable :value="wallets" :loading="loading" stripedRows class="rounded-lg border border-surface-200"
       :pt="{ root: { class: 'bg-surface-0' } }">
       <template #empty>No wallets configured.</template>
-      <Column field="name" header="Name">
+      <Column field="name" header="Name" sortable>
         <template #body="{ data }">
           <span class="font-medium">{{ data.name }}</span>
         </template>
       </Column>
-      <Column field="address" header="Address">
+      <Column field="address" header="Address" sortable>
         <template #body="{ data }">
           <span class="font-mono text-surface-500">{{ data.address?.substring(0, 16) }}...</span>
         </template>
       </Column>
-      <Column field="is_default" header="Default">
+      <Column field="is_default" header="Default" sortable>
         <template #body="{ data }">
           <Tag v-if="data.is_default" value="Default" severity="success" />
         </template>
       </Column>
-      <Column field="created_at" header="Created">
+      <Column field="created_at" header="Created" sortable>
         <template #body="{ data }">
           <span class="text-surface-400">{{ new Date(data.created_at).toLocaleDateString() }}</span>
         </template>

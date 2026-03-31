@@ -83,6 +83,7 @@ func NewRouter(cfg *config.Config, db *sql.DB) http.Handler {
 			r.Delete("/uploads/{id}", DeleteUpload(db))
 
 			// Tags
+			r.Get("/uploads/{id}/tags", GetTags(db))
 			r.Put("/uploads/{id}/tags", UpdateTags(db))
 			r.Get("/tags/search", SearchByTags(db))
 

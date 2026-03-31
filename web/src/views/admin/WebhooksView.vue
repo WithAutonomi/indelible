@@ -322,24 +322,24 @@ onMounted(fetchWebhooks)
 
       <DataTable :value="webhooks" :loading="loading" stripedRows>
         <template #empty>No webhooks configured. Click "Add Endpoint" to create one.</template>
-        <Column field="url" header="URL">
+        <Column field="url" header="URL" sortable>
           <template #body="{ data }">
             <span class="font-mono text-sm max-w-xs truncate block">{{ data.url }}</span>
           </template>
         </Column>
-        <Column field="integration_type" header="Type" style="width: 8rem">
+        <Column field="integration_type" header="Type" sortable style="width: 8rem">
           <template #body="{ data }">
             <Tag :value="data.integration_type" :severity="data.integration_type === 'slack' ? 'danger' : 'secondary'" />
           </template>
         </Column>
-        <Column header="Events">
+        <Column field="events" header="Events" sortable>
           <template #body="{ data }">
             <div class="flex flex-wrap gap-1">
               <Tag v-for="evt in parseEvents(data.events)" :key="evt" :value="evt" :severity="eventTagSeverity(evt)" />
             </div>
           </template>
         </Column>
-        <Column header="Status" style="width: 6rem">
+        <Column field="is_enabled" header="Status" sortable style="width: 6rem">
           <template #body="{ data }">
             <ToggleSwitch :modelValue="data.is_enabled" @update:modelValue="toggleWebhook(data)" />
           </template>
@@ -429,27 +429,27 @@ onMounted(fetchWebhooks)
       <p v-if="historyWebhookUrl" class="text-sm font-mono text-surface-500 mb-4 truncate">{{ historyWebhookUrl }}</p>
       <DataTable :value="deliveries" :loading="loadingHistory" stripedRows size="small">
         <template #empty>No delivery history.</template>
-        <Column field="created_at" header="Time">
+        <Column field="created_at" header="Time" sortable>
           <template #body="{ data }">
             <span class="text-surface-500 whitespace-nowrap">{{ formatDate(data.created_at) }}</span>
           </template>
         </Column>
-        <Column field="event_type" header="Event">
+        <Column field="event_type" header="Event" sortable>
           <template #body="{ data }">
             <Tag :value="data.event_type" :severity="eventTagSeverity(data.event_type)" />
           </template>
         </Column>
-        <Column field="status_code" header="Status">
+        <Column field="status_code" header="Status" sortable>
           <template #body="{ data }">
             <span class="text-surface-500">{{ data.status_code || '--' }}</span>
           </template>
         </Column>
-        <Column field="attempts" header="Attempts">
+        <Column field="attempts" header="Attempts" sortable>
           <template #body="{ data }">
             <span class="text-surface-500">{{ data.attempts }}</span>
           </template>
         </Column>
-        <Column header="Result">
+        <Column field="success" header="Result" sortable>
           <template #body="{ data }">
             <Tag :value="data.success ? 'OK' : (data.error_message || 'Failed')" :severity="data.success ? 'success' : 'danger'" />
           </template>
