@@ -214,6 +214,12 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		}
 	}
 
+	// Cache EVM config for balance queries and other uses
+	if w.cfg.EvmRPCURL == "" && prepared.RPCUrl != "" {
+		w.cfg.EvmRPCURL = prepared.RPCUrl
+		w.cfg.EvmTokenAddress = prepared.PaymentTokenAddress
+	}
+
 	// Phase 2: Sign and submit EVM payment locally
 	if w.evmSigner == nil || w.evmSigner.RPCUrl() != prepared.RPCUrl {
 		signer, err := evm.NewSigner(prepared.RPCUrl)
@@ -248,8 +254,14 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		break
 	}
 
-	// Record transaction against wallet
-	w.txnSvc.Record(wallet.ID, &upload.ID, "upload", prepared.TotalAmount, wallet.PaymentBalance, firstTxHash)
+	// Update wallet balance from chain (best-effort)
+	if tokenBal, gasBal, err := w.evmSigner.GetBalances(ctx, wallet.Address, prepared.PaymentTokenAddress); err == nil {
+		w.walletSvc.UpdateBalance(wallet.ID, tokenBal, gasBal)
+		w.txnSvc.Record(wallet.ID, &upload.ID, "upload", prepared.TotalAmount, tokenBal, firstTxHash)
+	} else {
+		slog.Warn("failed to query post-payment balance", "error", err)
+		w.txnSvc.Record(wallet.ID, &upload.ID, "upload", prepared.TotalAmount, wallet.PaymentBalance, firstTxHash)
+	}
 
 	slog.Info("upload completed", "uuid", upload.UUID, "cost", prepared.TotalAmount, "chunks", result.ChunksStored)
 	return nil

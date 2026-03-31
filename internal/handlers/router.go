@@ -136,6 +136,8 @@ func NewRouter(cfg *config.Config, db *sql.DB) http.Handler {
 			r.Get("/admin/wallets", AdminListWallets(db, cfg))
 			r.Post("/admin/wallets", AdminCreateWallet(db, cfg))
 			r.Put("/admin/wallets/{id}/default", AdminSetDefaultWallet(db, cfg))
+			r.Delete("/admin/wallets/{id}", AdminDeleteWallet(db, cfg))
+			r.Post("/admin/wallets/{id}/balance", AdminRefreshWalletBalance(db, cfg))
 
 			// System settings
 			r.Get("/admin/settings", AdminGetSettings(db))

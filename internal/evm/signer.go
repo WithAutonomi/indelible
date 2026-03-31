@@ -58,6 +58,32 @@ func (s *Signer) Close() {
 	}
 }
 
+// GetBalances queries the ERC-20 token balance and native gas balance for an address.
+// Returns (tokenBalance, gasBalance) as decimal strings in atto/wei.
+func (s *Signer) GetBalances(ctx context.Context, walletAddress, tokenAddress string) (string, string, error) {
+	addr := common.HexToAddress(walletAddress)
+	tokenAddr := common.HexToAddress(tokenAddress)
+
+	// Token balance (ERC-20 balanceOf)
+	balData, err := packBalanceOf(addr)
+	if err != nil {
+		return "", "", fmt.Errorf("encoding balanceOf: %w", err)
+	}
+	result, err := s.client.CallContract(ctx, toCallMsg(addr, tokenAddr, balData), nil)
+	if err != nil {
+		return "", "", fmt.Errorf("querying token balance: %w", err)
+	}
+	tokenBalance := new(big.Int).SetBytes(result).String()
+
+	// Gas balance (native ETH/ARB)
+	gasBalance, err := s.client.BalanceAt(ctx, addr, nil)
+	if err != nil {
+		return "", "", fmt.Errorf("querying gas balance: %w", err)
+	}
+
+	return tokenBalance, gasBalance.String(), nil
+}
+
 // PayForQuotes signs and submits the EVM payment transaction for storage quotes.
 // Returns a map of quote_hash → tx_hash that antd needs to finalize the upload.
 //

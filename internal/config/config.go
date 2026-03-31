@@ -29,6 +29,10 @@ type Config struct {
 	AntdBin     string `toml:"antd_bin"`        // Path to antd binary (default: "antd" — searches PATH)
 	AntdDataDir string `toml:"antd_data_dir"`   // antd data directory (default: cfg.DataDir + "/antd")
 
+	// EVM configuration — populated automatically from first PrepareUpload, or set manually
+	EvmRPCURL      string `toml:"evm_rpc_url"`       // EVM RPC endpoint
+	EvmTokenAddress string `toml:"evm_token_address"` // Payment token contract address
+
 	// SMTP configuration for transactional emails (password reset, email verification)
 	SMTP SMTPConfig `toml:"smtp"`
 }
@@ -134,6 +138,13 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("INDELIBLE_ANTD_DATA_DIR"); v != "" {
 		cfg.AntdDataDir = v
+	}
+
+	if v := os.Getenv("INDELIBLE_EVM_RPC_URL"); v != "" {
+		cfg.EvmRPCURL = v
+	}
+	if v := os.Getenv("INDELIBLE_EVM_TOKEN_ADDRESS"); v != "" {
+		cfg.EvmTokenAddress = v
 	}
 
 	// Default antd binary and data dir

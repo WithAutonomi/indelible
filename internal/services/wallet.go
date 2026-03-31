@@ -144,6 +144,20 @@ func (s *WalletService) SetDefault(id int64) error {
 	return tx.Commit()
 }
 
+// Delete removes a wallet. Cannot delete the default wallet.
+func (s *WalletService) Delete(id int64) error {
+	var isDefault bool
+	err := s.db.QueryRow(`SELECT is_default FROM wallets WHERE id = ?`, id).Scan(&isDefault)
+	if err != nil {
+		return ErrWalletNotFound
+	}
+	if isDefault {
+		return errors.New("cannot delete the default wallet")
+	}
+	_, err = s.db.Exec(`DELETE FROM wallets WHERE id = ?`, id)
+	return err
+}
+
 // DecryptKey decrypts and returns the wallet's private key.
 func (s *WalletService) DecryptKey(w *Wallet) (string, error) {
 	return crypto.Decrypt(s.encryptionKey, w.EncryptedKey)

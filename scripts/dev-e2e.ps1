@@ -272,15 +272,9 @@ if (-not $token) {
     exit 1
 }
 
-# Derive wallet address from the private key (first 20 bytes of keccak of pubkey)
-# We don't have easy access to this in PS, so use the address from manifest if available,
-# or just use a placeholder — the address field in indelible is for display only.
-$walletAddr = if ($walletAddress) { $walletAddress } else { "0x" + $walletKey.Substring(0, 40) }
-
-# Add the devnet wallet
+# Add the devnet wallet (address derived from private key automatically)
 $walletBody = @{
     name        = "devnet-e2e"
-    address     = $walletAddr
     private_key = $walletKey
 } | ConvertTo-Json
 

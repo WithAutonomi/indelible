@@ -40,7 +40,7 @@ func init() {
 		panic("invalid payForQuotes ABI: " + err.Error())
 	}
 
-	// ERC-20 approve + allowance
+	// ERC-20 approve + allowance + balanceOf
 	erc20ABI, err = abi.JSON(strings.NewReader(`[{
 		"name": "approve",
 		"type": "function",
@@ -55,6 +55,13 @@ func init() {
 		"inputs": [
 			{"name": "owner", "type": "address"},
 			{"name": "spender", "type": "address"}
+		],
+		"outputs": [{"name": "", "type": "uint256"}]
+	},{
+		"name": "balanceOf",
+		"type": "function",
+		"inputs": [
+			{"name": "account", "type": "address"}
 		],
 		"outputs": [{"name": "", "type": "uint256"}]
 	}]`))
@@ -83,6 +90,11 @@ func packApprove(spender common.Address, amount *big.Int) ([]byte, error) {
 // packAllowance encodes the calldata for ERC-20 allowance.
 func packAllowance(owner, spender common.Address) ([]byte, error) {
 	return erc20ABI.Pack("allowance", owner, spender)
+}
+
+// packBalanceOf encodes the calldata for ERC-20 balanceOf.
+func packBalanceOf(account common.Address) ([]byte, error) {
+	return erc20ABI.Pack("balanceOf", account)
 }
 
 // toCallMsg builds an ethereum.CallMsg for eth_call or gas estimation.
