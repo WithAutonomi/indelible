@@ -7,6 +7,7 @@ import Button from 'primevue/button'
 import InputText from 'primevue/inputtext'
 import Tag from 'primevue/tag'
 import ToggleSwitch from 'primevue/toggleswitch'
+import Dialog from 'primevue/dialog'
 import Message from 'primevue/message'
 
 interface ScimToken {
@@ -155,32 +156,37 @@ onMounted(() => {
       <div class="lg:col-span-2 bg-surface-0 rounded-lg border border-surface-200">
         <div class="px-6 py-4 border-b border-surface-200 flex items-center justify-between">
           <h2 class="text-base font-semibold">SCIM Tokens</h2>
-          <Button :label="showCreateForm ? 'Cancel' : 'Generate Token'" :severity="showCreateForm ? 'secondary' : undefined"
-            @click="showCreateForm = !showCreateForm; newSecret = null" />
+          <Button label="Generate Token" icon="pi pi-plus" @click="showCreateForm = true; newSecret = null" />
         </div>
 
-        <!-- Secret display (shown after creation) -->
-        <Message v-if="newSecret" severity="warn" :closable="false" class="mx-6 mt-4">
-          <div>
-            <p class="font-medium mb-2">Copy this token now -- it won't be shown again.</p>
-            <div class="flex items-center gap-2">
-              <code class="flex-1 text-sm bg-white px-3 py-2 rounded border border-amber-200 font-mono break-all select-all">{{ newSecret }}</code>
-              <Button icon="pi pi-copy" severity="warn" @click="copySecret" />
-            </div>
-          </div>
-        </Message>
-
-        <!-- Create form -->
-        <div v-if="showCreateForm && !newSecret" class="p-6 border-b border-surface-100">
-          <div class="flex items-end gap-4">
-            <div class="flex-1">
+        <!-- Generate token dialog -->
+        <Dialog v-model:visible="showCreateForm" header="Generate SCIM Token" modal :style="{ width: '30rem' }">
+          <div v-if="!newSecret" class="space-y-4">
+            <div>
               <label class="text-sm font-medium block mb-1">Token Name</label>
               <InputText v-model="newName" placeholder="e.g. Okta Production" class="w-full"
                 @keydown.enter.prevent="createToken" />
             </div>
-            <Button :label="creating ? 'Generating...' : 'Generate'" :loading="creating" :disabled="!newName" @click="createToken" />
           </div>
-        </div>
+          <div v-else>
+            <Message severity="warn" :closable="false">
+              <div>
+                <p class="font-medium mb-2">Copy this token now -- it won't be shown again.</p>
+                <div class="flex items-center gap-2">
+                  <code class="flex-1 text-sm bg-white px-3 py-2 rounded border border-amber-200 font-mono break-all select-all">{{ newSecret }}</code>
+                  <Button icon="pi pi-copy" severity="warn" @click="copySecret" />
+                </div>
+              </div>
+            </Message>
+          </div>
+          <template #footer>
+            <Button v-if="newSecret" label="Done" @click="showCreateForm = false; newSecret = null" />
+            <template v-else>
+              <Button label="Cancel" severity="secondary" text @click="showCreateForm = false" />
+              <Button :label="creating ? 'Generating...' : 'Generate'" :loading="creating" :disabled="!newName" @click="createToken" />
+            </template>
+          </template>
+        </Dialog>
 
         <!-- Tokens table -->
         <DataTable :value="tokens" :loading="loading" stripedRows>

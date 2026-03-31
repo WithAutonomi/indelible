@@ -122,62 +122,37 @@ onMounted(fetchUsers)
       <Button icon="pi pi-plus" label="Add User" @click="showCreate = !showCreate" />
     </div>
 
-    <!-- Create user form -->
-    <div v-if="showCreate" class="bg-surface-0 rounded-lg border border-surface-200 mb-6">
-      <div class="px-6 py-4 border-b border-surface-200">
-        <h2 class="text-base font-semibold">Create User</h2>
+    <!-- Create user dialog -->
+    <Dialog v-model:visible="showCreate" header="Add User" modal :style="{ width: '30rem' }">
+      <div class="space-y-5">
+        <div>
+          <label class="text-sm font-medium block mb-1">First Name</label>
+          <InputText v-model="newFirstName" required class="w-full" />
+        </div>
+        <div>
+          <label class="text-sm font-medium block mb-1">Last Name</label>
+          <InputText v-model="newLastName" required class="w-full" />
+        </div>
+        <div>
+          <label class="text-sm font-medium block mb-1">Email</label>
+          <InputText v-model="newEmail" type="email" required class="w-full" />
+        </div>
+        <div>
+          <label class="text-sm font-medium block mb-1">Password</label>
+          <p class="text-xs text-surface-400 mb-2">Minimum 8 characters.</p>
+          <InputText v-model="newPassword" type="password" required class="w-full" />
+        </div>
+        <div>
+          <label class="text-sm font-medium block mb-1">Permissions</label>
+          <p class="text-xs text-surface-400 mb-2">Access level for this user.</p>
+          <Select v-model="newPermissions" :options="permissionOptions" optionLabel="label" optionValue="value" class="w-48" />
+        </div>
       </div>
-      <form @submit.prevent="createUser">
-        <div class="divide-y divide-surface-100">
-          <div class="grid grid-cols-3 gap-6 px-6 py-5">
-            <div>
-              <label class="text-sm font-medium">First Name</label>
-            </div>
-            <div class="col-span-2">
-              <InputText v-model="newFirstName" required class="w-full max-w-md" />
-            </div>
-          </div>
-          <div class="grid grid-cols-3 gap-6 px-6 py-5">
-            <div>
-              <label class="text-sm font-medium">Last Name</label>
-            </div>
-            <div class="col-span-2">
-              <InputText v-model="newLastName" required class="w-full max-w-md" />
-            </div>
-          </div>
-          <div class="grid grid-cols-3 gap-6 px-6 py-5">
-            <div>
-              <label class="text-sm font-medium">Email</label>
-            </div>
-            <div class="col-span-2">
-              <InputText v-model="newEmail" type="email" required class="w-full max-w-md" />
-            </div>
-          </div>
-          <div class="grid grid-cols-3 gap-6 px-6 py-5">
-            <div>
-              <label class="text-sm font-medium">Password</label>
-              <p class="text-xs text-surface-400 mt-1">Minimum 8 characters.</p>
-            </div>
-            <div class="col-span-2">
-              <InputText v-model="newPassword" type="password" required class="w-full max-w-md" />
-            </div>
-          </div>
-          <div class="grid grid-cols-3 gap-6 px-6 py-5">
-            <div>
-              <label class="text-sm font-medium">Permissions</label>
-              <p class="text-xs text-surface-400 mt-1">Access level for this user.</p>
-            </div>
-            <div class="col-span-2">
-              <Select v-model="newPermissions" :options="permissionOptions" optionLabel="label" optionValue="value" class="w-48" />
-            </div>
-          </div>
-        </div>
-        <div class="px-6 py-4 bg-surface-50 border-t border-surface-200 rounded-b-lg flex justify-end gap-2">
-          <Button type="button" label="Cancel" severity="secondary" outlined @click="showCreate = false" />
-          <Button type="submit" :label="creating ? 'Creating...' : 'Create User'" :loading="creating" />
-        </div>
-      </form>
-    </div>
+      <template #footer>
+        <Button label="Cancel" severity="secondary" text @click="showCreate = false" />
+        <Button :label="creating ? 'Creating...' : 'Create User'" :loading="creating" @click="createUser" />
+      </template>
+    </Dialog>
 
     <!-- Edit permissions dialog -->
     <Dialog v-model:visible="editingUser" modal :header="editingUser ? `Edit Permissions: ${editingUser.first_name} ${editingUser.last_name}` : ''" class="w-full max-w-lg">

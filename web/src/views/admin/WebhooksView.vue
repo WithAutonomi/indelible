@@ -9,6 +9,7 @@ import Tag from 'primevue/tag'
 import ToggleSwitch from 'primevue/toggleswitch'
 import RadioButton from 'primevue/radiobutton'
 import Checkbox from 'primevue/checkbox'
+import Dialog from 'primevue/dialog'
 import Drawer from 'primevue/drawer'
 import Message from 'primevue/message'
 
@@ -233,35 +234,25 @@ onMounted(fetchWebhooks)
   <div class="p-6">
     <div class="flex items-center justify-between mb-6">
       <h1 class="text-2xl font-bold">Webhooks</h1>
-      <Button :label="showCreateForm ? 'Cancel' : 'Add Endpoint'" :severity="showCreateForm ? 'secondary' : undefined"
-        @click="showCreateForm = !showCreateForm" />
+      <Button label="Add Endpoint" icon="pi pi-plus" @click="showCreateForm = true" />
     </div>
 
-    <!-- Create form -->
-    <div v-if="showCreateForm" class="bg-surface-0 rounded-lg border border-surface-200 mb-6">
-      <div class="px-6 py-4 border-b border-surface-200">
-        <h2 class="text-base font-semibold">New Webhook</h2>
-      </div>
-      <div class="p-6 space-y-5">
+    <!-- Create dialog -->
+    <Dialog v-model:visible="showCreateForm" header="Add Webhook Endpoint" modal :style="{ width: '36rem' }">
+      <div class="space-y-5">
         <!-- URL -->
-        <div class="grid grid-cols-3 gap-6">
-          <div>
-            <label class="text-sm font-medium">Endpoint URL</label>
-            <p class="text-xs text-surface-400 mt-1">URL that receives event notifications via POST.</p>
-          </div>
-          <div class="col-span-2">
-            <InputText v-model="newUrl" type="url" placeholder="https://example.com/webhook"
-              class="w-full max-w-lg font-mono" @keydown.enter.prevent="createWebhook" />
-          </div>
+        <div>
+          <label class="text-sm font-medium block mb-1">Endpoint URL</label>
+          <p class="text-xs text-surface-400 mb-2">URL that receives event notifications via POST.</p>
+          <InputText v-model="newUrl" type="url" placeholder="https://example.com/webhook"
+            class="w-full font-mono" @keydown.enter.prevent="createWebhook" />
         </div>
 
         <!-- Integration type -->
-        <div class="grid grid-cols-3 gap-6">
-          <div>
-            <label class="text-sm font-medium">Integration Type</label>
-            <p class="text-xs text-surface-400 mt-1">Generic sends raw JSON. Slack formats as Block Kit messages.</p>
-          </div>
-          <div class="col-span-2 flex gap-4">
+        <div>
+          <label class="text-sm font-medium block mb-1">Integration Type</label>
+          <p class="text-xs text-surface-400 mb-2">Generic sends raw JSON. Slack formats as Block Kit messages.</p>
+          <div class="flex gap-4">
             <div class="flex items-center gap-2">
               <RadioButton v-model="newType" inputId="newTypeGeneric" value="generic" />
               <label for="newTypeGeneric" class="text-sm cursor-pointer">Generic JSON</label>
@@ -274,33 +265,30 @@ onMounted(fetchWebhooks)
         </div>
 
         <!-- Events -->
-        <div class="grid grid-cols-3 gap-6">
-          <div>
-            <label class="text-sm font-medium">Events</label>
-            <p class="text-xs text-surface-400 mt-1">Select which events trigger this webhook.</p>
-          </div>
-          <div class="col-span-2">
-            <p class="text-xs font-medium text-surface-500 uppercase mb-2">Upload Events</p>
-            <div class="flex flex-wrap gap-3 mb-3">
-              <div v-for="evt in uploadEvents" :key="evt" class="flex items-center gap-1.5">
-                <Checkbox v-model="newEvents" :inputId="'new-' + evt" :value="evt" />
-                <label :for="'new-' + evt" class="text-sm cursor-pointer">{{ evt }}</label>
-              </div>
+        <div>
+          <label class="text-sm font-medium block mb-1">Events</label>
+          <p class="text-xs text-surface-400 mb-2">Select which events trigger this webhook.</p>
+          <p class="text-xs font-medium text-surface-500 uppercase mb-2">Upload Events</p>
+          <div class="flex flex-wrap gap-3 mb-3">
+            <div v-for="evt in uploadEvents" :key="evt" class="flex items-center gap-1.5">
+              <Checkbox v-model="newEvents" :inputId="'new-' + evt" :value="evt" />
+              <label :for="'new-' + evt" class="text-sm cursor-pointer">{{ evt }}</label>
             </div>
-            <p class="text-xs font-medium text-surface-500 uppercase mb-2">System Events</p>
-            <div class="flex flex-wrap gap-3">
-              <div v-for="evt in systemEvents" :key="evt" class="flex items-center gap-1.5">
-                <Checkbox v-model="newEvents" :inputId="'new-sys-' + evt" :value="evt" />
-                <label :for="'new-sys-' + evt" class="text-sm cursor-pointer">{{ evt }}</label>
-              </div>
+          </div>
+          <p class="text-xs font-medium text-surface-500 uppercase mb-2">System Events</p>
+          <div class="flex flex-wrap gap-3">
+            <div v-for="evt in systemEvents" :key="evt" class="flex items-center gap-1.5">
+              <Checkbox v-model="newEvents" :inputId="'new-sys-' + evt" :value="evt" />
+              <label :for="'new-sys-' + evt" class="text-sm cursor-pointer">{{ evt }}</label>
             </div>
           </div>
         </div>
       </div>
-      <div class="px-6 py-4 bg-surface-50 border-t border-surface-200 rounded-b-lg flex justify-end">
+      <template #footer>
+        <Button label="Cancel" severity="secondary" text @click="showCreateForm = false" />
         <Button label="Create Webhook" :loading="creating" :disabled="!newUrl" @click="createWebhook" />
-      </div>
-    </div>
+      </template>
+    </Dialog>
 
     <!-- Webhook secret display -->
     <Message v-if="webhookSecret" severity="warn" :closable="false" class="mb-6">

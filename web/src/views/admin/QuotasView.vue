@@ -8,6 +8,7 @@ import InputText from 'primevue/inputtext'
 import InputNumber from 'primevue/inputnumber'
 import Select from 'primevue/select'
 import ProgressBar from 'primevue/progressbar'
+import Dialog from 'primevue/dialog'
 
 const quotas = ref<any[]>([])
 const loading = ref(true)
@@ -91,50 +92,33 @@ onMounted(fetchQuotas)
       <Button icon="pi pi-plus" label="New Quota" @click="showCreate = !showCreate" />
     </div>
 
-    <!-- Create form -->
-    <div v-if="showCreate" class="bg-surface-0 rounded-lg border border-surface-200 mb-6">
-      <div class="px-6 py-4 border-b border-surface-200">
-        <h2 class="text-base font-semibold">New Quota</h2>
+    <!-- Create dialog -->
+    <Dialog v-model:visible="showCreate" header="New Quota" modal :style="{ width: '30rem' }">
+      <div class="space-y-5">
+        <div>
+          <label class="text-sm font-medium block mb-1">Entity Type</label>
+          <p class="text-xs text-surface-400 mb-2">What this quota applies to.</p>
+          <Select v-model="newEntityType" :options="entityTypeOptions" optionLabel="label" optionValue="value" class="w-48" />
+        </div>
+        <div>
+          <label class="text-sm font-medium block mb-1">Entity ID</label>
+          <p class="text-xs text-surface-400 mb-2">Leave empty for system-wide quota.</p>
+          <InputText v-model="newEntityId" placeholder="User/group ID" class="w-full" />
+        </div>
+        <div>
+          <label class="text-sm font-medium block mb-1">Max Storage</label>
+          <p class="text-xs text-surface-400 mb-2">Maximum storage allowed for this entity.</p>
+          <div class="flex items-center gap-2">
+            <InputNumber v-model="newMaxGB" :min="1" class="w-32" />
+            <span class="text-sm text-surface-400">GB</span>
+          </div>
+        </div>
       </div>
-      <form @submit.prevent="createQuota">
-        <div class="divide-y divide-surface-100">
-          <div class="grid grid-cols-3 gap-6 px-6 py-5">
-            <div>
-              <label class="text-sm font-medium">Entity Type</label>
-              <p class="text-xs text-surface-400 mt-1">What this quota applies to.</p>
-            </div>
-            <div class="col-span-2">
-              <Select v-model="newEntityType" :options="entityTypeOptions" optionLabel="label" optionValue="value" class="w-48" />
-            </div>
-          </div>
-          <div class="grid grid-cols-3 gap-6 px-6 py-5">
-            <div>
-              <label class="text-sm font-medium">Entity ID</label>
-              <p class="text-xs text-surface-400 mt-1">Leave empty for system-wide quota.</p>
-            </div>
-            <div class="col-span-2">
-              <InputText v-model="newEntityId" placeholder="User/group ID" class="w-full max-w-md" />
-            </div>
-          </div>
-          <div class="grid grid-cols-3 gap-6 px-6 py-5">
-            <div>
-              <label class="text-sm font-medium">Max Storage</label>
-              <p class="text-xs text-surface-400 mt-1">Maximum storage allowed for this entity.</p>
-            </div>
-            <div class="col-span-2">
-              <div class="flex items-center gap-2">
-                <InputNumber v-model="newMaxGB" :min="1" class="w-32" />
-                <span class="text-sm text-surface-400">GB</span>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div class="px-6 py-4 bg-surface-50 border-t border-surface-200 rounded-b-lg flex justify-end gap-2">
-          <Button type="button" label="Cancel" severity="secondary" outlined @click="showCreate = false" />
-          <Button type="submit" :label="creating ? 'Creating...' : 'Create Quota'" :loading="creating" />
-        </div>
-      </form>
-    </div>
+      <template #footer>
+        <Button label="Cancel" severity="secondary" text @click="showCreate = false" />
+        <Button :label="creating ? 'Creating...' : 'Create Quota'" :loading="creating" @click="createQuota" />
+      </template>
+    </Dialog>
 
     <!-- Quota list -->
     <DataTable :value="quotas" :loading="loading" class="rounded-lg border border-surface-200"

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
+import { useConfirm } from 'primevue/useconfirm'
 import { api } from '../../api/client'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
@@ -9,13 +10,14 @@ import InputText from 'primevue/inputtext'
 import Password from 'primevue/password'
 import Tag from 'primevue/tag'
 import Message from 'primevue/message'
+import Dialog from 'primevue/dialog'
 
 const route = useRoute()
+const confirm = useConfirm()
 const wallets = ref<any[]>([])
 const loading = ref(true)
 const showCreate = ref(false)
 const newName = ref('')
-const newAddress = ref('')
 const newPrivateKey = ref('')
 const creating = ref(false)
 
@@ -36,11 +38,9 @@ async function createWallet() {
   try {
     await api.post('/api/v2/admin/wallets', {
       name: newName.value,
-      address: newAddress.value,
       private_key: newPrivateKey.value,
     })
     newName.value = ''
-    newAddress.value = ''
     newPrivateKey.value = ''
     showCreate.value = false
     await fetchWallets()
@@ -58,6 +58,52 @@ async function setDefault(id: number) {
   } catch {
     alert('Failed to set default wallet')
   }
+}
+
+function deleteWallet(id: number, name: string) {
+  confirm.require({
+    message: `Delete wallet "${name}"? This cannot be undone.`,
+    header: 'Confirm Delete',
+    icon: 'pi pi-exclamation-triangle',
+    acceptClass: 'p-button-danger',
+    accept: async () => {
+      try {
+        await api.delete(`/api/v2/admin/wallets/${id}`)
+        await fetchWallets()
+      } catch (e: any) {
+        alert(e.response?.data?.error || 'Failed to delete wallet')
+      }
+    },
+  })
+}
+
+const refreshingBalance = ref<number | null>(null)
+
+async function refreshBalance(id: number) {
+  refreshingBalance.value = id
+  try {
+    const res = await api.post(`/api/v2/admin/wallets/${id}/balance`)
+    // Update the wallet in-place
+    const w = wallets.value.find((w: any) => w.id === id)
+    if (w) {
+      w.payment_balance = res.data.payment_balance
+      w.gas_balance = res.data.gas_balance
+    }
+  } catch (e: any) {
+    alert(e.response?.data?.error || 'Failed to refresh balance')
+  } finally {
+    refreshingBalance.value = null
+  }
+}
+
+function formatBalance(atto: string): string {
+  if (!atto || atto === '0' || atto === '') return '0'
+  const n = BigInt(atto)
+  const whole = n / BigInt(10 ** 18)
+  const frac = n % BigInt(10 ** 18)
+  if (frac === BigInt(0)) return whole.toString()
+  const fracStr = frac.toString().padStart(18, '0').replace(/0+$/, '')
+  return `${whole}.${fracStr}`
 }
 
 onMounted(() => {
@@ -84,47 +130,25 @@ onMounted(() => {
       </div>
     </Message>
 
-    <!-- Create form -->
-    <div v-if="showCreate" class="bg-surface-0 rounded-lg border border-surface-200 mb-6">
-      <div class="px-6 py-4 border-b border-surface-200">
-        <h2 class="text-base font-semibold">Add Wallet</h2>
+    <!-- Create dialog -->
+    <Dialog v-model:visible="showCreate" header="Add Wallet" modal :style="{ width: '30rem' }">
+      <div class="space-y-5">
+        <div>
+          <label class="text-sm font-medium block mb-1">Name</label>
+          <p class="text-xs text-surface-400 mb-2">A label for this wallet.</p>
+          <InputText v-model="newName" required placeholder="e.g. Production Wallet" class="w-full" />
+        </div>
+        <div>
+          <label class="text-sm font-medium block mb-1">Private Key</label>
+          <p class="text-xs text-surface-400 mb-2">Encrypted at rest with AES-256-GCM. The wallet address is derived automatically.</p>
+          <Password v-model="newPrivateKey" required :feedback="false" toggleMask inputClass="w-full font-mono" class="w-full" />
+        </div>
       </div>
-      <form @submit.prevent="createWallet">
-        <div class="divide-y divide-surface-100">
-          <div class="grid grid-cols-3 gap-6 px-6 py-5">
-            <div>
-              <label class="text-sm font-medium">Name</label>
-              <p class="text-xs text-surface-400 mt-1">A label for this wallet.</p>
-            </div>
-            <div class="col-span-2">
-              <InputText v-model="newName" required placeholder="e.g. Production Wallet" class="w-full max-w-md" />
-            </div>
-          </div>
-          <div class="grid grid-cols-3 gap-6 px-6 py-5">
-            <div>
-              <label class="text-sm font-medium">Address</label>
-              <p class="text-xs text-surface-400 mt-1">The wallet's public address.</p>
-            </div>
-            <div class="col-span-2">
-              <InputText v-model="newAddress" required class="w-full max-w-lg font-mono" />
-            </div>
-          </div>
-          <div class="grid grid-cols-3 gap-6 px-6 py-5">
-            <div>
-              <label class="text-sm font-medium">Private Key</label>
-              <p class="text-xs text-surface-400 mt-1">Encrypted at rest with AES-256-GCM.</p>
-            </div>
-            <div class="col-span-2">
-              <Password v-model="newPrivateKey" required :feedback="false" toggleMask inputClass="w-full max-w-lg font-mono" class="w-full max-w-lg" />
-            </div>
-          </div>
-        </div>
-        <div class="px-6 py-4 bg-surface-50 border-t border-surface-200 rounded-b-lg flex justify-end gap-2">
-          <Button type="button" label="Cancel" severity="secondary" outlined @click="showCreate = false" />
-          <Button type="submit" :label="creating ? 'Creating...' : 'Add Wallet'" :loading="creating" />
-        </div>
-      </form>
-    </div>
+      <template #footer>
+        <Button label="Cancel" severity="secondary" text @click="showCreate = false" />
+        <Button :label="creating ? 'Creating...' : 'Add Wallet'" :loading="creating" @click="createWallet" />
+      </template>
+    </Dialog>
 
     <!-- Wallet list -->
     <DataTable :value="wallets" :loading="loading" stripedRows class="rounded-lg border border-surface-200"
@@ -140,6 +164,24 @@ onMounted(() => {
           <span class="font-mono text-surface-500">{{ data.address?.substring(0, 16) }}...</span>
         </template>
       </Column>
+      <Column field="payment_balance" header="Balance" sortable>
+        <template #body="{ data }">
+          <div class="flex items-start gap-2">
+            <div>
+              <div class="text-sm">
+                <span class="font-medium">{{ formatBalance(data.payment_balance) }}</span>
+                <span class="text-surface-400 ml-1">ANT</span>
+              </div>
+              <div class="text-xs text-surface-400">
+                {{ formatBalance(data.gas_balance) }} gas
+              </div>
+            </div>
+            <Button icon="pi pi-refresh" text rounded size="small" severity="secondary"
+              :loading="refreshingBalance === data.id" @click="refreshBalance(data.id)"
+              v-tooltip.top="'Refresh from chain'" />
+          </div>
+        </template>
+      </Column>
       <Column field="is_default" header="Default" sortable>
         <template #body="{ data }">
           <Tag v-if="data.is_default" value="Default" severity="success" />
@@ -152,7 +194,11 @@ onMounted(() => {
       </Column>
       <Column header="Actions">
         <template #body="{ data }">
-          <Button v-if="!data.is_default" label="Set Default" severity="info" text size="small" @click="setDefault(data.id)" />
+          <div class="flex gap-1 items-center">
+            <Button v-if="!data.is_default" label="Set Default" severity="info" text size="small" @click="setDefault(data.id)" />
+            <Button v-if="!data.is_default" icon="pi pi-trash" text rounded size="small" severity="secondary"
+              @click="deleteWallet(data.id, data.name)" v-tooltip.top="'Delete'" />
+          </div>
         </template>
       </Column>
     </DataTable>
