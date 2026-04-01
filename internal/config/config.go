@@ -165,9 +165,9 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("jwt_secret is required (set INDELIBLE_JWT_SECRET or jwt_secret in config)")
 	}
 
-	// Generate wallet encryption key if not set
-	if cfg.WalletEncryptionKey == "" {
-		cfg.WalletEncryptionKey = "0000000000000000000000000000000000000000000000000000000000000000" // placeholder — wallets won't be secure until a real key is configured
+	// Require wallet encryption key
+	if cfg.WalletEncryptionKey == "" || cfg.WalletEncryptionKey == "0000000000000000000000000000000000000000000000000000000000000000" {
+		return nil, fmt.Errorf("wallet_encryption_key is required (set INDELIBLE_WALLET_ENCRYPTION_KEY or wallet_encryption_key in config); generate with: openssl rand -hex 32")
 	}
 
 	return cfg, nil

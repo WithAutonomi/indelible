@@ -181,7 +181,10 @@ Write-Host "       antd ready at http://localhost:8082" -ForegroundColor Green
 # 3. Build + start indelible
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Write-Host "[3/5] Building indelible..." -ForegroundColor Yellow
+Write-Host "[3/5] Building frontend + indelible..." -ForegroundColor Yellow
+Push-Location "$indelibleRoot\web"
+npm run build 2>&1 | Out-Null
+Pop-Location
 Push-Location $indelibleRoot
 go build -buildvcs=false -o "$env:TEMP\indelible-e2e.exe" ./cmd/indelible
 if ($LASTEXITCODE -ne 0) {
@@ -200,12 +203,13 @@ if (Test-Path $testDataDir) { Remove-Item $testDataDir -Recurse -Force }
 New-Item -ItemType Directory -Path $testDataDir -Force | Out-Null
 
 $indelibleEnv = @{
-    INDELIBLE_JWT_SECRET = "e2e-test-secret-key-at-least-32-characters-long"
-    INDELIBLE_ANTD_URL   = "http://localhost:8082"
-    INDELIBLE_DB_URL     = "sqlite://$testDataDir/e2e.db"
-    INDELIBLE_DATA_DIR   = $testDataDir
-    INDELIBLE_PORT       = "8080"
-    INDELIBLE_DEBUG      = "true"
+    INDELIBLE_JWT_SECRET           = "e2e-test-secret-key-at-least-32-characters-long"
+    INDELIBLE_WALLET_ENCRYPTION_KEY = "e2e0test0key0000e2e0test0key0000e2e0test0key0000e2e0test0key00000"
+    INDELIBLE_ANTD_URL             = "http://localhost:8082"
+    INDELIBLE_DB_URL               = "sqlite://$testDataDir/e2e.db"
+    INDELIBLE_DATA_DIR             = $testDataDir
+    INDELIBLE_PORT                 = "8080"
+    INDELIBLE_DEBUG                = "true"
 }
 
 $ipsi = New-Object System.Diagnostics.ProcessStartInfo

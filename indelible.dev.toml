@@ -6,6 +6,7 @@ db_url = "sqlite://./dev.db"
 antd_url = "http://localhost:8082"
 data_dir = "./data"
 jwt_secret = "dev-only-secret-do-not-use-in-production!!"
+wallet_encryption_key = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
 debug = true
 
 cors_allowed_origins = ["http://localhost:5173", "http://localhost:1420", "http://tauri.localhost", "https://tauri.localhost"]

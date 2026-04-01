@@ -15,6 +15,7 @@ import (
 	"github.com/WithAutonomi/indelible/internal/config"
 	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/handlers"
+	"github.com/WithAutonomi/indelible/internal/middleware"
 	"github.com/WithAutonomi/indelible/internal/worker"
 
 	sdk "github.com/WithAutonomi/ant-sdk/antd-go"
@@ -113,6 +114,14 @@ func main() {
 	diskAlertWorker := worker.NewDiskAlertWorker(db, cfg)
 	diskAlertWorker.Start()
 	defer diskAlertWorker.Stop()
+
+	// Idempotency key cleanup (every hour)
+	go func() {
+		for {
+			time.Sleep(time.Hour)
+			middleware.CleanupIdempotencyKeys(db)
+		}
+	}()
 
 	// Start server
 	srv := &http.Server{

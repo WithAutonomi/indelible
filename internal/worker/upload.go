@@ -19,6 +19,20 @@ import (
 	"github.com/WithAutonomi/indelible/internal/services"
 )
 
+// isTransientAntdError returns true for antd errors that may succeed on retry.
+func isTransientAntdError(err error) bool {
+	var netErr *antd.NetworkError
+	var unavailErr *antd.ServiceUnavailableError
+	return errors.As(err, &netErr) || errors.As(err, &unavailErr)
+}
+
+// isPermanentAntdError returns true for antd errors that will never succeed on retry.
+func isPermanentAntdError(err error) bool {
+	var badReq *antd.BadRequestError
+	var tooLarge *antd.TooLargeError
+	return errors.As(err, &badReq) || errors.As(err, &tooLarge)
+}
+
 // errGasBackoff is a sentinel error indicating the upload should be retried later
 // because gas fees are too high.
 var errGasBackoff = errors.New("gas backoff")
@@ -35,7 +49,14 @@ type UploadWorker struct {
 	cfg         *config.Config
 	wg          sync.WaitGroup
 	cancel      context.CancelFunc
+
+	// Simple circuit breaker: pause processing when antd is unreachable
+	consecutiveFailures int
+	circuitOpenUntil    time.Time
 }
+
+const circuitBreakerThreshold = 5 // consecutive transient failures before opening
+const circuitBreakerCooldown = 30 * time.Second
 
 // NewUploadWorker creates a new background upload processor.
 func NewUploadWorker(db *sql.DB, cfg *config.Config) *UploadWorker {
@@ -112,6 +133,11 @@ func (w *UploadWorker) processLoop(ctx context.Context) {
 			inFlight.Wait()
 			return
 		case <-ticker.C:
+			// Circuit breaker: skip processing if antd is unreachable
+			if time.Now().Before(w.circuitOpenUntil) {
+				continue
+			}
+
 			maxC := w.getMaxConcurrent()
 			// Try to fill up to maxConcurrent slots
 			for len(sem) < maxC {
@@ -135,26 +161,61 @@ func (w *UploadWorker) processLoop(ctx context.Context) {
 	}
 }
 
+// maxTransientRetries is the number of times to retry a transient antd error
+// before marking the upload as failed.
+const maxTransientRetries = 3
+
 func (w *UploadWorker) processOne(ctx context.Context, upload *services.Upload) {
 	slog.Info("processing upload", "uuid", upload.UUID, "filename", upload.OriginalFilename, "size", upload.FileSize)
 	w.webhookSvc.FireUploadEvent("processing", upload)
 
-	if err := w.processUpload(ctx, upload); err != nil {
-		if errors.Is(err, errGasBackoff) {
-			// Not a failure — gas is too high, backoff and retry later
+	var lastErr error
+	for attempt := 0; attempt <= maxTransientRetries; attempt++ {
+		lastErr = w.processUpload(ctx, upload)
+		if lastErr == nil {
+			w.consecutiveFailures = 0
+			upload.Status = "completed"
+			w.webhookSvc.FireUploadEvent("completed", upload)
+			w.cleanupTempFile(upload)
+			return
+		}
+
+		if errors.Is(lastErr, errGasBackoff) {
 			slog.Warn("upload gas backoff", "uuid", upload.UUID, "attempt", upload.BackoffAttempt+1)
 			return
 		}
-		slog.Error("upload failed", "uuid", upload.UUID, "error", err)
-		w.uploadSvc.MarkFailed(upload.ID, err.Error())
-		upload.Status = "failed"
-		w.webhookSvc.FireUploadEvent("failed", upload)
-		w.cleanupTempFile(upload)
-		return
+
+		// Permanent errors fail immediately
+		if isPermanentAntdError(lastErr) || !isTransientAntdError(lastErr) {
+			break
+		}
+
+		// Transient error — wait and retry
+		if attempt < maxTransientRetries {
+			delay := time.Duration(attempt+1) * 5 * time.Second
+			slog.Warn("transient antd error, retrying", "uuid", upload.UUID, "attempt", attempt+1, "delay", delay, "error", lastErr)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(delay):
+			}
+		}
 	}
 
-	upload.Status = "completed"
-	w.webhookSvc.FireUploadEvent("completed", upload)
+	// Track consecutive transient failures for circuit breaker
+	if isTransientAntdError(lastErr) {
+		w.consecutiveFailures++
+		if w.consecutiveFailures >= circuitBreakerThreshold {
+			w.circuitOpenUntil = time.Now().Add(circuitBreakerCooldown)
+			slog.Warn("circuit breaker opened — antd appears unreachable",
+				"failures", w.consecutiveFailures, "cooldown", circuitBreakerCooldown)
+		}
+	}
+
+	slog.Error("upload failed", "uuid", upload.UUID, "error", lastErr)
+	w.uploadSvc.MarkFailed(upload.ID, lastErr.Error())
+	upload.Status = "failed"
+	w.webhookSvc.FireUploadEvent("failed", upload)
 	w.cleanupTempFile(upload)
 }
 
@@ -277,7 +338,7 @@ func (w *UploadWorker) cleanupTempFile(upload *services.Upload) {
 }
 
 func (w *UploadWorker) reconcileLoop(ctx context.Context) {
-	ticker := time.NewTicker(5 * time.Minute)
+	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 
 	for {
@@ -285,7 +346,7 @@ func (w *UploadWorker) reconcileLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			requeued, err := w.uploadSvc.RequeueStuck(2) // stuck > 2 minutes
+			requeued, err := w.uploadSvc.RequeueStuck(1) // stuck > 1 minute
 			if err != nil {
 				slog.Error("reconciliation requeue failed", "error", err)
 			} else if requeued > 0 {

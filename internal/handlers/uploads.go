@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -420,7 +421,7 @@ func GetUpload(db *sql.DB) http.HandlerFunc {
 // @Security     BearerAuth
 // @Router       /uploads/quote [post]
 func QuoteUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
-	client := antd.NewClient(cfg.AntdURL)
+	client := antd.NewClient(cfg.AntdURL, antd.WithTimeout(30*time.Second))
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		contentType := r.Header.Get("Content-Type")
@@ -452,7 +453,7 @@ func QuoteUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 
 			cost, err := client.DataCost(r.Context(), sample)
 			if err != nil {
-				jsonError(w, fmt.Sprintf("cost estimation failed: %v", err), http.StatusBadGateway)
+				jsonAntdError(w, "cost estimation failed", err)
 				return
 			}
 
@@ -506,9 +507,9 @@ func QuoteUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 
 		// Get cost from antd
 		isPublic := visibility == "public"
-		cost, err := client.FileCost(r.Context(), tempPath, isPublic, true)
+		cost, err := client.FileCost(r.Context(), tempPath, isPublic)
 		if err != nil {
-			jsonError(w, fmt.Sprintf("cost estimation failed: %v", err), http.StatusBadGateway)
+			jsonAntdError(w, "cost estimation failed", err)
 			return
 		}
 
@@ -573,7 +574,7 @@ func DownloadUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			// External signer flow: use local DataMap to download directly
 			data, err := client.DataGetPrivate(r.Context(), upload.DataMap.String)
 			if err != nil {
-				jsonError(w, fmt.Sprintf("download from network failed: %v", err), http.StatusBadGateway)
+				jsonAntdError(w, "download from network failed", err)
 				return
 			}
 			if err := os.WriteFile(tempPath, data, 0600); err != nil {
@@ -584,13 +585,13 @@ func DownloadUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			// Legacy flow: download via network address
 			if upload.Visibility == "public" {
 				if err := client.FileDownloadPublic(r.Context(), upload.DatamapAddress.String, tempPath); err != nil {
-					jsonError(w, fmt.Sprintf("download from network failed: %v", err), http.StatusBadGateway)
+					jsonAntdError(w, "download from network failed", err)
 					return
 				}
 			} else {
 				data, err := client.DataGetPrivate(r.Context(), upload.DatamapAddress.String)
 				if err != nil {
-					jsonError(w, fmt.Sprintf("download from network failed: %v", err), http.StatusBadGateway)
+					jsonAntdError(w, "download from network failed", err)
 					return
 				}
 				if err := os.WriteFile(tempPath, data, 0600); err != nil {
@@ -784,17 +785,17 @@ func DeleteUpload(db *sql.DB) http.HandlerFunc {
 
 // scaleCost provides a rough linear cost estimate.
 // cost is the atto-token cost string for sampleSize bytes; we scale to targetSize.
+// Uses math/big to avoid int64 overflow on large files.
 func scaleCost(cost string, targetSize, sampleSize int64) string {
 	if sampleSize <= 0 || targetSize <= 0 {
 		return cost
 	}
-	// Parse cost as integer (atto tokens)
-	// For simplicity, we do integer math to avoid floating point
-	costVal := int64(0)
-	fmt.Sscanf(cost, "%d", &costVal)
-	if costVal == 0 {
+	costVal, ok := new(big.Int).SetString(cost, 10)
+	if !ok || costVal.Sign() == 0 {
 		return cost
 	}
-	scaled := costVal * targetSize / sampleSize
-	return fmt.Sprintf("%d", scaled)
+	// scaled = costVal * targetSize / sampleSize
+	scaled := new(big.Int).Mul(costVal, big.NewInt(targetSize))
+	scaled.Div(scaled, big.NewInt(sampleSize))
+	return scaled.String()
 }

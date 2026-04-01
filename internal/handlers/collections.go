@@ -372,3 +372,40 @@ func RemoveFromCollection(db *sql.DB) http.HandlerFunc {
 		jsonResponse(w, http.StatusOK, map[string]string{"message": "file removed from collection"})
 	}
 }
+
+// UploadCollections returns the collection IDs that contain a given upload.
+// This allows the frontend to fetch membership in a single request instead of N+1.
+//
+// @Summary Get collections containing an upload
+// @Tags Collections
+// @Produce json
+// @Param id path string true "Upload UUID"
+// @Success 200 {object} map[string]any
+// @Router /uploads/{id}/collections [get]
+// @Security BearerAuth
+func UploadCollections(db *sql.DB) http.HandlerFunc {
+	collSvc := services.NewCollectionService(db)
+	uploadSvc := services.NewUploadService(db)
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID := middleware.GetUserID(r.Context())
+		uploadUUID := chi.URLParam(r, "id")
+
+		upload, err := uploadSvc.GetByUUID(uploadUUID)
+		if err != nil || upload.UserID != userID {
+			jsonError(w, "upload not found", http.StatusNotFound)
+			return
+		}
+
+		ids, err := collSvc.CollectionIDsForUpload(upload.ID)
+		if err != nil {
+			jsonError(w, "failed to get collections", http.StatusInternalServerError)
+			return
+		}
+		if ids == nil {
+			ids = []int64{}
+		}
+
+		jsonResponse(w, http.StatusOK, map[string]any{"collection_ids": ids})
+	}
+}

@@ -3,6 +3,7 @@ package services
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/WithAutonomi/indelible/internal/crypto"
@@ -47,7 +48,9 @@ func (s *WalletService) Create(name, address, privateKey string) (*Wallet, error
 
 	// Check if there are any existing wallets
 	var count int64
-	s.db.QueryRow(`SELECT COUNT(*) FROM wallets`).Scan(&count)
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM wallets`).Scan(&count); err != nil {
+		return nil, fmt.Errorf("failed to check existing wallets: %w", err)
+	}
 	isDefault := count == 0
 
 	result, err := s.db.Exec(

@@ -47,6 +47,14 @@ func Authenticate(db *sql.DB, cfg *config.Config) func(http.Handler) http.Handle
 					return
 				}
 
+				// Reject JWTs issued before a password change
+				if user.PasswordChangedAt.Valid && claims.IssuedAt != nil {
+					if claims.IssuedAt.Time.Before(user.PasswordChangedAt.Time) {
+						http.Error(w, `{"error":"session invalidated by password change","code":"unauthorized"}`, http.StatusUnauthorized)
+						return
+					}
+				}
+
 				ctx := context.WithValue(r.Context(), UserIDKey, claims.UserID)
 				ctx = context.WithValue(ctx, AuthMethodKey, "jwt")
 				next.ServeHTTP(w, r.WithContext(ctx))

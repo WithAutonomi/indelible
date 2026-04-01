@@ -346,7 +346,8 @@ func ChangePassword(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		// TODO: revoke all other sessions
+		// password_changed_at is set by UpdatePassword — JWTs issued before
+		// this timestamp are rejected by the auth middleware.
 
 		jsonResponse(w, http.StatusOK, map[string]string{"message": "password updated"})
 	}
@@ -459,7 +460,8 @@ func ResetPassword(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		// TODO: revoke all existing sessions for this user
+		// password_changed_at is set by UpdatePassword — JWTs issued before
+		// this timestamp are rejected by the auth middleware.
 
 		jsonResponse(w, http.StatusOK, map[string]string{"message": "password reset successfully"})
 	}

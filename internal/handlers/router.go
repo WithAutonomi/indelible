@@ -51,10 +51,13 @@ func NewRouter(cfg *config.Config, db *sql.DB) http.Handler {
 
 		// Public auth routes (with rate limiting on login)
 		r.Group(func(r chi.Router) {
-			r.With(middleware.RateLimit(5, 60*time.Second, cfg.TrustedProxies)).Post("/auth/login", Login(db, cfg))
+			loginRL := middleware.RateLimit(5, 60*time.Second, cfg.TrustedProxies)
+			resetRL := middleware.RateLimit(3, 60*time.Second, cfg.TrustedProxies)
+
+			r.With(loginRL).Post("/auth/login", Login(db, cfg))
 			r.Post("/auth/register", Register(db, cfg))
-			r.Post("/auth/forgot-password", ForgotPassword(db, cfg))
-			r.Post("/auth/reset-password", ResetPassword(db, cfg))
+			r.With(resetRL).Post("/auth/forgot-password", ForgotPassword(db, cfg))
+			r.With(resetRL).Post("/auth/reset-password", ResetPassword(db, cfg))
 			r.Get("/auth/verify-email", VerifyEmail(db))
 		})
 
@@ -81,10 +84,13 @@ func NewRouter(cfg *config.Config, db *sql.DB) http.Handler {
 			r.Post("/uploads/{id}/retry", RetryUpload(db))
 			r.Post("/uploads/{id}/force-retry", ForceRetryUpload(db))
 			r.Delete("/uploads/{id}", DeleteUpload(db))
+			r.Get("/uploads/{id}/collections", UploadCollections(db))
 
 			// Tags
 			r.Get("/uploads/{id}/tags", GetTags(db))
 			r.Put("/uploads/{id}/tags", UpdateTags(db))
+			r.Get("/tags/keys", ListTagKeys(db))
+			r.Get("/tags/values", ListTagValues(db))
 			r.Get("/tags/search", SearchByTags(db))
 
 			// Collections

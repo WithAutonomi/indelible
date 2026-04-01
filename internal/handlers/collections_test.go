@@ -103,6 +103,7 @@ func TestCollectionHierarchy(t *testing.T) {
 func TestAddAndRemoveFileFromCollection(t *testing.T) {
 	router := setupTestRouter(t)
 	adminToken := registerAndGetToken(t, router, "admin@test.com", "password123", "Admin", "User")
+	createTestWallet(t, router, adminToken)
 
 	// Create collection
 	body, _ := json.Marshal(map[string]string{"name": "My Files"})
