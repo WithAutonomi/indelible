@@ -446,3 +446,183 @@ func TestQuotaUpdateEnableDisable(t *testing.T) {
 		t.Errorf("expected max_bytes=2000, got %d", updated.MaxBytes)
 	}
 }
+
+func TestCheckUserQuotaInFlight_CountsQueuedUploads(t *testing.T) {
+	db := setupTestDB(t)
+	userSvc := NewUserService(db)
+	user := createTestUser(t, userSvc, "inflight-queued@example.com", "In", "Flight")
+	uploadSvc := NewUploadService(db)
+	quotaSvc := NewQuotaService(db)
+
+	// User quota of 10000 bytes
+	quotaSvc.Create("user", fmt.Sprintf("%d", user.ID), 10000)
+
+	// Create queued uploads totalling 6000 bytes (queued is the default status from Create)
+	createTestUpload(t, uploadSvc, user.ID, "q1.bin", 3000)
+	createTestUpload(t, uploadSvc, user.ID, "q2.bin", 3000)
+
+	// CheckUserQuotaInFlight should count queued uploads: 6000 + 3000 = 9000 <= 10000
+	err := quotaSvc.CheckUserQuotaInFlight(user.ID, 3000)
+	if err != nil {
+		t.Errorf("expected no error (queued uploads counted, 6000+3000=9000 <= 10000), got %v", err)
+	}
+
+	// Contrast with CheckUserQuota which ignores queued: 0 + 3000 = 3000 <= 10000
+	err = quotaSvc.CheckUserQuota(user.ID, 3000)
+	if err != nil {
+		t.Errorf("expected no error from CheckUserQuota (queued not counted), got %v", err)
+	}
+
+	// InFlight should block when queued + new exceeds quota: 6000 + 5000 = 11000 > 10000
+	err = quotaSvc.CheckUserQuotaInFlight(user.ID, 5000)
+	if err != ErrQuotaExceeded {
+		t.Errorf("expected ErrQuotaExceeded (queued counted, 6000+5000=11000 > 10000), got %v", err)
+	}
+}
+
+func TestCheckUserQuotaInFlight_CountsProcessingUploads(t *testing.T) {
+	db := setupTestDB(t)
+	userSvc := NewUserService(db)
+	user := createTestUser(t, userSvc, "inflight-proc@example.com", "In", "Proc")
+	uploadSvc := NewUploadService(db)
+	quotaSvc := NewQuotaService(db)
+
+	// User quota of 10000 bytes
+	quotaSvc.Create("user", fmt.Sprintf("%d", user.ID), 10000)
+
+	// Create uploads and move them to processing via DequeueNext
+	createTestUpload(t, uploadSvc, user.ID, "p1.bin", 4000)
+	createTestUpload(t, uploadSvc, user.ID, "p2.bin", 3000)
+	uploadSvc.DequeueNext() // moves p1 to processing
+	uploadSvc.DequeueNext() // moves p2 to processing
+
+	// CheckUserQuotaInFlight should count processing uploads: 7000 + 2000 = 9000 <= 10000
+	err := quotaSvc.CheckUserQuotaInFlight(user.ID, 2000)
+	if err != nil {
+		t.Errorf("expected no error (processing uploads counted, 7000+2000=9000 <= 10000), got %v", err)
+	}
+
+	// Contrast with CheckUserQuota which ignores processing: 0 + 2000 = 2000 <= 10000
+	err = quotaSvc.CheckUserQuota(user.ID, 2000)
+	if err != nil {
+		t.Errorf("expected no error from CheckUserQuota (processing not counted), got %v", err)
+	}
+
+	// InFlight should block when processing + new exceeds quota: 7000 + 4000 = 11000 > 10000
+	err = quotaSvc.CheckUserQuotaInFlight(user.ID, 4000)
+	if err != ErrQuotaExceeded {
+		t.Errorf("expected ErrQuotaExceeded (processing counted, 7000+4000=11000 > 10000), got %v", err)
+	}
+}
+
+func TestCheckUserQuotaInFlight_BlocksWhenInFlightExceedsQuota(t *testing.T) {
+	db := setupTestDB(t)
+	userSvc := NewUserService(db)
+	user := createTestUser(t, userSvc, "inflight-block@example.com", "Block", "Test")
+	uploadSvc := NewUploadService(db)
+	quotaSvc := NewQuotaService(db)
+
+	// User quota of 100 bytes
+	quotaSvc.Create("user", fmt.Sprintf("%d", user.ID), 100)
+
+	// Create 80 bytes of queued uploads
+	createTestUpload(t, uploadSvc, user.ID, "q80.bin", 80)
+
+	// Try to add 30 more bytes: 80 + 30 = 110 > 100 -- should fail
+	err := quotaSvc.CheckUserQuotaInFlight(user.ID, 30)
+	if err != ErrQuotaExceeded {
+		t.Errorf("expected ErrQuotaExceeded (80 queued + 30 new = 110 > 100), got %v", err)
+	}
+
+	// Exact boundary: 80 + 20 = 100 -- should succeed
+	err = quotaSvc.CheckUserQuotaInFlight(user.ID, 20)
+	if err != nil {
+		t.Errorf("expected no error at exact limit (80+20=100), got %v", err)
+	}
+
+	// One byte over: 80 + 21 = 101 > 100 -- should fail
+	err = quotaSvc.CheckUserQuotaInFlight(user.ID, 21)
+	if err != ErrQuotaExceeded {
+		t.Errorf("expected ErrQuotaExceeded (80+21=101 > 100), got %v", err)
+	}
+}
+
+func TestCheckUserQuotaInFlight_AllowsWhenUnderQuota(t *testing.T) {
+	db := setupTestDB(t)
+	userSvc := NewUserService(db)
+	user := createTestUser(t, userSvc, "inflight-allow@example.com", "Allow", "Test")
+	uploadSvc := NewUploadService(db)
+	quotaSvc := NewQuotaService(db)
+
+	// User quota of 100 bytes
+	quotaSvc.Create("user", fmt.Sprintf("%d", user.ID), 100)
+
+	// Create 50 bytes of queued uploads
+	createTestUpload(t, uploadSvc, user.ID, "q50.bin", 50)
+
+	// Check 30 more: 50 + 30 = 80 <= 100 -- should succeed
+	err := quotaSvc.CheckUserQuotaInFlight(user.ID, 30)
+	if err != nil {
+		t.Errorf("expected no error (50 queued + 30 new = 80 <= 100), got %v", err)
+	}
+
+	// Also test with a mix of queued and processing
+	createTestUpload(t, uploadSvc, user.ID, "p10.bin", 10)
+	uploadSvc.DequeueNext() // moves one upload to processing
+
+	// Now: 50 queued (q50) + 10 processing (p10) + 30 new = 90 <= 100
+	err = quotaSvc.CheckUserQuotaInFlight(user.ID, 30)
+	if err != nil {
+		t.Errorf("expected no error (50 queued + 10 processing + 30 new = 90 <= 100), got %v", err)
+	}
+}
+
+func TestCheckUserQuotaInFlight_SystemQuota(t *testing.T) {
+	db := setupTestDB(t)
+	userSvc := NewUserService(db)
+	user1 := createTestUser(t, userSvc, "sys-inflight1@example.com", "Sys", "One")
+	user2 := createTestUser(t, userSvc, "sys-inflight2@example.com", "Sys", "Two")
+	uploadSvc := NewUploadService(db)
+	quotaSvc := NewQuotaService(db)
+
+	// System-wide quota of 10000 bytes (no user-level quota)
+	quotaSvc.Create("system", "", 10000)
+
+	// user1 has 4000 bytes queued
+	createTestUpload(t, uploadSvc, user1.ID, "u1q.bin", 4000)
+
+	// user2 has 3000 bytes in processing
+	createTestUpload(t, uploadSvc, user2.ID, "u2p.bin", 3000)
+	uploadSvc.DequeueNext() // moves u2p to processing
+
+	// System in-flight total: 4000 + 3000 = 7000
+	// Adding 2000 for user1: 7000 + 2000 = 9000 <= 10000 -- should succeed
+	err := quotaSvc.CheckUserQuotaInFlight(user1.ID, 2000)
+	if err != nil {
+		t.Errorf("expected no error (system in-flight 7000 + 2000 = 9000 <= 10000), got %v", err)
+	}
+
+	// Adding 4000 for user1: 7000 + 4000 = 11000 > 10000 -- should fail
+	err = quotaSvc.CheckUserQuotaInFlight(user1.ID, 4000)
+	if err != ErrQuotaExceeded {
+		t.Errorf("expected ErrQuotaExceeded (system in-flight 7000 + 4000 = 11000 > 10000), got %v", err)
+	}
+
+	// Contrast with CheckUserQuota which ignores queued/processing: 0 + 4000 = 4000 <= 10000
+	err = quotaSvc.CheckUserQuota(user1.ID, 4000)
+	if err != nil {
+		t.Errorf("expected no error from CheckUserQuota (queued/processing not counted), got %v", err)
+	}
+
+	// Exact boundary: 7000 + 3000 = 10000 -- should succeed
+	err = quotaSvc.CheckUserQuotaInFlight(user1.ID, 3000)
+	if err != nil {
+		t.Errorf("expected no error at exact system limit (7000+3000=10000), got %v", err)
+	}
+
+	// One byte over: 7000 + 3001 = 10001 > 10000 -- should fail
+	err = quotaSvc.CheckUserQuotaInFlight(user1.ID, 3001)
+	if err != ErrQuotaExceeded {
+		t.Errorf("expected ErrQuotaExceeded (system 7000+3001=10001 > 10000), got %v", err)
+	}
+}

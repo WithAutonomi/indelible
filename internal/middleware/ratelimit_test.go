@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -230,5 +231,72 @@ func TestRateLimitMiddleware_BlocksOverLimit(t *testing.T) {
 	}
 	if w.Header().Get("X-RateLimit-Remaining") != "0" {
 		t.Errorf("X-RateLimit-Remaining = %q, want 0", w.Header().Get("X-RateLimit-Remaining"))
+	}
+}
+
+func TestRateLimitByUser(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok"))
+	})
+
+	mw := RateLimitByUser(3, time.Minute)
+	wrapped := mw(handler)
+
+	// Helper to create a request with a user ID in context
+	makeReq := func(userID int64) (*httptest.ResponseRecorder, *http.Request) {
+		req := httptest.NewRequest("POST", "/upload", nil)
+		ctx := context.WithValue(req.Context(), UserIDKey, userID)
+		req = req.WithContext(ctx)
+		w := httptest.NewRecorder()
+		return w, req
+	}
+
+	// User 1: make 3 requests (all should succeed)
+	for i := 0; i < 3; i++ {
+		w, req := makeReq(1)
+		wrapped.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("user1 request %d: got %d, want 200", i+1, w.Code)
+		}
+		if w.Header().Get("X-RateLimit-Limit") != "3" {
+			t.Errorf("user1 request %d: X-RateLimit-Limit = %q, want 3", i+1, w.Header().Get("X-RateLimit-Limit"))
+		}
+	}
+
+	// User 1: 4th request should be rate-limited
+	w, req := makeReq(1)
+	wrapped.ServeHTTP(w, req)
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("user1 request 4: got %d, want 429", w.Code)
+	}
+	if w.Header().Get("Retry-After") == "" {
+		t.Error("missing Retry-After header on rate-limited response")
+	}
+	if w.Header().Get("X-RateLimit-Remaining") != "0" {
+		t.Errorf("X-RateLimit-Remaining = %q, want 0", w.Header().Get("X-RateLimit-Remaining"))
+	}
+
+	// User 2: should be independent -- first request should succeed
+	w2, req2 := makeReq(2)
+	wrapped.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusOK {
+		t.Fatalf("user2 request 1: got %d, want 200", w2.Code)
+	}
+
+	// User 2: make 2 more (total 3, at limit)
+	for i := 0; i < 2; i++ {
+		w2, req2 = makeReq(2)
+		wrapped.ServeHTTP(w2, req2)
+		if w2.Code != http.StatusOK {
+			t.Fatalf("user2 request %d: got %d, want 200", i+2, w2.Code)
+		}
+	}
+
+	// User 2: 4th request should also be rate-limited
+	w2, req2 = makeReq(2)
+	wrapped.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusTooManyRequests {
+		t.Fatalf("user2 request 4: got %d, want 429", w2.Code)
 	}
 }
