@@ -944,7 +944,7 @@ func TestUploadDeleteCleansUpRelatedData(t *testing.T) {
 	collSvc := NewCollectionService(db)
 
 	u := createTestUpload(t, uploadSvc, user.ID, "tagged.bin", 100)
-	tagSvc.SetTags(u.ID, map[string]string{"env": "test"})
+	tagSvc.SetTags(u.ID, map[string][]string{"env": {"test"}})
 
 	coll, _ := collSvc.Create("TestColl", "", nil, user.ID)
 	collSvc.AddFile(coll.ID, u.ID)

@@ -34,10 +34,10 @@ func TestCollectionTagsCRUD(t *testing.T) {
 
 	// Set tags on the collection
 	tagBody, _ := json.Marshal(map[string]any{
-		"tags": map[string]string{
-			"department": "engineering",
-			"priority":   "high",
-			"env":        "prod",
+		"tags": map[string][]string{
+			"department": {"engineering"},
+			"priority":   {"high"},
+			"env":        {"prod"},
 		},
 	})
 	req := httptest.NewRequest("PUT", fmt.Sprintf("/api/v2/collections/%d/tags", collID), bytes.NewReader(tagBody))
@@ -53,7 +53,7 @@ func TestCollectionTagsCRUD(t *testing.T) {
 	var putResp map[string]any
 	json.Unmarshal(w.Body.Bytes(), &putResp)
 	putTags := putResp["tags"].(map[string]any)
-	if putTags["department"] != "engineering" {
+	if putTags["department"].([]any)[0] != "engineering" {
 		t.Errorf("PUT response department = %v, want engineering", putTags["department"])
 	}
 
@@ -74,13 +74,13 @@ func TestCollectionTagsCRUD(t *testing.T) {
 	if len(tags) != 3 {
 		t.Errorf("expected 3 tags, got %d: %v", len(tags), tags)
 	}
-	if tags["department"] != "engineering" {
+	if tags["department"].([]any)[0] != "engineering" {
 		t.Errorf("department = %v, want engineering", tags["department"])
 	}
-	if tags["priority"] != "high" {
+	if tags["priority"].([]any)[0] != "high" {
 		t.Errorf("priority = %v, want high", tags["priority"])
 	}
-	if tags["env"] != "prod" {
+	if tags["env"].([]any)[0] != "prod" {
 		t.Errorf("env = %v, want prod", tags["env"])
 	}
 }
@@ -93,7 +93,7 @@ func TestCollectionTagsReplace(t *testing.T) {
 
 	// Set initial tags
 	tagBody, _ := json.Marshal(map[string]any{
-		"tags": map[string]string{"color": "red", "size": "large"},
+		"tags": map[string][]string{"color": {"red"}, "size": {"large"}},
 	})
 	req := httptest.NewRequest("PUT", fmt.Sprintf("/api/v2/collections/%d/tags", collID), bytes.NewReader(tagBody))
 	req.Header.Set("Content-Type", "application/json")
@@ -107,7 +107,7 @@ func TestCollectionTagsReplace(t *testing.T) {
 
 	// Replace with completely different tags
 	tagBody, _ = json.Marshal(map[string]any{
-		"tags": map[string]string{"shape": "circle"},
+		"tags": map[string][]string{"shape": {"circle"}},
 	})
 	req = httptest.NewRequest("PUT", fmt.Sprintf("/api/v2/collections/%d/tags", collID), bytes.NewReader(tagBody))
 	req.Header.Set("Content-Type", "application/json")
@@ -136,7 +136,7 @@ func TestCollectionTagsReplace(t *testing.T) {
 	if len(tags) != 1 {
 		t.Errorf("expected 1 tag after replace, got %d: %v", len(tags), tags)
 	}
-	if tags["shape"] != "circle" {
+	if tags["shape"].([]any)[0] != "circle" {
 		t.Errorf("shape = %v, want circle", tags["shape"])
 	}
 	if _, exists := tags["color"]; exists {
@@ -156,7 +156,7 @@ func TestCollectionTagsOwnership(t *testing.T) {
 	collID := createCollectionAndGetID(t, router, userAToken, "A's Private Collection")
 
 	tagBody, _ := json.Marshal(map[string]any{
-		"tags": map[string]string{"owner": "a"},
+		"tags": map[string][]string{"owner": {"a"}},
 	})
 	req := httptest.NewRequest("PUT", fmt.Sprintf("/api/v2/collections/%d/tags", collID), bytes.NewReader(tagBody))
 	req.Header.Set("Content-Type", "application/json")
@@ -180,7 +180,7 @@ func TestCollectionTagsOwnership(t *testing.T) {
 
 	// User B tries to PUT tags on User A's collection — should get 403
 	tagBody, _ = json.Marshal(map[string]any{
-		"tags": map[string]string{"hack": "true"},
+		"tags": map[string][]string{"hack": {"true"}},
 	})
 	req = httptest.NewRequest("PUT", fmt.Sprintf("/api/v2/collections/%d/tags", collID), bytes.NewReader(tagBody))
 	req.Header.Set("Content-Type", "application/json")
@@ -201,7 +201,7 @@ func TestCollectionTagsOwnership(t *testing.T) {
 	var resp map[string]any
 	json.Unmarshal(w.Body.Bytes(), &resp)
 	tags := resp["tags"].(map[string]any)
-	if tags["owner"] != "a" {
+	if tags["owner"].([]any)[0] != "a" {
 		t.Errorf("user A's tags were corrupted: got %v", tags)
 	}
 }
@@ -215,9 +215,9 @@ func TestCollectionTagsInheritOnAddFile(t *testing.T) {
 	collID := createCollectionAndGetID(t, router, token, "Inherited Tags Collection")
 
 	tagBody, _ := json.Marshal(map[string]any{
-		"tags": map[string]string{
-			"department": "legal",
-			"year":       "2026",
+		"tags": map[string][]string{
+			"department": {"legal"},
+			"year":       {"2026"},
 		},
 	})
 	req := httptest.NewRequest("PUT", fmt.Sprintf("/api/v2/collections/%d/tags", collID), bytes.NewReader(tagBody))
@@ -259,10 +259,10 @@ func TestCollectionTagsInheritOnAddFile(t *testing.T) {
 	json.Unmarshal(w.Body.Bytes(), &resp)
 	tags := resp["tags"].(map[string]any)
 
-	if tags["department"] != "legal" {
+	if tags["department"].([]any)[0] != "legal" {
 		t.Errorf("inherited department = %v, want legal", tags["department"])
 	}
-	if tags["year"] != "2026" {
+	if tags["year"].([]any)[0] != "2026" {
 		t.Errorf("inherited year = %v, want 2026", tags["year"])
 	}
 }

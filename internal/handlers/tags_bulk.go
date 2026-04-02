@@ -10,10 +10,10 @@ import (
 )
 
 type bulkTagRequest struct {
-	UploadUUIDs []string          `json:"upload_uuids"`
-	Selector    string            `json:"selector"`
-	AddTags     map[string]string `json:"add_tags"`
-	RemoveTags  []string          `json:"remove_tags"`
+	UploadUUIDs []string              `json:"upload_uuids"`
+	Selector    string                `json:"selector"`
+	AddTags     map[string][]string   `json:"add_tags"`
+	RemoveTags  []string              `json:"remove_tags"`
 }
 
 // BulkTagUploads applies or removes tags across multiple uploads.
@@ -78,7 +78,7 @@ func BulkTagUploads(db *sql.DB) http.HandlerFunc {
 		for _, u := range targets {
 			if len(req.AddTags) > 0 {
 				existing, _ := tagSvc.GetTags(u.ID)
-				merged := make(map[string]string)
+				merged := make(map[string][]string)
 				for k, v := range existing {
 					merged[k] = v
 				}

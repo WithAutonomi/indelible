@@ -75,10 +75,10 @@ func TestUploadWithTags(t *testing.T) {
 	var tagResp map[string]any
 	json.Unmarshal(w.Body.Bytes(), &tagResp)
 	gotTags := tagResp["tags"].(map[string]any)
-	if gotTags["department"] != "engineering" {
+	if gotTags["department"].([]any)[0] != "engineering" {
 		t.Errorf("department = %v, want engineering", gotTags["department"])
 	}
-	if gotTags["project"] != "backend" {
+	if gotTags["project"].([]any)[0] != "backend" {
 		t.Errorf("project = %v, want backend", gotTags["project"])
 	}
 }
@@ -92,7 +92,7 @@ func TestTagSearch_Selector(t *testing.T) {
 	uuid1 := uploadAndGetUUID(t, router, adminToken, "eng-doc.txt")
 	uuid2 := uploadAndGetUUID(t, router, adminToken, "sales-doc.txt")
 
-	tagBody, _ := json.Marshal(map[string]any{"tags": map[string]string{"department": "engineering"}})
+	tagBody, _ := json.Marshal(map[string]any{"tags": map[string][]string{"department": {"engineering"}}})
 	req := httptest.NewRequest("PUT", "/api/v2/uploads/"+uuid1+"/tags", bytes.NewReader(tagBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+adminToken)
@@ -102,7 +102,7 @@ func TestTagSearch_Selector(t *testing.T) {
 		t.Fatalf("tag file 1: got %d, body: %s", w.Code, w.Body.String())
 	}
 
-	tagBody, _ = json.Marshal(map[string]any{"tags": map[string]string{"department": "sales"}})
+	tagBody, _ = json.Marshal(map[string]any{"tags": map[string][]string{"department": {"sales"}}})
 	req = httptest.NewRequest("PUT", "/api/v2/uploads/"+uuid2+"/tags", bytes.NewReader(tagBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+adminToken)
@@ -150,9 +150,9 @@ func TestBulkTagByUUIDs(t *testing.T) {
 	// Bulk add tags to the first two
 	bulkBody, _ := json.Marshal(map[string]any{
 		"upload_uuids": []string{uuid1, uuid2},
-		"add_tags": map[string]string{
-			"team":   "platform",
-			"status": "reviewed",
+		"add_tags": map[string][]string{
+			"team":   {"platform"},
+			"status": {"reviewed"},
 		},
 	})
 	req := httptest.NewRequest("POST", "/api/v2/tags/bulk", bytes.NewReader(bulkBody))
@@ -181,10 +181,10 @@ func TestBulkTagByUUIDs(t *testing.T) {
 	var tagResp map[string]any
 	json.Unmarshal(w.Body.Bytes(), &tagResp)
 	tags1 := tagResp["tags"].(map[string]any)
-	if tags1["team"] != "platform" {
+	if tags1["team"].([]any)[0] != "platform" {
 		t.Errorf("file1 team = %v, want platform", tags1["team"])
 	}
-	if tags1["status"] != "reviewed" {
+	if tags1["status"].([]any)[0] != "reviewed" {
 		t.Errorf("file1 status = %v, want reviewed", tags1["status"])
 	}
 
@@ -196,7 +196,7 @@ func TestBulkTagByUUIDs(t *testing.T) {
 
 	json.Unmarshal(w.Body.Bytes(), &tagResp)
 	tags2 := tagResp["tags"].(map[string]any)
-	if tags2["team"] != "platform" {
+	if tags2["team"].([]any)[0] != "platform" {
 		t.Errorf("file2 team = %v, want platform", tags2["team"])
 	}
 
@@ -226,7 +226,7 @@ func TestTagFacets(t *testing.T) {
 
 	// Tag file 0 and 1 with department=engineering, file 2 with department=sales
 	for i := 0; i < 2; i++ {
-		tagBody, _ := json.Marshal(map[string]any{"tags": map[string]string{"department": "engineering"}})
+		tagBody, _ := json.Marshal(map[string]any{"tags": map[string][]string{"department": {"engineering"}}})
 		req := httptest.NewRequest("PUT", "/api/v2/uploads/"+uuids[i]+"/tags", bytes.NewReader(tagBody))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+adminToken)
@@ -237,7 +237,7 @@ func TestTagFacets(t *testing.T) {
 		}
 	}
 
-	tagBody, _ := json.Marshal(map[string]any{"tags": map[string]string{"department": "sales"}})
+	tagBody, _ := json.Marshal(map[string]any{"tags": map[string][]string{"department": {"sales"}}})
 	req := httptest.NewRequest("PUT", "/api/v2/uploads/"+uuids[2]+"/tags", bytes.NewReader(tagBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+adminToken)
@@ -308,9 +308,9 @@ func TestCollectionTagInheritance(t *testing.T) {
 
 	// Set tags on the collection
 	collTagBody, _ := json.Marshal(map[string]any{
-		"tags": map[string]string{
-			"team":       "engineering",
-			"compliance": "internal",
+		"tags": map[string][]string{
+			"team":       {"engineering"},
+			"compliance": {"internal"},
 		},
 	})
 	req = httptest.NewRequest("PUT", fmt.Sprintf("/api/v2/collections/%.0f/tags", collID), bytes.NewReader(collTagBody))
@@ -336,10 +336,10 @@ func TestCollectionTagInheritance(t *testing.T) {
 	var collTagResp map[string]any
 	json.Unmarshal(w.Body.Bytes(), &collTagResp)
 	collTags := collTagResp["tags"].(map[string]any)
-	if collTags["team"] != "engineering" {
+	if collTags["team"].([]any)[0] != "engineering" {
 		t.Errorf("collection team = %v, want engineering", collTags["team"])
 	}
-	if collTags["compliance"] != "internal" {
+	if collTags["compliance"].([]any)[0] != "internal" {
 		t.Errorf("collection compliance = %v, want internal", collTags["compliance"])
 	}
 
@@ -371,10 +371,10 @@ func TestCollectionTagInheritance(t *testing.T) {
 	var fileTagResp map[string]any
 	json.Unmarshal(w.Body.Bytes(), &fileTagResp)
 	fileTags := fileTagResp["tags"].(map[string]any)
-	if fileTags["team"] != "engineering" {
+	if fileTags["team"].([]any)[0] != "engineering" {
 		t.Errorf("inherited team = %v, want engineering", fileTags["team"])
 	}
-	if fileTags["compliance"] != "internal" {
+	if fileTags["compliance"].([]any)[0] != "internal" {
 		t.Errorf("inherited compliance = %v, want internal", fileTags["compliance"])
 	}
 }

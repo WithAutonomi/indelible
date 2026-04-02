@@ -25,8 +25,8 @@ func NewTagService(db *sql.DB) *TagService {
 }
 
 // SetTags replaces all tags on an upload with the given key-value pairs.
-// Uses upsert semantics: existing keys are updated, new keys are inserted, missing keys are deleted.
-func (s *TagService) SetTags(uploadID int64, tags map[string]string) error {
+// Each key may have multiple values.
+func (s *TagService) SetTags(uploadID int64, tags map[string][]string) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
@@ -38,36 +38,38 @@ func (s *TagService) SetTags(uploadID int64, tags map[string]string) error {
 		return err
 	}
 
-	// Insert new tags
-	for k, v := range tags {
-		if _, err := tx.Exec(
-			`INSERT INTO file_tags (upload_id, tag_key, tag_value) VALUES (?, ?, ?)`,
-			uploadID, k, v,
-		); err != nil {
-			return err
+	// Insert new tags (multiple rows per key if multi-valued)
+	for k, vals := range tags {
+		for _, v := range vals {
+			if _, err := tx.Exec(
+				`INSERT INTO file_tags (upload_id, tag_key, tag_value) VALUES (?, ?, ?)`,
+				uploadID, k, v,
+			); err != nil {
+				return err
+			}
 		}
 	}
 
 	return tx.Commit()
 }
 
-// GetTags returns all tags for an upload as a key-value map.
-func (s *TagService) GetTags(uploadID int64) (map[string]string, error) {
+// GetTags returns all tags for an upload as a key to values map.
+func (s *TagService) GetTags(uploadID int64) (map[string][]string, error) {
 	rows, err := s.db.Query(
-		`SELECT tag_key, tag_value FROM file_tags WHERE upload_id = ?`, uploadID,
+		`SELECT tag_key, tag_value FROM file_tags WHERE upload_id = ? ORDER BY tag_key, id`, uploadID,
 	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	tags := make(map[string]string)
+	tags := make(map[string][]string)
 	for rows.Next() {
 		var k, v string
 		if err := rows.Scan(&k, &v); err != nil {
 			return nil, err
 		}
-		tags[k] = v
+		tags[k] = append(tags[k], v)
 	}
 	return tags, rows.Err()
 }
@@ -75,7 +77,7 @@ func (s *TagService) GetTags(uploadID int64) (map[string]string, error) {
 // SearchResult holds a search result with upload info and matching tags.
 type SearchResult struct {
 	Upload *Upload
-	Tags   map[string]string
+	Tags   map[string][]string
 }
 
 // ListKeys returns all distinct tag keys used by a user's uploads.

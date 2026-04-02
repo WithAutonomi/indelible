@@ -194,7 +194,7 @@ func (s *TagRuleService) Delete(id int64) error {
 // returns a map of tag keys to values that should be applied.
 // Lower priority numbers take precedence: if two rules produce the same key,
 // the one with the lower priority number wins.
-func (s *TagRuleService) EvaluateRules(filename, contentType string, fileSize int64, visibility string) (map[string]string, error) {
+func (s *TagRuleService) EvaluateRules(filename, contentType string, fileSize int64, visibility string) (map[string][]string, error) {
 	rows, err := s.db.Query(
 		`SELECT id, name, description, match_field, match_op, match_value, apply_key, apply_value,
 		        priority, is_enabled, created_by, created_at, updated_at
@@ -205,7 +205,7 @@ func (s *TagRuleService) EvaluateRules(filename, contentType string, fileSize in
 	}
 	defer rows.Close()
 
-	tags := make(map[string]string)
+	tags := make(map[string][]string)
 
 	for rows.Next() {
 		r, err := scanTagRuleRows(rows)
@@ -219,7 +219,7 @@ func (s *TagRuleService) EvaluateRules(filename, contentType string, fileSize in
 		}
 
 		if s.ruleMatches(r, filename, contentType, fileSize, visibility) {
-			tags[r.ApplyKey] = r.ApplyValue
+			tags[r.ApplyKey] = []string{r.ApplyValue}
 		}
 	}
 

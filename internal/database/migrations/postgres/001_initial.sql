@@ -173,9 +173,9 @@ CREATE TABLE file_tags (
     tag_key TEXT NOT NULL,
     tag_value TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE(upload_id, tag_key)
 );
 
+CREATE INDEX idx_file_tags_upload_key ON file_tags(upload_id, tag_key);
 CREATE INDEX idx_file_tags_key_value ON file_tags(tag_key, tag_value);
 CREATE INDEX idx_file_tags_upload_id ON file_tags(upload_id);
 CREATE INDEX idx_file_tags_value_trgm ON file_tags USING gin (tag_value gin_trgm_ops);
@@ -226,9 +226,9 @@ CREATE TABLE collection_tags (
     tag_key TEXT NOT NULL,
     tag_value TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE(collection_id, tag_key)
 );
 
+CREATE INDEX idx_collection_tags_coll_key ON collection_tags(collection_id, tag_key);
 CREATE INDEX idx_collection_tags_collection_id ON collection_tags(collection_id);
 
 -- Wallet transactions

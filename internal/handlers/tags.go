@@ -133,14 +133,14 @@ func UpdateTags(db *sql.DB) http.HandlerFunc {
 		}
 
 		var req struct {
-			Tags map[string]string `json:"tags"`
+			Tags map[string][]string `json:"tags"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			jsonError(w, "invalid request body", http.StatusBadRequest)
 			return
 		}
 		if req.Tags == nil {
-			req.Tags = make(map[string]string)
+			req.Tags = make(map[string][]string)
 		}
 
 		if err := tagSvc.SetTags(upload.ID, req.Tags); err != nil {
@@ -208,8 +208,8 @@ func SearchByTags(db *sql.DB) http.HandlerFunc {
 		}
 
 		type searchResultResponse struct {
-			Upload uploadResponse    `json:"upload"`
-			Tags   map[string]string `json:"tags"`
+			Upload uploadResponse      `json:"upload"`
+			Tags   map[string][]string `json:"tags"`
 		}
 
 		resp := make([]searchResultResponse, 0, len(results))

@@ -222,8 +222,8 @@ func TestEvaluateRulesContentTypeEquals(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EvaluateRules: %v", err)
 	}
-	if tags["format"] != "pdf" {
-		t.Errorf("expected format=pdf, got %q", tags["format"])
+	if tags["format"][0] != "pdf" {
+		t.Errorf("expected format=pdf, got %q", tags["format"][0])
 	}
 
 	// Non-matching content type.
@@ -249,8 +249,8 @@ func TestEvaluateRulesContentTypeRegex(t *testing.T) {
 		if err != nil {
 			t.Fatalf("EvaluateRules(%s): %v", ct, err)
 		}
-		if tags["type"] != "image" {
-			t.Errorf("expected type=image for %s, got %q", ct, tags["type"])
+		if tags["type"][0] != "image" {
+			t.Errorf("expected type=image for %s, got %q", ct, tags["type"][0])
 		}
 	}
 
@@ -273,14 +273,14 @@ func TestEvaluateRulesFilenameRegex(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EvaluateRules: %v", err)
 	}
-	if tags["doc_type"] != "invoice" {
-		t.Errorf("expected doc_type=invoice, got %q", tags["doc_type"])
+	if tags["doc_type"][0] != "invoice" {
+		t.Errorf("expected doc_type=invoice, got %q", tags["doc_type"][0])
 	}
 
 	// Lower-case should also match due to (?i).
 	tags2, _ := svc.EvaluateRules("invoice_march.xlsx", "application/vnd.ms-excel", 3000, "private")
-	if tags2["doc_type"] != "invoice" {
-		t.Errorf("expected doc_type=invoice for lowercase, got %q", tags2["doc_type"])
+	if tags2["doc_type"][0] != "invoice" {
+		t.Errorf("expected doc_type=invoice for lowercase, got %q", tags2["doc_type"][0])
 	}
 
 	// Non-matching filename.
@@ -302,8 +302,8 @@ func TestEvaluateRulesFilenameContains(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EvaluateRules: %v", err)
 	}
-	if tags["category"] != "backup" {
-		t.Errorf("expected category=backup, got %q", tags["category"])
+	if tags["category"][0] != "backup" {
+		t.Errorf("expected category=backup, got %q", tags["category"][0])
 	}
 
 	// No match.
@@ -329,8 +329,8 @@ func TestEvaluateRulesFileSizeGtLt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EvaluateRules gt: %v", err)
 	}
-	if tags["size_class"] != "large" {
-		t.Errorf("expected size_class=large, got %q", tags["size_class"])
+	if tags["size_class"][0] != "large" {
+		t.Errorf("expected size_class=large, got %q", tags["size_class"][0])
 	}
 
 	// 500 byte file should be "tiny".
@@ -338,8 +338,8 @@ func TestEvaluateRulesFileSizeGtLt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EvaluateRules lt: %v", err)
 	}
-	if tags2["size_class"] != "tiny" {
-		t.Errorf("expected size_class=tiny, got %q", tags2["size_class"])
+	if tags2["size_class"][0] != "tiny" {
+		t.Errorf("expected size_class=tiny, got %q", tags2["size_class"][0])
 	}
 
 	// 50 KB file matches neither.
@@ -361,8 +361,8 @@ func TestEvaluateRulesVisibilityEquals(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EvaluateRules: %v", err)
 	}
-	if tags["access"] != "open" {
-		t.Errorf("expected access=open, got %q", tags["access"])
+	if tags["access"][0] != "open" {
+		t.Errorf("expected access=open, got %q", tags["access"][0])
 	}
 
 	// Private should not match.
@@ -386,8 +386,8 @@ func TestEvaluateRulesPriorityOrdering(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EvaluateRules: %v", err)
 	}
-	if tags["type"] != "png" {
-		t.Errorf("expected type=png (higher priority), got %q", tags["type"])
+	if tags["type"][0] != "png" {
+		t.Errorf("expected type=png (higher priority), got %q", tags["type"][0])
 	}
 }
 
@@ -431,14 +431,14 @@ func TestEvaluateRulesMultipleRulesMultipleTags(t *testing.T) {
 	if len(tags) != 3 {
 		t.Fatalf("expected 3 tags, got %d: %v", len(tags), tags)
 	}
-	if tags["type"] != "image" {
-		t.Errorf("expected type=image, got %q", tags["type"])
+	if tags["type"][0] != "image" {
+		t.Errorf("expected type=image, got %q", tags["type"][0])
 	}
-	if tags["size_class"] != "large" {
-		t.Errorf("expected size_class=large, got %q", tags["size_class"])
+	if tags["size_class"][0] != "large" {
+		t.Errorf("expected size_class=large, got %q", tags["size_class"][0])
 	}
-	if tags["access"] != "open" {
-		t.Errorf("expected access=open, got %q", tags["access"])
+	if tags["access"][0] != "open" {
+		t.Errorf("expected access=open, got %q", tags["access"][0])
 	}
 }
 

@@ -34,10 +34,10 @@ func TestUpdateAndGetTags(t *testing.T) {
 
 	// Set tags
 	tagBody, _ := json.Marshal(map[string]any{
-		"tags": map[string]string{
-			"department": "legal",
-			"project":    "alpha",
-			"client":     "acme",
+		"tags": map[string][]string{
+			"department": {"legal"},
+			"project":    {"alpha"},
+			"client":     {"acme"},
 		},
 	})
 	req := httptest.NewRequest("PUT", "/api/v2/uploads/"+uuid+"/tags", bytes.NewReader(tagBody))
@@ -53,10 +53,10 @@ func TestUpdateAndGetTags(t *testing.T) {
 	var resp map[string]any
 	json.Unmarshal(w.Body.Bytes(), &resp)
 	tags := resp["tags"].(map[string]any)
-	if tags["department"] != "legal" {
+	if tags["department"].([]any)[0] != "legal" {
 		t.Errorf("department = %v, want legal", tags["department"])
 	}
-	if tags["project"] != "alpha" {
+	if tags["project"].([]any)[0] != "alpha" {
 		t.Errorf("project = %v, want alpha", tags["project"])
 	}
 }
@@ -69,7 +69,7 @@ func TestUpdateTags_Replace(t *testing.T) {
 	uuid := uploadAndGetUUID(t, router, adminToken, "replace-tags.txt")
 
 	// Set initial tags
-	tagBody, _ := json.Marshal(map[string]any{"tags": map[string]string{"a": "1", "b": "2"}})
+	tagBody, _ := json.Marshal(map[string]any{"tags": map[string][]string{"a": {"1"}, "b": {"2"}}})
 	req := httptest.NewRequest("PUT", "/api/v2/uploads/"+uuid+"/tags", bytes.NewReader(tagBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+adminToken)
@@ -77,7 +77,7 @@ func TestUpdateTags_Replace(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	// Replace with different tags
-	tagBody, _ = json.Marshal(map[string]any{"tags": map[string]string{"c": "3"}})
+	tagBody, _ = json.Marshal(map[string]any{"tags": map[string][]string{"c": {"3"}}})
 	req = httptest.NewRequest("PUT", "/api/v2/uploads/"+uuid+"/tags", bytes.NewReader(tagBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+adminToken)
@@ -96,7 +96,7 @@ func TestUpdateTags_Replace(t *testing.T) {
 	if len(tags) != 1 {
 		t.Errorf("expected 1 tag after replace, got %d: %v", len(tags), tags)
 	}
-	if tags["c"] != "3" {
+	if tags["c"].([]any)[0] != "3" {
 		t.Errorf("c = %v, want 3", tags["c"])
 	}
 }
@@ -111,7 +111,7 @@ func TestSearchByTags(t *testing.T) {
 	uuid2 := uploadAndGetUUID(t, router, adminToken, "finance-report.xlsx")
 
 	// Tag file 1
-	tagBody, _ := json.Marshal(map[string]any{"tags": map[string]string{"department": "legal"}})
+	tagBody, _ := json.Marshal(map[string]any{"tags": map[string][]string{"department": {"legal"}}})
 	req := httptest.NewRequest("PUT", "/api/v2/uploads/"+uuid1+"/tags", bytes.NewReader(tagBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+adminToken)
@@ -119,7 +119,7 @@ func TestSearchByTags(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	// Tag file 2
-	tagBody, _ = json.Marshal(map[string]any{"tags": map[string]string{"department": "finance"}})
+	tagBody, _ = json.Marshal(map[string]any{"tags": map[string][]string{"department": {"finance"}}})
 	req = httptest.NewRequest("PUT", "/api/v2/uploads/"+uuid2+"/tags", bytes.NewReader(tagBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+adminToken)
@@ -165,7 +165,7 @@ func TestUpdateTags_OtherUserCantTag(t *testing.T) {
 
 	uuid := uploadAndGetUUID(t, router, adminToken, "admin-file.txt")
 
-	tagBody, _ := json.Marshal(map[string]any{"tags": map[string]string{"hack": "true"}})
+	tagBody, _ := json.Marshal(map[string]any{"tags": map[string][]string{"hack": {"true"}}})
 	req := httptest.NewRequest("PUT", "/api/v2/uploads/"+uuid+"/tags", bytes.NewReader(tagBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+userToken)
