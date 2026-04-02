@@ -323,6 +323,9 @@ func AddToCollection(db *sql.DB) http.HandlerFunc {
 		// Inherit collection tags to the file (additive, won't overwrite existing)
 		collTagSvc.InheritToFile(collID, upload.ID)
 
+		webhookSvc := services.NewWebhookDeliveryService(db)
+		go webhookSvc.FireCollectionEvent("collection_file_added", upload.UUID, collID, coll.Name)
+
 		jsonResponse(w, http.StatusOK, map[string]string{"message": "file added to collection"})
 	}
 }
@@ -372,6 +375,9 @@ func RemoveFromCollection(db *sql.DB) http.HandlerFunc {
 			jsonError(w, "failed to remove file", http.StatusInternalServerError)
 			return
 		}
+
+		webhookSvc := services.NewWebhookDeliveryService(db)
+		go webhookSvc.FireCollectionEvent("collection_file_removed", upload.UUID, collID, coll.Name)
 
 		jsonResponse(w, http.StatusOK, map[string]string{"message": "file removed from collection"})
 	}

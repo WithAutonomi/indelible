@@ -37,19 +37,16 @@ func BulkTagUploads(db *sql.DB) http.HandlerFunc {
 		}
 
 		// Resolve target uploads
-		var uploadIDs []int64
+		var targets []*services.Upload
 
 		if len(req.UploadUUIDs) > 0 {
-			// Resolve UUIDs to IDs, verifying ownership
+			// Resolve UUIDs to uploads, verifying ownership
 			for _, uid := range req.UploadUUIDs {
 				upload, err := uploadSvc.GetByUUID(uid)
-				if err != nil {
+				if err != nil || upload.UserID != userID {
 					continue
 				}
-				if upload.UserID != userID {
-					continue
-				}
-				uploadIDs = append(uploadIDs, upload.ID)
+				targets = append(targets, upload)
 			}
 		} else if req.Selector != "" {
 			// Parse selector and find matching uploads
@@ -64,24 +61,23 @@ func BulkTagUploads(db *sql.DB) http.HandlerFunc {
 				jsonError(w, "search failed", http.StatusInternalServerError)
 				return
 			}
-			for _, u := range uploads {
-				uploadIDs = append(uploadIDs, u.ID)
-			}
+			targets = uploads
 		} else {
 			jsonError(w, "upload_uuids or selector required", http.StatusBadRequest)
 			return
 		}
 
-		if len(uploadIDs) == 0 {
+		if len(targets) == 0 {
 			jsonResponse(w, http.StatusOK, map[string]any{"affected": 0})
 			return
 		}
 
 		// Apply tags
+		webhookSvc := services.NewWebhookDeliveryService(db)
 		affected := 0
-		for _, id := range uploadIDs {
+		for _, u := range targets {
 			if len(req.AddTags) > 0 {
-				existing, _ := tagSvc.GetTags(id)
+				existing, _ := tagSvc.GetTags(u.ID)
 				merged := make(map[string]string)
 				for k, v := range existing {
 					merged[k] = v
@@ -89,18 +85,21 @@ func BulkTagUploads(db *sql.DB) http.HandlerFunc {
 				for k, v := range req.AddTags {
 					merged[k] = v
 				}
-				if err := tagSvc.SetTags(id, merged); err == nil {
+				if err := tagSvc.SetTags(u.ID, merged); err == nil {
 					affected++
+					go webhookSvc.FireTagEvent("tags_updated", u.UUID, merged)
 				}
 			}
 			if len(req.RemoveTags) > 0 {
-				existing, _ := tagSvc.GetTags(id)
+				existing, _ := tagSvc.GetTags(u.ID)
 				for _, k := range req.RemoveTags {
 					delete(existing, k)
 				}
-				tagSvc.SetTags(id, existing)
-				if len(req.AddTags) == 0 {
-					affected++
+				if err := tagSvc.SetTags(u.ID, existing); err == nil {
+					if len(req.AddTags) == 0 {
+						affected++
+					}
+					go webhookSvc.FireTagEvent("tags_updated", u.UUID, existing)
 				}
 			}
 		}

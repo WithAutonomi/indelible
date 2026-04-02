@@ -10,7 +10,9 @@ CREATE TABLE users (
     is_active INTEGER NOT NULL DEFAULT 1,
     is_service_account INTEGER NOT NULL DEFAULT 0,
     email_verified INTEGER NOT NULL DEFAULT 0,
+    external_id TEXT,
     last_login_at DATETIME,
+    password_changed_at DATETIME,
     max_file_size_bytes INTEGER,
     allowed_file_types TEXT, -- JSON array
     created_at DATETIME NOT NULL DEFAULT (datetime('now')),
@@ -18,16 +20,21 @@ CREATE TABLE users (
     deleted_at DATETIME
 );
 
+CREATE UNIQUE INDEX idx_users_external_id ON users(external_id) WHERE external_id IS NOT NULL;
+
 -- Groups
 CREATE TABLE groups (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,
     description TEXT NOT NULL DEFAULT '',
     permission_level TEXT NOT NULL CHECK (permission_level IN ('read', 'write', 'admin')),
+    external_id TEXT,
     is_active INTEGER NOT NULL DEFAULT 1,
     created_at DATETIME NOT NULL DEFAULT (datetime('now')),
     updated_at DATETIME NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE UNIQUE INDEX idx_groups_external_id ON groups(external_id) WHERE external_id IS NOT NULL;
 
 -- Group membership
 CREATE TABLE group_members (
@@ -72,6 +79,7 @@ CREATE TABLE api_tokens (
 
 CREATE INDEX idx_api_tokens_user_id ON api_tokens(user_id);
 CREATE INDEX idx_api_tokens_uuid ON api_tokens(uuid);
+CREATE UNIQUE INDEX idx_api_tokens_token_hash ON api_tokens(token_hash);
 
 -- Token usage log
 CREATE TABLE token_usage_log (
@@ -139,6 +147,7 @@ CREATE TABLE uploads (
     status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'processing', 'completed', 'failed')),
     status_detail TEXT,
     datamap_address TEXT,
+    data_map TEXT,
     estimated_cost TEXT,
     actual_cost TEXT,
     error_message TEXT,
@@ -156,7 +165,9 @@ CREATE TABLE uploads (
 CREATE INDEX idx_uploads_user_id ON uploads(user_id);
 CREATE INDEX idx_uploads_status ON uploads(status);
 CREATE INDEX idx_uploads_uuid ON uploads(uuid);
+CREATE INDEX idx_uploads_user_status ON uploads(user_id, status);
 CREATE INDEX idx_uploads_backoff ON uploads(status, backoff_until);
+CREATE INDEX idx_uploads_status_processing ON uploads(status, processing_at);
 
 -- File tags
 CREATE TABLE file_tags (
@@ -169,6 +180,26 @@ CREATE TABLE file_tags (
 );
 
 CREATE INDEX idx_file_tags_key_value ON file_tags(tag_key, tag_value);
+CREATE INDEX idx_file_tags_upload_id ON file_tags(upload_id);
+
+-- Auto-tag rules
+CREATE TABLE tag_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    match_field TEXT NOT NULL,      -- 'content_type', 'filename', 'file_size', 'visibility'
+    match_op TEXT NOT NULL,         -- 'equals', 'regex', 'contains', 'gt', 'lt'
+    match_value TEXT NOT NULL,
+    apply_key TEXT NOT NULL,
+    apply_value TEXT NOT NULL,
+    priority INTEGER NOT NULL DEFAULT 100,
+    is_enabled INTEGER NOT NULL DEFAULT 1,
+    created_by INTEGER NOT NULL REFERENCES users(id),
+    created_at DATETIME NOT NULL DEFAULT (datetime('now')),
+    updated_at DATETIME NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX idx_tag_rules_enabled_priority ON tag_rules(is_enabled, priority);
 
 -- Collections (virtual folders)
 CREATE TABLE collections (
@@ -188,6 +219,20 @@ CREATE TABLE collection_files (
     PRIMARY KEY (collection_id, upload_id)
 );
 
+CREATE INDEX idx_collection_files_upload_id ON collection_files(upload_id);
+
+-- Collection-level tags
+CREATE TABLE collection_tags (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+    tag_key TEXT NOT NULL,
+    tag_value TEXT NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(collection_id, tag_key)
+);
+
+CREATE INDEX idx_collection_tags_collection_id ON collection_tags(collection_id);
+
 -- Wallet transactions
 CREATE TABLE transactions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -196,6 +241,7 @@ CREATE TABLE transactions (
     tx_type TEXT NOT NULL,
     amount TEXT NOT NULL,
     balance_after TEXT NOT NULL,
+    tx_hash TEXT,
     created_at DATETIME NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -252,12 +298,28 @@ CREATE INDEX idx_system_log_created_at ON system_log(created_at);
 CREATE TABLE webhook_config (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     url TEXT NOT NULL,
+    secret TEXT NOT NULL DEFAULT '',
     integration_type TEXT NOT NULL DEFAULT 'generic' CHECK (integration_type IN ('generic', 'slack')),
     is_enabled INTEGER NOT NULL DEFAULT 1,
     events TEXT NOT NULL DEFAULT '["completed","failed"]', -- JSON array
     created_at DATETIME NOT NULL DEFAULT (datetime('now')),
     updated_at DATETIME NOT NULL DEFAULT (datetime('now'))
 );
+
+-- Webhook delivery log
+CREATE TABLE webhook_delivery_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    webhook_id INTEGER NOT NULL REFERENCES webhook_config(id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL,
+    status_code INTEGER,
+    success INTEGER NOT NULL DEFAULT 0,
+    attempts INTEGER NOT NULL DEFAULT 1,
+    error_message TEXT,
+    created_at DATETIME NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX idx_webhook_delivery_log_webhook_id ON webhook_delivery_log(webhook_id);
+CREATE INDEX idx_webhook_delivery_log_created_at ON webhook_delivery_log(created_at);
 
 -- User notification preferences
 CREATE TABLE user_notification_prefs (
@@ -274,7 +336,7 @@ CREATE TABLE user_notification_prefs (
 CREATE TABLE quotas (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     entity_type TEXT NOT NULL CHECK (entity_type IN ('user', 'group', 'department', 'system')),
-    entity_id TEXT, -- user_id, group_id, department name, or NULL for system
+    entity_id TEXT,
     max_bytes INTEGER NOT NULL,
     is_enabled INTEGER NOT NULL DEFAULT 1,
     created_at DATETIME NOT NULL DEFAULT (datetime('now')),
@@ -295,6 +357,43 @@ CREATE TABLE password_reset_tokens (
 CREATE INDEX idx_reset_tokens_token ON password_reset_tokens(token);
 CREATE INDEX idx_reset_tokens_user_id ON password_reset_tokens(user_id);
 
+-- Email verification tokens
+CREATE TABLE email_verification_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    token TEXT NOT NULL UNIQUE,
+    expires_at DATETIME NOT NULL,
+    used_at DATETIME,
+    created_at DATETIME NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX idx_email_verify_tokens_token ON email_verification_tokens(token);
+CREATE INDEX idx_email_verify_tokens_user_id ON email_verification_tokens(user_id);
+
+-- SCIM bearer tokens
+CREATE TABLE scim_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    token_hash TEXT NOT NULL,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    created_by INTEGER NOT NULL REFERENCES users(id),
+    last_used_at DATETIME,
+    created_at DATETIME NOT NULL DEFAULT (datetime('now')),
+    revoked_at DATETIME
+);
+
+-- Idempotency keys for safe POST retries
+CREATE TABLE idempotency_keys (
+    key TEXT NOT NULL,
+    user_id INTEGER NOT NULL,
+    status_code INTEGER NOT NULL,
+    response_body TEXT NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (key, user_id)
+);
+
+CREATE INDEX idx_idempotency_keys_created_at ON idempotency_keys(created_at);
+
 -- Seed default settings
 INSERT INTO settings (key, value) VALUES
     ('maintenance_mode', 'false'),
@@ -302,7 +401,7 @@ INSERT INTO settings (key, value) VALUES
     ('max_upload_size_bytes', '10737418240'),
     ('jwt_expiry_hours', '24'),
     ('default_token_expiry_days', '90'),
-    ('max_concurrent_uploads', '1'),
+    ('max_concurrent_uploads', '4'),
     ('max_gas_fee', '0'),
     ('environment_name', 'production'),
     ('cors_allowed_origins', 'http://localhost:5173'),
@@ -316,20 +415,30 @@ INSERT INTO settings (key, value) VALUES
     ('oidc_auto_provision', 'false'),
     ('disk_warning_threshold_pct', '80'),
     ('disk_critical_threshold_pct', '95'),
-    ('disk_check_interval_secs', '300');
+    ('disk_check_interval_secs', '300'),
+    ('scim_enabled', 'false'),
+    ('max_queued_uploads', '500'),
+    ('upload_rate_limit_per_min', '60'),
+    ('wallet_balance_alert_threshold', '0');
 
 -- +goose Down
+DROP TABLE IF EXISTS idempotency_keys;
+DROP TABLE IF EXISTS scim_tokens;
+DROP TABLE IF EXISTS email_verification_tokens;
 DROP TABLE IF EXISTS password_reset_tokens;
 DROP TABLE IF EXISTS user_notification_prefs;
 DROP TABLE IF EXISTS quotas;
+DROP TABLE IF EXISTS webhook_delivery_log;
 DROP TABLE IF EXISTS webhook_config;
 DROP TABLE IF EXISTS system_log;
 DROP TABLE IF EXISTS audit_log;
 DROP TABLE IF EXISTS config_audit;
 DROP TABLE IF EXISTS settings;
 DROP TABLE IF EXISTS transactions;
+DROP TABLE IF EXISTS collection_tags;
 DROP TABLE IF EXISTS collection_files;
 DROP TABLE IF EXISTS collections;
+DROP TABLE IF EXISTS tag_rules;
 DROP TABLE IF EXISTS file_tags;
 DROP TABLE IF EXISTS uploads;
 DROP TABLE IF EXISTS wallets;

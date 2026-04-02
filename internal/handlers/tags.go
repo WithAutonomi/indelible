@@ -148,6 +148,9 @@ func UpdateTags(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
+		webhookSvc := services.NewWebhookDeliveryService(db)
+		go webhookSvc.FireTagEvent("tags_updated", upload.UUID, req.Tags)
+
 		jsonResponse(w, http.StatusOK, map[string]any{
 			"message": "tags updated",
 			"tags":    req.Tags,

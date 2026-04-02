@@ -15,10 +15,25 @@ import (
 
 // WebhookPayload is the JSON payload sent to webhook endpoints.
 type WebhookPayload struct {
-	EventType string             `json:"event_type"`
-	Timestamp string             `json:"timestamp"`
-	Upload    *WebhookUploadData `json:"upload,omitempty"`
-	System    *WebhookSystemData `json:"system,omitempty"`
+	EventType  string                   `json:"event_type"`
+	Timestamp  string                   `json:"timestamp"`
+	Upload     *WebhookUploadData       `json:"upload,omitempty"`
+	System     *WebhookSystemData       `json:"system,omitempty"`
+	Tags       *WebhookTagData          `json:"tags,omitempty"`
+	Collection *WebhookCollectionData   `json:"collection,omitempty"`
+}
+
+// WebhookTagData contains tag change details in webhook payloads.
+type WebhookTagData struct {
+	UploadUUID string            `json:"upload_uuid"`
+	Tags       map[string]string `json:"tags"`
+}
+
+// WebhookCollectionData contains collection membership change details in webhook payloads.
+type WebhookCollectionData struct {
+	UploadUUID     string `json:"upload_uuid"`
+	CollectionID   int64  `json:"collection_id"`
+	CollectionName string `json:"collection_name"`
 }
 
 // WebhookUploadData contains upload details in webhook payloads.
@@ -136,6 +151,52 @@ func (s *WebhookDeliveryService) FireSystemEvent(eventType string, data *Webhook
 		EventType: eventType,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		System:    data,
+	}
+
+	for _, wh := range webhooks {
+		if !webhookSubscribedTo(wh, eventType) {
+			continue
+		}
+		go s.deliver(wh, payload)
+	}
+}
+
+// FireTagEvent sends webhook notifications when tags change on an upload.
+func (s *WebhookDeliveryService) FireTagEvent(eventType string, uploadUUID string, tags map[string]string) {
+	webhooks, err := s.webhookSvc.GetEnabled()
+	if err != nil || len(webhooks) == 0 {
+		return
+	}
+
+	payload := WebhookPayload{
+		EventType: eventType,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Tags:      &WebhookTagData{UploadUUID: uploadUUID, Tags: tags},
+	}
+
+	for _, wh := range webhooks {
+		if !webhookSubscribedTo(wh, eventType) {
+			continue
+		}
+		go s.deliver(wh, payload)
+	}
+}
+
+// FireCollectionEvent sends webhook notifications when collection membership changes.
+func (s *WebhookDeliveryService) FireCollectionEvent(eventType string, uploadUUID string, collectionID int64, collectionName string) {
+	webhooks, err := s.webhookSvc.GetEnabled()
+	if err != nil || len(webhooks) == 0 {
+		return
+	}
+
+	payload := WebhookPayload{
+		EventType: eventType,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Collection: &WebhookCollectionData{
+			UploadUUID:     uploadUUID,
+			CollectionID:   collectionID,
+			CollectionName: collectionName,
+		},
 	}
 
 	for _, wh := range webhooks {
@@ -323,6 +384,10 @@ func (s *WebhookDeliveryService) formatSlack(payload WebhookPayload) ([]byte, er
 		if payload.Upload.ErrorMessage != nil {
 			text += fmt.Sprintf("\nError: %s", *payload.Upload.ErrorMessage)
 		}
+	} else if payload.Tags != nil {
+		text = fmt.Sprintf("*%s*: `%s` — %d tags", payload.EventType, payload.Tags.UploadUUID, len(payload.Tags.Tags))
+	} else if payload.Collection != nil {
+		text = fmt.Sprintf("*%s*: `%s` — collection `%s`", payload.EventType, payload.Collection.UploadUUID, payload.Collection.CollectionName)
 	} else if payload.System != nil {
 		text = fmt.Sprintf("*%s*: %s (%.1f%%)", payload.EventType, payload.System.Message, payload.System.Value)
 	} else {
