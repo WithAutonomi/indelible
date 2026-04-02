@@ -9,6 +9,8 @@ CREATE INDEX IF NOT EXISTS idx_uploads_status_processing ON uploads(status, proc
 INSERT INTO settings (key, value) VALUES ('max_queued_uploads', '500') ON CONFLICT (key) DO NOTHING;
 INSERT INTO settings (key, value) VALUES ('upload_rate_limit_per_min', '60') ON CONFLICT (key) DO NOTHING;
 
+INSERT INTO settings (key, value) VALUES ('wallet_balance_alert_threshold', '0') ON CONFLICT (key) DO NOTHING;
+
 -- Update default max_concurrent_uploads from 1 to 4
 UPDATE settings SET value = '4' WHERE key = 'max_concurrent_uploads' AND value = '1';
 

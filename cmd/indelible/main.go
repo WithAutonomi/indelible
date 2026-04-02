@@ -115,6 +115,11 @@ func main() {
 	diskAlertWorker.Start()
 	defer diskAlertWorker.Stop()
 
+	// System monitor: antd health, wallet balance, queue backlog, failure rate, etc.
+	sysMonitor := worker.NewSystemMonitor(db, cfg)
+	sysMonitor.Start()
+	defer sysMonitor.Stop()
+
 	// S15: Idempotency key cleanup (every 5 minutes instead of hourly)
 	go func() {
 		for {
