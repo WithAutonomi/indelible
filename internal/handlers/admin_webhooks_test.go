@@ -30,7 +30,8 @@ func TestAdminWebhookCRUD(t *testing.T) {
 
 	var created map[string]any
 	json.Unmarshal(w.Body.Bytes(), &created)
-	whID := created["id"].(float64)
+	webhook := created["webhook"].(map[string]any)
+	whID := webhook["id"].(float64)
 
 	// List
 	req = httptest.NewRequest("GET", "/api/v2/admin/webhooks", nil)

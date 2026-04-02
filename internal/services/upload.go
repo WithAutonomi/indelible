@@ -30,6 +30,7 @@ type Upload struct {
 	ActualCost       sql.NullString
 	ErrorMessage     sql.NullString
 	TempPath         sql.NullString
+	DataMap          sql.NullString // hex-encoded serialized DataMap (stored locally, not on-network)
 	BackoffUntil     sql.NullTime
 	BackoffAttempt   int
 	LastQuotedCost   sql.NullString
@@ -42,7 +43,7 @@ type Upload struct {
 
 const uploadColumns = `id, uuid, user_id, token_id, filename, original_filename, file_size, content_type, visibility, status,
 	status_detail, datamap_address, estimated_cost, actual_cost, error_message, temp_path,
-	backoff_until, backoff_attempt, last_quoted_cost,
+	data_map, backoff_until, backoff_attempt, last_quoted_cost,
 	queued_at, processing_at, completed_at, failed_at, created_at`
 
 func scanUpload(scanner interface{ Scan(...any) error }) (*Upload, error) {
@@ -50,7 +51,7 @@ func scanUpload(scanner interface{ Scan(...any) error }) (*Upload, error) {
 	err := scanner.Scan(
 		&u.ID, &u.UUID, &u.UserID, &u.TokenID, &u.Filename, &u.OriginalFilename, &u.FileSize, &u.ContentType,
 		&u.Visibility, &u.Status, &u.StatusDetail, &u.DatamapAddress, &u.EstimatedCost, &u.ActualCost, &u.ErrorMessage, &u.TempPath,
-		&u.BackoffUntil, &u.BackoffAttempt, &u.LastQuotedCost,
+		&u.DataMap, &u.BackoffUntil, &u.BackoffAttempt, &u.LastQuotedCost,
 		&u.QueuedAt, &u.ProcessingAt, &u.CompletedAt, &u.FailedAt, &u.CreatedAt,
 	)
 	return u, err
@@ -334,11 +335,12 @@ func (s *UploadService) DequeueNext() (*Upload, error) {
 	return s.GetByID(id)
 }
 
-// MarkCompleted transitions an upload to "completed" with the network address and cost.
-func (s *UploadService) MarkCompleted(id int64, datamapAddress, actualCost string) error {
+// MarkCompleted transitions an upload to "completed" with the DataMap and cost.
+// The dataMap is the hex-encoded serialized DataMap returned by antd's finalize endpoint.
+func (s *UploadService) MarkCompleted(id int64, dataMap, actualCost string) error {
 	_, err := s.db.Exec(
-		`UPDATE uploads SET status = 'completed', datamap_address = ?, actual_cost = ?, completed_at = datetime('now'), temp_path = NULL WHERE id = ?`,
-		datamapAddress, actualCost, id,
+		`UPDATE uploads SET status = 'completed', data_map = ?, actual_cost = ?, completed_at = datetime('now'), temp_path = NULL WHERE id = ?`,
+		dataMap, actualCost, id,
 	)
 	return err
 }
@@ -481,6 +483,25 @@ func (s *UploadService) Delete(id int64) error {
 		return errors.New("only failed or completed uploads can be deleted")
 	}
 	return nil
+}
+
+// ListActiveTempPaths returns all temp_path values for uploads still in queued or processing state.
+func (s *UploadService) ListActiveTempPaths() ([]string, error) {
+	rows, err := s.db.Query(`SELECT temp_path FROM uploads WHERE status IN ('queued', 'processing') AND temp_path IS NOT NULL AND temp_path != ''`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var paths []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		paths = append(paths, p)
+	}
+	return paths, rows.Err()
 }
 
 func scanUploads(rows *sql.Rows, total int64) ([]*Upload, int64, error) {

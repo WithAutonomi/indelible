@@ -6,10 +6,13 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/go-chi/chi/v5"
 
 	"github.com/WithAutonomi/indelible/internal/config"
+	"github.com/WithAutonomi/indelible/internal/evm"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
 
@@ -39,7 +42,7 @@ func toWalletResponse(w *services.Wallet) walletResponse {
 
 type createWalletRequest struct {
 	Name       string `json:"name"`
-	Address    string `json:"address"`
+	Address    string `json:"address"`     // optional — derived from private_key if omitted
 	PrivateKey string `json:"private_key"`
 }
 
@@ -92,9 +95,20 @@ func AdminCreateWallet(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			jsonError(w, "invalid request body", http.StatusBadRequest)
 			return
 		}
-		if req.Name == "" || req.Address == "" || req.PrivateKey == "" {
-			jsonError(w, "name, address, and private_key are required", http.StatusBadRequest)
+		if req.Name == "" || req.PrivateKey == "" {
+			jsonError(w, "name and private_key are required", http.StatusBadRequest)
 			return
+		}
+
+		// Derive address from private key if not provided
+		if req.Address == "" {
+			keyHex := strings.TrimPrefix(req.PrivateKey, "0x")
+			privKey, err := crypto.HexToECDSA(keyHex)
+			if err != nil {
+				jsonError(w, "invalid private key", http.StatusBadRequest)
+				return
+			}
+			req.Address = crypto.PubkeyToAddress(privKey.PublicKey).Hex()
 		}
 
 		wallet, err := walletSvc.Create(req.Name, req.Address, req.PrivateKey)
@@ -143,5 +157,96 @@ func AdminSetDefaultWallet(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		jsonResponse(w, http.StatusOK, map[string]string{"message": "default wallet updated"})
+	}
+}
+
+// @Summary      Delete a wallet
+// @Description  Remove a wallet (cannot delete the default wallet)
+// @Tags         Admin: Wallets
+// @Produce      json
+// @Param        id path int true "Wallet ID"
+// @Success      200 {object} map[string]string
+// @Failure      400 {object} map[string]string
+// @Failure      404 {object} map[string]string
+// @Router       /admin/wallets/{id} [delete]
+// @Security     BearerAuth
+func AdminDeleteWallet(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+	walletSvc := services.NewWalletService(db, cfg.WalletEncryptionKey)
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		idStr := chi.URLParam(r, "id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil {
+			jsonError(w, "invalid wallet id", http.StatusBadRequest)
+			return
+		}
+
+		if err := walletSvc.Delete(id); err != nil {
+			if errors.Is(err, services.ErrWalletNotFound) {
+				jsonError(w, "wallet not found", http.StatusNotFound)
+				return
+			}
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		jsonResponse(w, http.StatusOK, map[string]string{"message": "wallet deleted"})
+	}
+}
+
+// @Summary      Refresh wallet balance
+// @Description  Query the EVM chain for the current token and gas balance
+// @Tags         Admin: Wallets
+// @Produce      json
+// @Param        id path int true "Wallet ID"
+// @Success      200 {object} map[string]interface{}
+// @Failure      404 {object} map[string]string
+// @Router       /admin/wallets/{id}/balance [post]
+// @Security     BearerAuth
+func AdminRefreshWalletBalance(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+	walletSvc := services.NewWalletService(db, cfg.WalletEncryptionKey)
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		idStr := chi.URLParam(r, "id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil {
+			jsonError(w, "invalid wallet id", http.StatusBadRequest)
+			return
+		}
+
+		wallet, err := walletSvc.GetByID(id)
+		if err != nil {
+			if errors.Is(err, services.ErrWalletNotFound) {
+				jsonError(w, "wallet not found", http.StatusNotFound)
+				return
+			}
+			jsonError(w, "failed to get wallet", http.StatusInternalServerError)
+			return
+		}
+
+		if cfg.EvmRPCURL == "" || cfg.EvmTokenAddress == "" {
+			jsonError(w, "EVM not configured (set INDELIBLE_EVM_RPC_URL and INDELIBLE_EVM_TOKEN_ADDRESS)", http.StatusServiceUnavailable)
+			return
+		}
+
+		signer, err := evm.NewSigner(cfg.EvmRPCURL)
+		if err != nil {
+			jsonError(w, "failed to connect to EVM RPC", http.StatusBadGateway)
+			return
+		}
+		defer signer.Close()
+
+		tokenBal, gasBal, err := signer.GetBalances(r.Context(), wallet.Address, cfg.EvmTokenAddress)
+		if err != nil {
+			jsonError(w, "failed to query balance: "+err.Error(), http.StatusBadGateway)
+			return
+		}
+
+		walletSvc.UpdateBalance(id, tokenBal, gasBal)
+
+		jsonResponse(w, http.StatusOK, map[string]any{
+			"payment_balance": tokenBal,
+			"gas_balance":     gasBal,
+		})
 	}
 }

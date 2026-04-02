@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"io"
+	"math/big"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -114,21 +116,45 @@ func toUploadResponse(u *services.Upload) uploadResponse {
 // @Router       /uploads [post]
 func CreateUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	uploadSvc := services.NewUploadService(db)
+	tagSvc := services.NewTagService(db)
+	tagRuleSvc := services.NewTagRuleService(db)
 	quotaSvc := services.NewQuotaService(db)
 	webhookSvc := services.NewWebhookDeliveryService(db)
-	maxUploadSize := int64(10 << 30) // 10 GB default
+	settingsSvc := services.NewSettingsService(db)
 
 	walletSvc := services.NewWalletService(db, cfg.WalletEncryptionKey)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Pre-flight: reject early if no wallet is configured
-		if wallet, err := walletSvc.GetDefault(); err != nil || wallet == nil {
+		wallet, err := walletSvc.GetDefault()
+		if err != nil || wallet == nil {
 			jsonErrorWithCode(w, "No wallet configured", "wallet_not_configured", http.StatusServiceUnavailable)
 			return
 		}
 
 		userID := middleware.GetUserID(r.Context())
 		tokenID := middleware.GetTokenID(r.Context())
+
+		// S1: Check queue depth limit
+		if maxQueuedStr, err := settingsSvc.Get("max_queued_uploads"); err == nil {
+			if maxQueued, err := strconv.ParseInt(maxQueuedStr, 10, 64); err == nil && maxQueued > 0 {
+				counts, _ := uploadSvc.CountByStatus()
+				inFlight := counts["queued"] + counts["processing"]
+				if inFlight >= maxQueued {
+					w.Header().Set("Retry-After", "30")
+					jsonErrorWithCode(w, "Upload queue is full, please try again later", "queue_full", http.StatusTooManyRequests)
+					return
+				}
+			}
+		}
+
+		// S14: Read max_upload_size_bytes from settings
+		maxUploadSize := int64(10 << 30) // 10 GB fallback
+		if maxStr, err := settingsSvc.Get("max_upload_size_bytes"); err == nil {
+			if n, err := strconv.ParseInt(maxStr, 10, 64); err == nil && n > 0 {
+				maxUploadSize = n
+			}
+		}
 
 		// Limit request body size
 		r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
@@ -154,6 +180,15 @@ func CreateUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		if visibility != "public" && visibility != "private" {
 			jsonError(w, "visibility must be 'public' or 'private'", http.StatusBadRequest)
 			return
+		}
+
+		// Parse tags from form data (JSON object or repeated key=value fields)
+		uploadTags := make(map[string]string)
+		if tagsJSON := r.FormValue("tags"); tagsJSON != "" {
+			if err := json.Unmarshal([]byte(tagsJSON), &uploadTags); err != nil {
+				jsonError(w, "tags must be a JSON object of key-value strings", http.StatusBadRequest)
+				return
+			}
 		}
 
 		// Sanitize filename: strip path components and null bytes
@@ -217,11 +252,38 @@ func CreateUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
+		// Apply auto-tag rules based on file attributes
+		autoTags, err := tagRuleSvc.EvaluateRules(originalFilename, contentType, written, visibility)
+		if err != nil {
+			slog.Warn("auto-tag rule evaluation failed", "error", err)
+		}
+
+		// Merge: user-supplied tags take precedence over auto-generated
+		for k, v := range autoTags {
+			if _, exists := uploadTags[k]; !exists {
+				uploadTags[k] = v
+			}
+		}
+
+		// Set tags on the upload (if any)
+		if len(uploadTags) > 0 {
+			if err := tagSvc.SetTags(upload.ID, uploadTags); err != nil {
+				slog.Warn("failed to set upload tags", "upload_id", upload.ID, "error", err)
+			}
+		}
+
 		webhookSvc.FireUploadEvent("queued", upload)
 
+		// S10: Include queue position for backpressure signaling
+		queuePos := int64(0)
+		if counts, err := uploadSvc.CountByStatus(); err == nil {
+			queuePos = counts["queued"]
+		}
+
 		jsonResponse(w, http.StatusAccepted, map[string]any{
-			"message": "upload queued",
-			"upload":  toUploadResponse(upload),
+			"message":        "upload queued",
+			"upload":         toUploadResponse(upload),
+			"queue_position": queuePos,
 		})
 	}
 }
@@ -420,7 +482,7 @@ func GetUpload(db *sql.DB) http.HandlerFunc {
 // @Security     BearerAuth
 // @Router       /uploads/quote [post]
 func QuoteUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
-	client := antd.NewClient(cfg.AntdURL)
+	client := antd.NewClient(cfg.AntdURL, antd.WithTimeout(30*time.Second))
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		contentType := r.Header.Get("Content-Type")
@@ -452,7 +514,7 @@ func QuoteUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 
 			cost, err := client.DataCost(r.Context(), sample)
 			if err != nil {
-				jsonError(w, fmt.Sprintf("cost estimation failed: %v", err), http.StatusBadGateway)
+				jsonAntdError(w, "cost estimation failed", err)
 				return
 			}
 
@@ -506,9 +568,9 @@ func QuoteUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 
 		// Get cost from antd
 		isPublic := visibility == "public"
-		cost, err := client.FileCost(r.Context(), tempPath, isPublic, true)
+		cost, err := client.FileCost(r.Context(), tempPath, isPublic)
 		if err != nil {
-			jsonError(w, fmt.Sprintf("cost estimation failed: %v", err), http.StatusBadGateway)
+			jsonAntdError(w, "cost estimation failed", err)
 			return
 		}
 
@@ -564,32 +626,43 @@ func DownloadUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		if !upload.DatamapAddress.Valid {
-			jsonError(w, "upload has no network address", http.StatusInternalServerError)
-			return
-		}
-
 		// Download from antd to temp file, then stream to client
 		tempDir := worker.TempUploadDir(cfg)
 		tempPath := filepath.Join(tempDir, "dl-"+uuid.New().String())
 		defer os.Remove(tempPath)
 
-		if upload.Visibility == "public" {
-			if err := client.FileDownloadPublic(r.Context(), upload.DatamapAddress.String, tempPath); err != nil {
-				jsonError(w, fmt.Sprintf("download from network failed: %v", err), http.StatusBadGateway)
-				return
-			}
-		} else {
-			// Private: get bytes via DataGetPrivate, write to temp
-			data, err := client.DataGetPrivate(r.Context(), upload.DatamapAddress.String)
+		if upload.DataMap.Valid {
+			// External signer flow: use local DataMap to download directly
+			data, err := client.DataGetPrivate(r.Context(), upload.DataMap.String)
 			if err != nil {
-				jsonError(w, fmt.Sprintf("download from network failed: %v", err), http.StatusBadGateway)
+				jsonAntdError(w, "download from network failed", err)
 				return
 			}
 			if err := os.WriteFile(tempPath, data, 0600); err != nil {
 				jsonError(w, "failed to write download", http.StatusInternalServerError)
 				return
 			}
+		} else if upload.DatamapAddress.Valid {
+			// Legacy flow: download via network address
+			if upload.Visibility == "public" {
+				if err := client.FileDownloadPublic(r.Context(), upload.DatamapAddress.String, tempPath); err != nil {
+					jsonAntdError(w, "download from network failed", err)
+					return
+				}
+			} else {
+				data, err := client.DataGetPrivate(r.Context(), upload.DatamapAddress.String)
+				if err != nil {
+					jsonAntdError(w, "download from network failed", err)
+					return
+				}
+				if err := os.WriteFile(tempPath, data, 0600); err != nil {
+					jsonError(w, "failed to write download", http.StatusInternalServerError)
+					return
+				}
+			}
+		} else {
+			jsonError(w, "upload has no data map or network address", http.StatusInternalServerError)
+			return
 		}
 
 		// Stream the file back
@@ -773,17 +846,17 @@ func DeleteUpload(db *sql.DB) http.HandlerFunc {
 
 // scaleCost provides a rough linear cost estimate.
 // cost is the atto-token cost string for sampleSize bytes; we scale to targetSize.
+// Uses math/big to avoid int64 overflow on large files.
 func scaleCost(cost string, targetSize, sampleSize int64) string {
 	if sampleSize <= 0 || targetSize <= 0 {
 		return cost
 	}
-	// Parse cost as integer (atto tokens)
-	// For simplicity, we do integer math to avoid floating point
-	costVal := int64(0)
-	fmt.Sscanf(cost, "%d", &costVal)
-	if costVal == 0 {
+	costVal, ok := new(big.Int).SetString(cost, 10)
+	if !ok || costVal.Sign() == 0 {
 		return cost
 	}
-	scaled := costVal * targetSize / sampleSize
-	return fmt.Sprintf("%d", scaled)
+	// scaled = costVal * targetSize / sampleSize
+	scaled := new(big.Int).Mul(costVal, big.NewInt(targetSize))
+	scaled.Div(scaled, big.NewInt(sampleSize))
+	return scaled.String()
 }

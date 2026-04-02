@@ -15,21 +15,22 @@ var (
 
 // User represents a user record from the database.
 type User struct {
-	ID               int64
-	Email            string
-	PasswordHash     sql.NullString
-	FirstName        string
-	LastName         string
-	IsActive         bool
-	IsServiceAccount bool
-	EmailVerified    bool
-	ExternalID       sql.NullString
-	LastLoginAt      sql.NullTime
-	MaxFileSizeBytes sql.NullInt64
-	AllowedFileTypes sql.NullString // JSON array
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
-	DeletedAt        sql.NullTime
+	ID                int64
+	Email             string
+	PasswordHash      sql.NullString
+	FirstName         string
+	LastName          string
+	IsActive          bool
+	IsServiceAccount  bool
+	EmailVerified     bool
+	ExternalID        sql.NullString
+	LastLoginAt       sql.NullTime
+	MaxFileSizeBytes  sql.NullInt64
+	AllowedFileTypes  sql.NullString // JSON array
+	PasswordChangedAt sql.NullTime
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+	DeletedAt         sql.NullTime
 }
 
 // UserService handles user-related database operations.
@@ -85,13 +86,15 @@ func (s *UserService) GetByID(id int64) (*User, error) {
 	err := s.db.QueryRow(
 		`SELECT id, email, password_hash, first_name, last_name, is_active,
 		        is_service_account, email_verified, external_id, last_login_at,
-		        max_file_size_bytes, allowed_file_types, created_at, updated_at, deleted_at
+		        max_file_size_bytes, allowed_file_types, password_changed_at,
+		        created_at, updated_at, deleted_at
 		 FROM users WHERE id = ? AND deleted_at IS NULL`,
 		id,
 	).Scan(
 		&u.ID, &u.Email, &u.PasswordHash, &u.FirstName, &u.LastName, &u.IsActive,
 		&u.IsServiceAccount, &u.EmailVerified, &u.ExternalID, &u.LastLoginAt,
-		&u.MaxFileSizeBytes, &u.AllowedFileTypes, &u.CreatedAt, &u.UpdatedAt, &u.DeletedAt,
+		&u.MaxFileSizeBytes, &u.AllowedFileTypes, &u.PasswordChangedAt,
+		&u.CreatedAt, &u.UpdatedAt, &u.DeletedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, ErrUserNotFound
@@ -105,13 +108,15 @@ func (s *UserService) GetByEmail(email string) (*User, error) {
 	err := s.db.QueryRow(
 		`SELECT id, email, password_hash, first_name, last_name, is_active,
 		        is_service_account, email_verified, external_id, last_login_at,
-		        max_file_size_bytes, allowed_file_types, created_at, updated_at, deleted_at
+		        max_file_size_bytes, allowed_file_types, password_changed_at,
+		        created_at, updated_at, deleted_at
 		 FROM users WHERE email = ? AND deleted_at IS NULL`,
 		email,
 	).Scan(
 		&u.ID, &u.Email, &u.PasswordHash, &u.FirstName, &u.LastName, &u.IsActive,
 		&u.IsServiceAccount, &u.EmailVerified, &u.ExternalID, &u.LastLoginAt,
-		&u.MaxFileSizeBytes, &u.AllowedFileTypes, &u.CreatedAt, &u.UpdatedAt, &u.DeletedAt,
+		&u.MaxFileSizeBytes, &u.AllowedFileTypes, &u.PasswordChangedAt,
+		&u.CreatedAt, &u.UpdatedAt, &u.DeletedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, ErrUserNotFound
@@ -145,7 +150,8 @@ func (s *UserService) List(limit, offset int) ([]*User, int64, error) {
 	rows, err := s.db.Query(
 		`SELECT id, email, password_hash, first_name, last_name, is_active,
 		        is_service_account, email_verified, external_id, last_login_at,
-		        max_file_size_bytes, allowed_file_types, created_at, updated_at, deleted_at
+		        max_file_size_bytes, allowed_file_types, password_changed_at,
+		        created_at, updated_at, deleted_at
 		 FROM users WHERE deleted_at IS NULL
 		 ORDER BY created_at DESC
 		 LIMIT ? OFFSET ?`,
@@ -162,7 +168,8 @@ func (s *UserService) List(limit, offset int) ([]*User, int64, error) {
 		if err := rows.Scan(
 			&u.ID, &u.Email, &u.PasswordHash, &u.FirstName, &u.LastName, &u.IsActive,
 			&u.IsServiceAccount, &u.EmailVerified, &u.ExternalID, &u.LastLoginAt,
-			&u.MaxFileSizeBytes, &u.AllowedFileTypes, &u.CreatedAt, &u.UpdatedAt, &u.DeletedAt,
+			&u.MaxFileSizeBytes, &u.AllowedFileTypes, &u.PasswordChangedAt,
+			&u.CreatedAt, &u.UpdatedAt, &u.DeletedAt,
 		); err != nil {
 			return nil, 0, err
 		}
@@ -205,10 +212,11 @@ func (s *UserService) SoftDelete(id int64) error {
 	return err
 }
 
-// UpdatePassword changes a user's password hash.
+// UpdatePassword changes a user's password hash and records the timestamp
+// so that JWTs issued before the change are rejected.
 func (s *UserService) UpdatePassword(id int64, passwordHash string) error {
 	_, err := s.db.Exec(
-		`UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		`UPDATE users SET password_hash = ?, password_changed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 		passwordHash, id,
 	)
 	return err
@@ -220,13 +228,15 @@ func (s *UserService) GetByExternalID(externalID string) (*User, error) {
 	err := s.db.QueryRow(
 		`SELECT id, email, password_hash, first_name, last_name, is_active,
 		        is_service_account, email_verified, external_id, last_login_at,
-		        max_file_size_bytes, allowed_file_types, created_at, updated_at, deleted_at
+		        max_file_size_bytes, allowed_file_types, password_changed_at,
+		        created_at, updated_at, deleted_at
 		 FROM users WHERE external_id = ? AND deleted_at IS NULL`,
 		externalID,
 	).Scan(
 		&u.ID, &u.Email, &u.PasswordHash, &u.FirstName, &u.LastName, &u.IsActive,
 		&u.IsServiceAccount, &u.EmailVerified, &u.ExternalID, &u.LastLoginAt,
-		&u.MaxFileSizeBytes, &u.AllowedFileTypes, &u.CreatedAt, &u.UpdatedAt, &u.DeletedAt,
+		&u.MaxFileSizeBytes, &u.AllowedFileTypes, &u.PasswordChangedAt,
+		&u.CreatedAt, &u.UpdatedAt, &u.DeletedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, ErrUserNotFound

@@ -63,9 +63,10 @@ func (s *SMTPNotifier) send(to, subject, body string) error {
 	return smtp.SendMail(addr, auth, s.cfg.From, []string{to}, []byte(msg))
 }
 
-// WebhookNotifier is a stub for future webhook-based notification delivery.
-// Companies that prefer routing notifications through their own systems
-// (Slack, PagerDuty, custom HTTP endpoints) can use this instead of SMTP.
+// WebhookNotifier routes transactional emails (password reset, verification)
+// through the configured webhook system instead of SMTP. This allows companies
+// to handle delivery via their own infrastructure (Slack, PagerDuty, custom endpoints).
+// Not yet implemented — falls back to NoopNotifier when no SMTP is configured.
 type WebhookNotifier struct {
 	// webhookURL string
 }

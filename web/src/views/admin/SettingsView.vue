@@ -1,9 +1,22 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, watch } from 'vue'
+import { useToast } from 'primevue/usetoast'
 import { api } from '../../api/client'
+import Button from 'primevue/button'
+import InputText from 'primevue/inputtext'
+import InputNumber from 'primevue/inputnumber'
+import Select from 'primevue/select'
+import ToggleSwitch from 'primevue/toggleswitch'
+import Message from 'primevue/message'
+import Tabs from 'primevue/tabs'
+import TabList from 'primevue/tablist'
+import Tab from 'primevue/tab'
+import TabPanels from 'primevue/tabpanels'
+import TabPanel from 'primevue/tabpanel'
+import Skeleton from 'primevue/skeleton'
 
+const toast = useToast()
 const loading = ref(true)
-const globalMsg = ref('')
 
 // OIDC state
 const oidcProviders = ref<any[]>([])
@@ -17,6 +30,11 @@ const generalSaved = ref({ environment_name: '', timezone: '', default_visibilit
 const general = reactive({ environment_name: '', timezone: '', default_visibility: 'private' })
 const generalDirty = ref(false)
 const generalSaving = ref(false)
+
+const visibilityOptions = [
+  { label: 'Private', value: 'private' },
+  { label: 'Public', value: 'public' },
+]
 
 watch(general, () => {
   generalDirty.value =
@@ -137,10 +155,9 @@ async function saveCard(card: string) {
       opsDirty.value = false
     }
 
-    globalMsg.value = 'Settings saved.'
-    setTimeout(() => globalMsg.value = '', 3000)
+    toast.add({ severity: 'success', summary: 'Saved', detail: 'Settings saved', life: 3000 })
   } catch (e: any) {
-    alert(e.response?.data?.error || 'Failed to save settings')
+    toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to save settings', life: 5000 })
   } finally {
     generalSaving.value = false
     uploadsSaving.value = false
@@ -173,7 +190,7 @@ async function exportSettings() {
     a.click()
     URL.revokeObjectURL(url)
   } catch {
-    alert('Export failed')
+    toast.add({ severity: 'error', summary: 'Error', detail: 'Export failed', life: 5000 })
   }
 }
 
@@ -186,10 +203,9 @@ async function importSettings(e: Event) {
     const data = JSON.parse(text)
     await api.post('/api/v2/admin/settings/import', data)
     await fetchSettings()
-    globalMsg.value = 'Settings imported.'
-    setTimeout(() => globalMsg.value = '', 3000)
+    toast.add({ severity: 'success', summary: 'Imported', detail: 'Settings imported', life: 3000 })
   } catch {
-    alert('Import failed')
+    toast.add({ severity: 'error', summary: 'Error', detail: 'Import failed', life: 5000 })
   }
 }
 
@@ -212,201 +228,168 @@ onMounted(async () => {
     <div class="flex items-center justify-between mb-6">
       <h1 class="text-2xl font-bold">System Settings</h1>
       <div class="flex gap-2">
-        <button @click="exportSettings" class="rounded border px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50">
-          <i class="pi pi-download mr-1"></i> Export
-        </button>
-        <label class="rounded border px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 cursor-pointer">
-          <i class="pi pi-upload mr-1"></i> Import
+        <Button icon="pi pi-download" label="Export" severity="secondary" outlined @click="exportSettings" />
+        <label>
+          <Button icon="pi pi-upload" label="Import" severity="secondary" outlined as="span" class="cursor-pointer" />
           <input type="file" accept=".json" @change="importSettings" class="hidden" />
         </label>
       </div>
     </div>
 
-    <div v-if="globalMsg" class="mb-4 rounded bg-green-50 p-3 text-green-700 text-sm">{{ globalMsg }}</div>
-    <div v-if="loading" class="text-center text-gray-400 py-12">Loading...</div>
-
-    <div v-else class="space-y-6">
-      <!-- Card: General -->
-      <div class="bg-white rounded-lg border border-gray-200">
-        <div class="px-6 py-4 border-b border-gray-200">
-          <h2 class="text-base font-semibold text-gray-800">General</h2>
-        </div>
-        <div class="divide-y divide-gray-100">
-          <div class="grid grid-cols-3 gap-6 px-6 py-5">
-            <div>
-              <label class="text-sm font-medium text-gray-700">Environment Name</label>
-              <p class="text-xs text-gray-400 mt-1">Label shown in the UI header and exported settings.</p>
-            </div>
-            <div class="col-span-2">
-              <input v-model="general.environment_name" type="text"
-                class="block w-full max-w-md rounded border border-gray-300 px-3 py-2 text-sm" />
-            </div>
-          </div>
-          <div class="grid grid-cols-3 gap-6 px-6 py-5">
-            <div>
-              <label class="text-sm font-medium text-gray-700">Timezone</label>
-              <p class="text-xs text-gray-400 mt-1">For scheduled jobs, log timestamps, and date display.</p>
-            </div>
-            <div class="col-span-2">
-              <input v-model="general.timezone" type="text" placeholder="e.g. Europe/London"
-                class="block w-full max-w-md rounded border border-gray-300 px-3 py-2 text-sm" />
-            </div>
-          </div>
-          <div class="grid grid-cols-3 gap-6 px-6 py-5">
-            <div>
-              <label class="text-sm font-medium text-gray-700">Default Visibility</label>
-              <p class="text-xs text-gray-400 mt-1">Visibility for new uploads when not specified.</p>
-            </div>
-            <div class="col-span-2">
-              <select v-model="general.default_visibility"
-                class="block w-48 rounded border border-gray-300 px-3 py-2 text-sm">
-                <option value="private">Private</option>
-                <option value="public">Public</option>
-              </select>
-            </div>
-          </div>
-        </div>
-        <div v-if="generalDirty" class="px-6 py-4 bg-gray-50 border-t border-gray-200 rounded-b-lg flex items-center justify-between">
-          <p class="text-xs text-gray-500">You have unsaved changes</p>
-          <div class="flex gap-2">
-            <button type="button" @click="discardCard('general')"
-              class="rounded border px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100">
-              Discard
-            </button>
-            <button type="button" @click="saveCard('general')" :disabled="generalSaving"
-              class="rounded bg-blue-600 px-4 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50">
-              {{ generalSaving ? 'Saving...' : 'Save' }}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <!-- Card: Upload Limits -->
-      <div class="bg-white rounded-lg border border-gray-200">
-        <div class="px-6 py-4 border-b border-gray-200">
-          <h2 class="text-base font-semibold text-gray-800">Upload Limits</h2>
-        </div>
-        <div class="divide-y divide-gray-100">
-          <div class="grid grid-cols-3 gap-6 px-6 py-5">
-            <div>
-              <label class="text-sm font-medium text-gray-700">Max Upload Size</label>
-              <p class="text-xs text-gray-400 mt-1">Maximum file size per upload. 0 for unlimited.</p>
-            </div>
-            <div class="col-span-2">
-              <div class="flex items-center gap-2">
-                <input v-model="uploads.max_upload_gb" type="number" step="0.1" min="0"
-                  class="block w-32 rounded border border-gray-300 px-3 py-2 text-sm" />
-                <span class="text-sm text-gray-400">GB</span>
-              </div>
-            </div>
-          </div>
-          <div class="grid grid-cols-3 gap-6 px-6 py-5">
-            <div>
-              <label class="text-sm font-medium text-gray-700">Max Concurrent Uploads</label>
-              <p class="text-xs text-gray-400 mt-1">Simultaneous uploads to the network. Higher values use more bandwidth.</p>
-            </div>
-            <div class="col-span-2">
-              <input v-model="uploads.max_concurrent_uploads" type="number" min="1"
-                class="block w-32 rounded border border-gray-300 px-3 py-2 text-sm" />
-            </div>
-          </div>
-          <div class="grid grid-cols-3 gap-6 px-6 py-5">
-            <div>
-              <label class="text-sm font-medium text-gray-700">Max Gas Fee</label>
-              <p class="text-xs text-gray-400 mt-1">Max gas per upload in nanotokens. Uploads back off if exceeded. 0 for no limit.</p>
-            </div>
-            <div class="col-span-2">
-              <div class="flex items-center gap-2">
-                <input v-model="uploads.max_gas_fee" type="number" step="1" min="0"
-                  class="block w-40 rounded border border-gray-300 px-3 py-2 text-sm" />
-                <span class="text-sm text-gray-400">nanos</span>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div v-if="uploadsDirty" class="px-6 py-4 bg-gray-50 border-t border-gray-200 rounded-b-lg flex items-center justify-between">
-          <p class="text-xs text-gray-500">You have unsaved changes</p>
-          <div class="flex gap-2">
-            <button type="button" @click="discardCard('uploads')"
-              class="rounded border px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100">
-              Discard
-            </button>
-            <button type="button" @click="saveCard('uploads')" :disabled="uploadsSaving"
-              class="rounded bg-blue-600 px-4 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50">
-              {{ uploadsSaving ? 'Saving...' : 'Save' }}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <!-- Card: Operations -->
-      <div class="bg-white rounded-lg border border-gray-200">
-        <div class="px-6 py-4 border-b border-gray-200">
-          <h2 class="text-base font-semibold text-gray-800">Operations</h2>
-        </div>
-        <div class="divide-y divide-gray-100">
-          <div class="grid grid-cols-3 gap-6 px-6 py-5">
-            <div>
-              <label class="text-sm font-medium text-gray-700">Maintenance Mode</label>
-              <p class="text-xs text-gray-400 mt-1">Returns 503 for all non-admin API requests.</p>
-            </div>
-            <div class="col-span-2 flex items-center">
-              <button type="button"
-                @click="ops.maintenance_mode = ops.maintenance_mode === 'true' ? 'false' : 'true'"
-                class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors"
-                :class="ops.maintenance_mode === 'true' ? 'bg-blue-600' : 'bg-gray-200'">
-                <span class="inline-block h-4 w-4 rounded-full bg-white transition-transform"
-                  :class="ops.maintenance_mode === 'true' ? 'translate-x-6' : 'translate-x-1'" />
-              </button>
-              <span class="ml-3 text-sm text-gray-500">{{ ops.maintenance_mode === 'true' ? 'Enabled' : 'Disabled' }}</span>
-            </div>
-          </div>
-          <div class="grid grid-cols-3 gap-6 px-6 py-5">
-            <div>
-              <label class="text-sm font-medium text-gray-700">Log Retention</label>
-              <p class="text-xs text-gray-400 mt-1">Days to keep audit and system logs. 0 to keep indefinitely.</p>
-            </div>
-            <div class="col-span-2">
-              <div class="flex items-center gap-2">
-                <input v-model="ops.log_retention_days" type="number" min="0"
-                  class="block w-32 rounded border border-gray-300 px-3 py-2 text-sm" />
-                <span class="text-sm text-gray-400">days</span>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div v-if="opsDirty" class="px-6 py-4 bg-gray-50 border-t border-gray-200 rounded-b-lg flex items-center justify-between">
-          <p class="text-xs text-gray-500">You have unsaved changes</p>
-          <div class="flex gap-2">
-            <button type="button" @click="discardCard('ops')"
-              class="rounded border px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100">
-              Discard
-            </button>
-            <button type="button" @click="saveCard('ops')" :disabled="opsSaving"
-              class="rounded bg-blue-600 px-4 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50">
-              {{ opsSaving ? 'Saving...' : 'Save' }}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <!-- Card: OIDC Providers -->
-      <div class="bg-white rounded-lg border border-gray-200">
-        <div class="px-6 py-4 border-b border-gray-200">
-          <h2 class="text-base font-semibold text-gray-800">SSO / OIDC Providers</h2>
-        </div>
-        <div class="px-6 py-5">
-          <div v-if="oidcProviders.length === 0" class="text-sm text-gray-400">No OIDC providers configured.</div>
-          <div v-else class="divide-y divide-gray-100">
-            <div v-for="p in oidcProviders" :key="p.id" class="flex items-center justify-between py-3">
-              <div>
-                <p class="text-sm font-medium text-gray-800">{{ p.display_name }}</p>
-                <p class="text-xs text-gray-400">{{ p.issuer_url }} &middot; {{ p.is_enabled ? 'Enabled' : 'Disabled' }}</p>
-              </div>
-            </div>
-          </div>
+    <div v-if="loading" class="space-y-4 py-4">
+      <Skeleton height="2.5rem" width="16rem" />
+      <Skeleton height="1px" />
+      <div class="space-y-5">
+        <div class="grid grid-cols-3 gap-6" v-for="i in 3" :key="i">
+          <Skeleton height="1.5rem" width="10rem" />
+          <Skeleton height="2.5rem" class="col-span-2" />
         </div>
       </div>
     </div>
+
+    <Tabs v-else value="0">
+      <TabList>
+        <Tab value="0">General</Tab>
+        <Tab value="1">Upload Limits</Tab>
+        <Tab value="2">Operations</Tab>
+        <Tab value="3">SSO / OIDC</Tab>
+      </TabList>
+      <TabPanels>
+        <!-- General -->
+        <TabPanel value="0">
+          <div class="divide-y divide-surface-100">
+            <div class="grid grid-cols-3 gap-6 py-5">
+              <div>
+                <label class="text-sm font-medium">Environment Name</label>
+                <p class="text-xs text-surface-400 mt-1">Label shown in the UI header and exported settings.</p>
+              </div>
+              <div class="col-span-2">
+                <InputText v-model="general.environment_name" class="w-full max-w-md" />
+              </div>
+            </div>
+            <div class="grid grid-cols-3 gap-6 py-5">
+              <div>
+                <label class="text-sm font-medium">Timezone</label>
+                <p class="text-xs text-surface-400 mt-1">For scheduled jobs, log timestamps, and date display.</p>
+              </div>
+              <div class="col-span-2">
+                <InputText v-model="general.timezone" placeholder="e.g. Europe/London" class="w-full max-w-md" />
+              </div>
+            </div>
+            <div class="grid grid-cols-3 gap-6 py-5">
+              <div>
+                <label class="text-sm font-medium">Default Visibility</label>
+                <p class="text-xs text-surface-400 mt-1">Visibility for new uploads when not specified.</p>
+              </div>
+              <div class="col-span-2">
+                <Select v-model="general.default_visibility" :options="visibilityOptions" optionLabel="label" optionValue="value" class="w-48" />
+              </div>
+            </div>
+          </div>
+          <div v-if="generalDirty" class="py-4 border-t border-surface-200 flex items-center justify-between">
+            <p class="text-xs text-surface-500">You have unsaved changes</p>
+            <div class="flex gap-2">
+              <Button label="Discard" severity="secondary" outlined @click="discardCard('general')" />
+              <Button :label="generalSaving ? 'Saving...' : 'Save'" :loading="generalSaving" @click="saveCard('general')" />
+            </div>
+          </div>
+        </TabPanel>
+
+        <!-- Upload Limits -->
+        <TabPanel value="1">
+          <div class="divide-y divide-surface-100">
+            <div class="grid grid-cols-3 gap-6 py-5">
+              <div>
+                <label class="text-sm font-medium">Max Upload Size</label>
+                <p class="text-xs text-surface-400 mt-1">Maximum file size per upload. 0 for unlimited.</p>
+              </div>
+              <div class="col-span-2">
+                <div class="flex items-center gap-2">
+                  <InputText v-model="uploads.max_upload_gb" type="number" class="w-32" />
+                  <span class="text-sm text-surface-400">GB</span>
+                </div>
+              </div>
+            </div>
+            <div class="grid grid-cols-3 gap-6 py-5">
+              <div>
+                <label class="text-sm font-medium">Max Concurrent Uploads</label>
+                <p class="text-xs text-surface-400 mt-1">Simultaneous uploads to the network. Higher values use more bandwidth.</p>
+              </div>
+              <div class="col-span-2">
+                <InputText v-model="uploads.max_concurrent_uploads" type="number" class="w-32" />
+              </div>
+            </div>
+            <div class="grid grid-cols-3 gap-6 py-5">
+              <div>
+                <label class="text-sm font-medium">Max Gas Fee</label>
+                <p class="text-xs text-surface-400 mt-1">Max gas per upload in nanotokens. Uploads back off if exceeded. 0 for no limit.</p>
+              </div>
+              <div class="col-span-2">
+                <div class="flex items-center gap-2">
+                  <InputText v-model="uploads.max_gas_fee" type="number" class="w-40" />
+                  <span class="text-sm text-surface-400">nanos</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div v-if="uploadsDirty" class="py-4 border-t border-surface-200 flex items-center justify-between">
+            <p class="text-xs text-surface-500">You have unsaved changes</p>
+            <div class="flex gap-2">
+              <Button label="Discard" severity="secondary" outlined @click="discardCard('uploads')" />
+              <Button :label="uploadsSaving ? 'Saving...' : 'Save'" :loading="uploadsSaving" @click="saveCard('uploads')" />
+            </div>
+          </div>
+        </TabPanel>
+
+        <!-- Operations -->
+        <TabPanel value="2">
+          <div class="divide-y divide-surface-100">
+            <div class="grid grid-cols-3 gap-6 py-5">
+              <div>
+                <label class="text-sm font-medium">Maintenance Mode</label>
+                <p class="text-xs text-surface-400 mt-1">Returns 503 for all non-admin API requests.</p>
+              </div>
+              <div class="col-span-2 flex items-center gap-3">
+                <ToggleSwitch :modelValue="ops.maintenance_mode === 'true'"
+                  @update:modelValue="ops.maintenance_mode = $event ? 'true' : 'false'" />
+                <span class="text-sm text-surface-500">{{ ops.maintenance_mode === 'true' ? 'Enabled' : 'Disabled' }}</span>
+              </div>
+            </div>
+            <div class="grid grid-cols-3 gap-6 py-5">
+              <div>
+                <label class="text-sm font-medium">Log Retention</label>
+                <p class="text-xs text-surface-400 mt-1">Days to keep audit and system logs. 0 to keep indefinitely.</p>
+              </div>
+              <div class="col-span-2">
+                <div class="flex items-center gap-2">
+                  <InputText v-model="ops.log_retention_days" type="number" class="w-32" />
+                  <span class="text-sm text-surface-400">days</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div v-if="opsDirty" class="py-4 border-t border-surface-200 flex items-center justify-between">
+            <p class="text-xs text-surface-500">You have unsaved changes</p>
+            <div class="flex gap-2">
+              <Button label="Discard" severity="secondary" outlined @click="discardCard('ops')" />
+              <Button :label="opsSaving ? 'Saving...' : 'Save'" :loading="opsSaving" @click="saveCard('ops')" />
+            </div>
+          </div>
+        </TabPanel>
+
+        <!-- SSO / OIDC -->
+        <TabPanel value="3">
+          <div v-if="oidcProviders.length === 0" class="py-6 text-sm text-surface-400">No OIDC providers configured.</div>
+          <div v-else class="divide-y divide-surface-100">
+            <div v-for="p in oidcProviders" :key="p.id" class="flex items-center justify-between py-4">
+              <div>
+                <p class="text-sm font-medium">{{ p.display_name }}</p>
+                <p class="text-xs text-surface-400">{{ p.issuer_url }} &middot; {{ p.is_enabled ? 'Enabled' : 'Disabled' }}</p>
+              </div>
+            </div>
+          </div>
+        </TabPanel>
+      </TabPanels>
+    </Tabs>
   </div>
 </template>

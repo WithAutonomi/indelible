@@ -193,6 +193,27 @@ func (s *CollectionService) AddFile(collectionID, uploadID int64) error {
 	return nil
 }
 
+// CollectionIDsForUpload returns the IDs of collections containing a given upload.
+func (s *CollectionService) CollectionIDsForUpload(uploadID int64) ([]int64, error) {
+	rows, err := s.db.Query(
+		`SELECT collection_id FROM collection_files WHERE upload_id = ?`, uploadID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 // RemoveFile removes an upload from a collection.
 func (s *CollectionService) RemoveFile(collectionID, uploadID int64) error {
 	result, err := s.db.Exec(
@@ -220,7 +241,8 @@ func (s *CollectionService) ListFiles(collectionID int64, limit, offset int) ([]
 
 	rows, err := s.db.Query(
 		`SELECT u.id, u.uuid, u.user_id, u.token_id, u.filename, u.original_filename, u.file_size, u.content_type, u.visibility, u.status,
-		        u.datamap_address, u.estimated_cost, u.actual_cost, u.error_message, u.temp_path,
+		        u.status_detail, u.datamap_address, u.estimated_cost, u.actual_cost, u.error_message, u.temp_path,
+		        u.data_map, u.backoff_until, u.backoff_attempt, u.last_quoted_cost,
 		        u.queued_at, u.processing_at, u.completed_at, u.failed_at, u.created_at
 		 FROM uploads u
 		 INNER JOIN collection_files cf ON u.id = cf.upload_id

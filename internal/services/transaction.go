@@ -13,6 +13,7 @@ type Transaction struct {
 	TxType       string // "upload", "refund"
 	Amount       string // atto tokens
 	BalanceAfter string
+	TxHash       sql.NullString // on-chain EVM transaction hash
 	CreatedAt    time.Time
 }
 
@@ -26,16 +27,20 @@ func NewTransactionService(db *sql.DB) *TransactionService {
 	return &TransactionService{db: db}
 }
 
-// Record logs a new transaction.
-func (s *TransactionService) Record(walletID int64, uploadID *int64, txType, amount, balanceAfter string) (*Transaction, error) {
+// Record logs a new transaction with an optional on-chain tx hash.
+func (s *TransactionService) Record(walletID int64, uploadID *int64, txType, amount, balanceAfter, txHash string) (*Transaction, error) {
 	var uID sql.NullInt64
 	if uploadID != nil {
 		uID = sql.NullInt64{Int64: *uploadID, Valid: true}
 	}
+	var hash sql.NullString
+	if txHash != "" {
+		hash = sql.NullString{String: txHash, Valid: true}
+	}
 
 	result, err := s.db.Exec(
-		`INSERT INTO transactions (wallet_id, upload_id, tx_type, amount, balance_after) VALUES (?, ?, ?, ?, ?)`,
-		walletID, uID, txType, amount, balanceAfter,
+		`INSERT INTO transactions (wallet_id, upload_id, tx_type, amount, balance_after, tx_hash) VALUES (?, ?, ?, ?, ?, ?)`,
+		walletID, uID, txType, amount, balanceAfter, hash,
 	)
 	if err != nil {
 		return nil, err
@@ -49,8 +54,8 @@ func (s *TransactionService) Record(walletID int64, uploadID *int64, txType, amo
 func (s *TransactionService) GetByID(id int64) (*Transaction, error) {
 	t := &Transaction{}
 	err := s.db.QueryRow(
-		`SELECT id, wallet_id, upload_id, tx_type, amount, balance_after, created_at FROM transactions WHERE id = ?`, id,
-	).Scan(&t.ID, &t.WalletID, &t.UploadID, &t.TxType, &t.Amount, &t.BalanceAfter, &t.CreatedAt)
+		`SELECT id, wallet_id, upload_id, tx_type, amount, balance_after, tx_hash, created_at FROM transactions WHERE id = ?`, id,
+	).Scan(&t.ID, &t.WalletID, &t.UploadID, &t.TxType, &t.Amount, &t.BalanceAfter, &t.TxHash, &t.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -67,7 +72,7 @@ func (s *TransactionService) ListByWallet(walletID int64, limit, offset int) ([]
 	s.db.QueryRow(`SELECT COUNT(*) FROM transactions WHERE wallet_id = ?`, walletID).Scan(&total)
 
 	rows, err := s.db.Query(
-		`SELECT id, wallet_id, upload_id, tx_type, amount, balance_after, created_at
+		`SELECT id, wallet_id, upload_id, tx_type, amount, balance_after, tx_hash, created_at
 		 FROM transactions WHERE wallet_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`,
 		walletID, limit, offset,
 	)
@@ -79,7 +84,7 @@ func (s *TransactionService) ListByWallet(walletID int64, limit, offset int) ([]
 	var txns []*Transaction
 	for rows.Next() {
 		t := &Transaction{}
-		if err := rows.Scan(&t.ID, &t.WalletID, &t.UploadID, &t.TxType, &t.Amount, &t.BalanceAfter, &t.CreatedAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.WalletID, &t.UploadID, &t.TxType, &t.Amount, &t.BalanceAfter, &t.TxHash, &t.CreatedAt); err != nil {
 			return nil, 0, err
 		}
 		txns = append(txns, t)

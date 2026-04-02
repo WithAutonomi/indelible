@@ -3,6 +3,13 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../../api/client'
 import { useAuthStore } from '../../stores/auth'
+import DataTable from 'primevue/datatable'
+import Column from 'primevue/column'
+import Button from 'primevue/button'
+import Select from 'primevue/select'
+import Tag from 'primevue/tag'
+import Card from 'primevue/card'
+import Message from 'primevue/message'
 
 const auth = useAuthStore()
 const router = useRouter()
@@ -24,6 +31,11 @@ const uploadMsg = ref('')
 const uploadError = ref('')
 const recentUploads = ref<any[]>([])
 const loading = ref(true)
+
+const visibilityOptions = [
+  { label: 'Private', value: 'private' },
+  { label: 'Public', value: 'public' },
+]
 
 async function fetchRecent() {
   try {
@@ -67,13 +79,13 @@ async function handleUpload() {
   }
 }
 
-function statusClass(status: string, detail?: string) {
-  if (detail === 'gas_backoff') return 'text-orange-700 bg-orange-50'
+function statusSeverity(status: string, detail?: string): string {
+  if (detail === 'gas_backoff') return 'warn'
   switch (status) {
-    case 'completed': return 'text-green-700 bg-green-50'
-    case 'failed': return 'text-red-700 bg-red-50'
-    case 'processing': return 'text-blue-700 bg-blue-50'
-    default: return 'text-yellow-700 bg-yellow-50'
+    case 'completed': return 'success'
+    case 'failed': return 'danger'
+    case 'processing': return 'warn'
+    default: return 'info'
   }
 }
 
@@ -114,73 +126,62 @@ onMounted(() => {
     <p class="text-gray-500 mb-6">Welcome back, {{ auth.user?.first_name }}.</p>
 
     <!-- No wallet warning -->
-    <div v-if="noWallet" class="mb-6 rounded-lg border border-amber-300 bg-amber-50 p-4 flex items-center justify-between">
-      <div>
-        <p class="text-sm font-medium text-amber-800">No wallet configured</p>
-        <p class="text-sm text-amber-700">A wallet must be added before files can be uploaded to the network.</p>
+    <Message v-if="noWallet" severity="warn" :closable="false" class="mb-6">
+      <div class="flex items-center justify-between w-full">
+        <div>
+          <p class="font-medium">No wallet configured</p>
+          <p class="text-sm">A wallet must be added before files can be uploaded to the network.</p>
+        </div>
+        <Button v-if="auth.isAdmin" label="Add Wallet" severity="warn" size="small"
+          @click="router.push('/admin/wallets?add=1')" class="ml-4" />
+        <span v-else class="text-xs ml-4 whitespace-nowrap">Contact your administrator</span>
       </div>
-      <button v-if="auth.isAdmin" @click="router.push('/admin/wallets?add=1')"
-        class="rounded bg-amber-600 px-4 py-2 text-sm text-white hover:bg-amber-700 whitespace-nowrap ml-4">
-        Add Wallet
-      </button>
-      <span v-else class="text-xs text-amber-600 ml-4 whitespace-nowrap">Contact your administrator</span>
-    </div>
+    </Message>
 
     <!-- Upload card -->
-    <div class="bg-white rounded-lg border border-gray-200 p-6 mb-6" :class="{ 'opacity-50 pointer-events-none select-none': noWallet }">
-      <h2 class="text-lg font-semibold mb-4">Upload File</h2>
-      <div v-if="uploadMsg" class="mb-3 rounded bg-green-50 p-3 text-green-700 text-sm">{{ uploadMsg }}</div>
-      <div v-if="uploadError" class="mb-3 rounded bg-red-50 p-3 text-red-700 text-sm">{{ uploadError }}</div>
+    <Card class="mb-6" :class="{ 'opacity-50 pointer-events-none select-none': noWallet }">
+      <template #title>Upload File</template>
+      <template #content>
+        <Message v-if="uploadMsg" severity="success" :closable="false" class="mb-4">{{ uploadMsg }}</Message>
+        <Message v-if="uploadError" severity="error" :closable="false" class="mb-4">{{ uploadError }}</Message>
 
-      <form @submit.prevent="handleUpload" class="flex flex-col sm:flex-row items-start gap-4">
-        <div class="flex-1">
-          <input id="file-input" type="file" @change="onFileSelect" :disabled="noWallet"
-            class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
-        </div>
-        <select v-model="visibility" :disabled="noWallet" class="rounded border border-gray-300 px-3 py-2 text-sm">
-          <option value="private">Private</option>
-          <option value="public">Public</option>
-        </select>
-        <button type="submit" :disabled="!file || uploading || noWallet"
-          class="rounded bg-blue-600 px-5 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-50">
-          {{ uploading ? 'Uploading...' : 'Upload' }}
-        </button>
-      </form>
-    </div>
+        <form @submit.prevent="handleUpload" class="flex flex-col sm:flex-row items-start gap-4">
+          <div class="flex-1">
+            <input id="file-input" type="file" @change="onFileSelect" :disabled="noWallet"
+              class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
+          </div>
+          <Select v-model="visibility" :options="visibilityOptions" optionLabel="label" optionValue="value"
+            :disabled="noWallet" class="w-36" />
+          <Button type="submit" :label="uploading ? 'Uploading...' : 'Upload'" icon="pi pi-upload"
+            :disabled="!file || uploading || noWallet" :loading="uploading" />
+        </form>
+      </template>
+    </Card>
 
     <!-- Recent uploads -->
-    <div class="bg-white rounded-lg border border-gray-200">
-      <div class="px-6 py-4 border-b border-gray-200">
-        <h2 class="text-lg font-semibold">Recent Uploads</h2>
-      </div>
-      <div v-if="loading" class="p-6 text-center text-gray-400">Loading...</div>
-      <div v-else-if="recentUploads.length === 0" class="p-6 text-center text-gray-400">
-        No uploads yet. Upload your first file above.
-      </div>
-      <table v-else class="w-full">
-        <thead class="text-left text-xs text-gray-500 uppercase bg-gray-50">
-          <tr>
-            <th class="px-6 py-3">Name</th>
-            <th class="px-6 py-3">Size</th>
-            <th class="px-6 py-3">Visibility</th>
-            <th class="px-6 py-3">Status</th>
-            <th class="px-6 py-3">Created</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-gray-100">
-          <tr v-for="u in recentUploads" :key="u.uuid">
-            <td class="px-6 py-3 text-sm font-medium text-gray-800">{{ u.original_filename }}</td>
-            <td class="px-6 py-3 text-sm text-gray-500">{{ formatSize(u.file_size) }}</td>
-            <td class="px-6 py-3 text-sm text-gray-500">{{ u.visibility }}</td>
-            <td class="px-6 py-3">
-              <span class="text-xs font-medium px-2 py-1 rounded" :class="statusClass(u.status, u.status_detail)">
-                {{ statusLabel(u) }}
-              </span>
-            </td>
-            <td class="px-6 py-3 text-sm text-gray-400">{{ formatDate(u.created_at) }}</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+    <Card>
+      <template #title>Recent Uploads</template>
+      <template #content>
+        <DataTable :value="recentUploads" :loading="loading" stripedRows
+          :pt="{ root: { class: '-mt-2' } }">
+          <template #empty>No uploads yet. Upload your first file above.</template>
+          <Column field="original_filename" header="Name" sortable />
+          <Column field="file_size" header="Size" sortable>
+            <template #body="{ data }">{{ formatSize(data.file_size) }}</template>
+          </Column>
+          <Column field="visibility" header="Visibility" sortable />
+          <Column field="status" header="Status" sortable>
+            <template #body="{ data }">
+              <Tag :value="statusLabel(data)" :severity="statusSeverity(data.status, data.status_detail)" />
+            </template>
+          </Column>
+          <Column field="created_at" header="Created" sortable>
+            <template #body="{ data }">
+              <span class="text-gray-400">{{ formatDate(data.created_at) }}</span>
+            </template>
+          </Column>
+        </DataTable>
+      </template>
+    </Card>
   </div>
 </template>

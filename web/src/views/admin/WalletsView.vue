@@ -1,14 +1,26 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
+import { useConfirm } from 'primevue/useconfirm'
+import { useToast } from 'primevue/usetoast'
 import { api } from '../../api/client'
+import type { Wallet } from '../../types/api'
+import DataTable from 'primevue/datatable'
+import Column from 'primevue/column'
+import Button from 'primevue/button'
+import InputText from 'primevue/inputtext'
+import Password from 'primevue/password'
+import Tag from 'primevue/tag'
+import Message from 'primevue/message'
+import Dialog from 'primevue/dialog'
 
 const route = useRoute()
-const wallets = ref<any[]>([])
+const confirm = useConfirm()
+const toast = useToast()
+const wallets = ref<Wallet[]>([])
 const loading = ref(true)
 const showCreate = ref(false)
 const newName = ref('')
-const newAddress = ref('')
 const newPrivateKey = ref('')
 const creating = ref(false)
 
@@ -29,16 +41,15 @@ async function createWallet() {
   try {
     await api.post('/api/v2/admin/wallets', {
       name: newName.value,
-      address: newAddress.value,
       private_key: newPrivateKey.value,
     })
     newName.value = ''
-    newAddress.value = ''
     newPrivateKey.value = ''
     showCreate.value = false
     await fetchWallets()
+    toast.add({ severity: 'success', summary: 'Created', detail: 'Wallet added', life: 3000 })
   } catch (e: any) {
-    alert(e.response?.data?.error || 'Failed to create wallet')
+    toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to create wallet', life: 5000 })
   } finally {
     creating.value = false
   }
@@ -47,10 +58,58 @@ async function createWallet() {
 async function setDefault(id: number) {
   try {
     await api.put(`/api/v2/admin/wallets/${id}/default`)
+    toast.add({ severity: 'success', summary: 'Updated', detail: 'Default wallet changed', life: 3000 })
     await fetchWallets()
   } catch {
-    alert('Failed to set default wallet')
+    toast.add({ severity: 'error', summary: 'Error', detail: 'Failed to set default wallet', life: 5000 })
   }
+}
+
+function deleteWallet(id: number, name: string) {
+  confirm.require({
+    message: `Delete wallet "${name}"? This cannot be undone.`,
+    header: 'Confirm Delete',
+    icon: 'pi pi-exclamation-triangle',
+    acceptClass: 'p-button-danger',
+    accept: async () => {
+      try {
+        await api.delete(`/api/v2/admin/wallets/${id}`)
+        toast.add({ severity: 'success', summary: 'Deleted', detail: 'Wallet deleted', life: 3000 })
+        await fetchWallets()
+      } catch (e: any) {
+        toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to delete wallet', life: 5000 })
+      }
+    },
+  })
+}
+
+const refreshingBalance = ref<number | null>(null)
+
+async function refreshBalance(id: number) {
+  refreshingBalance.value = id
+  try {
+    const res = await api.post(`/api/v2/admin/wallets/${id}/balance`)
+    // Update the wallet in-place
+    const w = wallets.value.find((w) => w.id === id)
+    if (w) {
+      w.payment_balance = res.data.payment_balance
+      w.gas_balance = res.data.gas_balance
+    }
+  } catch (e: any) {
+    toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to refresh balance', life: 5000 })
+  } finally {
+    refreshingBalance.value = null
+  }
+}
+
+function formatBalance(atto: string): string {
+  if (!atto || atto === '0' || atto === '') return '0'
+  const n = BigInt(atto)
+  const whole = n / BigInt(10 ** 18)
+  const frac = n % BigInt(10 ** 18)
+  if (frac === BigInt(0)) return whole.toString()
+  const fracStr = frac.toString().padStart(18, '0').replace(/0+$/, '')
+  return `${whole}.${fracStr}`
 }
 
 onMounted(() => {
@@ -65,100 +124,96 @@ onMounted(() => {
   <div class="p-6">
     <div class="flex items-center justify-between mb-6">
       <h1 class="text-2xl font-bold">Wallets</h1>
-      <button @click="showCreate = !showCreate"
-        class="rounded bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700">
-        <i class="pi pi-plus mr-1"></i> Add Wallet
-      </button>
+      <Button icon="pi pi-plus" label="Add Wallet" @click="showCreate = !showCreate" />
     </div>
 
     <!-- No wallet setup prompt -->
-    <div v-if="!loading && wallets.length === 0 && !showCreate" class="mb-6 rounded-lg border border-amber-300 bg-amber-50 p-4">
-      <p class="text-sm font-medium text-amber-800">No wallets configured</p>
-      <p class="text-sm text-amber-700 mb-3">Add a wallet to enable file uploads to the Autonomi network. The first wallet added will automatically become the default.</p>
-      <button @click="showCreate = true"
-        class="rounded bg-amber-600 px-4 py-2 text-sm text-white hover:bg-amber-700">
-        Add Your First Wallet
-      </button>
-    </div>
-
-    <!-- Create form -->
-    <div v-if="showCreate" class="bg-white rounded-lg border border-gray-200 mb-6">
-      <div class="px-6 py-4 border-b border-gray-200">
-        <h2 class="text-base font-semibold text-gray-800">Add Wallet</h2>
+    <Message v-if="!loading && wallets.length === 0 && !showCreate" severity="warn" :closable="false" class="mb-6">
+      <div>
+        <p class="font-medium">No wallets configured</p>
+        <p class="text-sm mb-3">Add a wallet to enable file uploads to the Autonomi network. The first wallet added will automatically become the default.</p>
+        <Button label="Add Your First Wallet" severity="warn" @click="showCreate = true" />
       </div>
-      <form @submit.prevent="createWallet">
-        <div class="divide-y divide-gray-100">
-          <div class="grid grid-cols-3 gap-6 px-6 py-5">
-            <div>
-              <label class="text-sm font-medium text-gray-700">Name</label>
-              <p class="text-xs text-gray-400 mt-1">A label for this wallet.</p>
-            </div>
-            <div class="col-span-2">
-              <input v-model="newName" type="text" required placeholder="e.g. Production Wallet"
-                class="block w-full max-w-md rounded border border-gray-300 px-3 py-2 text-sm" />
-            </div>
-          </div>
-          <div class="grid grid-cols-3 gap-6 px-6 py-5">
-            <div>
-              <label class="text-sm font-medium text-gray-700">Address</label>
-              <p class="text-xs text-gray-400 mt-1">The wallet's public address.</p>
-            </div>
-            <div class="col-span-2">
-              <input v-model="newAddress" type="text" required
-                class="block w-full max-w-lg rounded border border-gray-300 px-3 py-2 text-sm font-mono" />
-            </div>
-          </div>
-          <div class="grid grid-cols-3 gap-6 px-6 py-5">
-            <div>
-              <label class="text-sm font-medium text-gray-700">Private Key</label>
-              <p class="text-xs text-gray-400 mt-1">Encrypted at rest with AES-256-GCM.</p>
-            </div>
-            <div class="col-span-2">
-              <input v-model="newPrivateKey" type="password" required
-                class="block w-full max-w-lg rounded border border-gray-300 px-3 py-2 text-sm font-mono" />
-            </div>
-          </div>
+    </Message>
+
+    <!-- Create dialog -->
+    <Dialog v-model:visible="showCreate" header="Add Wallet" modal :style="{ width: '30rem' }">
+      <div class="space-y-5">
+        <div>
+          <label class="text-sm font-medium block mb-1">Name</label>
+          <p class="text-xs text-surface-400 mb-2">A label for this wallet.</p>
+          <InputText v-model="newName" required placeholder="e.g. Production Wallet" class="w-full" />
         </div>
-        <div class="px-6 py-4 bg-gray-50 border-t border-gray-200 rounded-b-lg flex justify-end gap-2">
-          <button type="button" @click="showCreate = false"
-            class="rounded border px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100">Cancel</button>
-          <button type="submit" :disabled="creating"
-            class="rounded bg-blue-600 px-4 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50">
-            {{ creating ? 'Creating...' : 'Add Wallet' }}
-          </button>
+        <div>
+          <label class="text-sm font-medium block mb-1">Private Key</label>
+          <p class="text-xs text-surface-400 mb-2">Encrypted at rest with AES-256-GCM. The wallet address is derived automatically.</p>
+          <Password v-model="newPrivateKey" required :feedback="false" toggleMask inputClass="w-full font-mono" class="w-full" />
         </div>
-      </form>
-    </div>
+      </div>
+      <template #footer>
+        <Button label="Cancel" severity="secondary" text @click="showCreate = false" />
+        <Button :label="creating ? 'Creating...' : 'Add Wallet'" :loading="creating" @click="createWallet" />
+      </template>
+    </Dialog>
 
     <!-- Wallet list -->
-    <div class="bg-white rounded-lg border border-gray-200">
-      <div v-if="loading" class="p-6 text-center text-gray-400">Loading...</div>
-      <div v-else-if="wallets.length === 0" class="p-6 text-center text-gray-400">No wallets configured.</div>
-      <table v-else class="w-full">
-        <thead class="text-left text-xs text-gray-500 uppercase bg-gray-50">
-          <tr>
-            <th class="px-6 py-3">Name</th>
-            <th class="px-6 py-3">Address</th>
-            <th class="px-6 py-3">Default</th>
-            <th class="px-6 py-3">Created</th>
-            <th class="px-6 py-3">Actions</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-gray-100">
-          <tr v-for="w in wallets" :key="w.id">
-            <td class="px-6 py-3 text-sm font-medium text-gray-800">{{ w.name }}</td>
-            <td class="px-6 py-3 text-sm font-mono text-gray-500">{{ w.address?.substring(0, 16) }}...</td>
-            <td class="px-6 py-3">
-              <span v-if="w.is_default" class="text-xs font-medium px-2 py-1 rounded text-green-700 bg-green-50">Default</span>
-            </td>
-            <td class="px-6 py-3 text-sm text-gray-400">{{ new Date(w.created_at).toLocaleDateString() }}</td>
-            <td class="px-6 py-3">
-              <button v-if="!w.is_default" @click="setDefault(w.id)"
-                class="text-blue-600 hover:text-blue-800 text-sm">Set Default</button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+    <DataTable :value="wallets" :loading="loading" stripedRows class="rounded-lg border border-surface-200"
+      :pt="{ root: { class: 'bg-surface-0' } }">
+      <template #empty>No wallets configured.</template>
+      <Column field="name" header="Name" sortable>
+        <template #body="{ data }">
+          <span class="font-medium">{{ data.name }}</span>
+        </template>
+      </Column>
+      <Column field="address" header="Address" sortable>
+        <template #body="{ data }">
+          <span class="font-mono text-surface-500">{{ data.address?.substring(0, 16) }}...</span>
+        </template>
+      </Column>
+      <Column field="payment_balance" header="Balance" sortable>
+        <template #body="{ data }">
+          <div class="flex items-start gap-2">
+            <div>
+              <div class="text-sm">
+                <span class="font-medium">{{ formatBalance(data.payment_balance) }}</span>
+                <span class="text-surface-400 ml-1">ANT</span>
+              </div>
+              <div class="text-xs text-surface-400">
+                {{ formatBalance(data.gas_balance) }} gas
+              </div>
+            </div>
+            <Button icon="pi pi-refresh" text rounded size="small" severity="secondary"
+              :loading="refreshingBalance === data.id" aria-label="Refresh from chain" @click="refreshBalance(data.id)"
+              v-tooltip.top="'Refresh from chain'" />
+          </div>
+        </template>
+      </Column>
+      <Column field="is_default" header="Default" sortable>
+        <template #body="{ data }">
+          <Tag v-if="data.is_default" value="Default" severity="success" />
+        </template>
+      </Column>
+      <Column field="created_at" header="Created" sortable>
+        <template #body="{ data }">
+          <span class="text-surface-400">{{ new Date(data.created_at).toLocaleDateString() }}</span>
+        </template>
+      </Column>
+      <Column header="Actions">
+        <template #body="{ data }">
+          <div class="flex gap-1 items-center">
+            <Button v-if="!data.is_default" label="Set Default" severity="info" text size="small" @click="setDefault(data.id)" />
+            <Button v-else label="Default" text size="small" disabled class="opacity-40"
+              v-tooltip.top="'This is the active wallet'" />
+            <Button icon="pi pi-trash" text rounded size="small"
+              :severity="data.is_default ? 'secondary' : 'secondary'"
+              :disabled="data.is_default"
+              :class="{ 'opacity-30': data.is_default }"
+              aria-label="Delete wallet"
+              @click="!data.is_default && deleteWallet(data.id, data.name)"
+              v-tooltip.top="data.is_default ? 'Set another wallet as default before deleting' : 'Delete'" />
+          </div>
+        </template>
+      </Column>
+    </DataTable>
   </div>
 </template>

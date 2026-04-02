@@ -29,6 +29,10 @@ type Config struct {
 	AntdBin     string `toml:"antd_bin"`        // Path to antd binary (default: "antd" — searches PATH)
 	AntdDataDir string `toml:"antd_data_dir"`   // antd data directory (default: cfg.DataDir + "/antd")
 
+	// EVM configuration — populated automatically from first PrepareUpload, or set manually
+	EvmRPCURL      string `toml:"evm_rpc_url"`       // EVM RPC endpoint
+	EvmTokenAddress string `toml:"evm_token_address"` // Payment token contract address
+
 	// SMTP configuration for transactional emails (password reset, email verification)
 	SMTP SMTPConfig `toml:"smtp"`
 }
@@ -136,6 +140,13 @@ func Load(path string) (*Config, error) {
 		cfg.AntdDataDir = v
 	}
 
+	if v := os.Getenv("INDELIBLE_EVM_RPC_URL"); v != "" {
+		cfg.EvmRPCURL = v
+	}
+	if v := os.Getenv("INDELIBLE_EVM_TOKEN_ADDRESS"); v != "" {
+		cfg.EvmTokenAddress = v
+	}
+
 	// Default antd binary and data dir
 	if cfg.AntdBin == "" {
 		cfg.AntdBin = "antd"
@@ -154,9 +165,9 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("jwt_secret is required (set INDELIBLE_JWT_SECRET or jwt_secret in config)")
 	}
 
-	// Generate wallet encryption key if not set
-	if cfg.WalletEncryptionKey == "" {
-		cfg.WalletEncryptionKey = "0000000000000000000000000000000000000000000000000000000000000000" // placeholder — wallets won't be secure until a real key is configured
+	// Require wallet encryption key
+	if cfg.WalletEncryptionKey == "" || cfg.WalletEncryptionKey == "0000000000000000000000000000000000000000000000000000000000000000" {
+		return nil, fmt.Errorf("wallet_encryption_key is required (set INDELIBLE_WALLET_ENCRYPTION_KEY or wallet_encryption_key in config); generate with: openssl rand -hex 32")
 	}
 
 	return cfg, nil

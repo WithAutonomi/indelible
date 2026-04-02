@@ -10,6 +10,7 @@ import (
 func TestAdminUploadAnalytics(t *testing.T) {
 	router := setupTestRouter(t)
 	adminToken := registerAndGetToken(t, router, "admin@test.com", "password123", "Admin", "User")
+	createTestWallet(t, router, adminToken)
 
 	// Upload a file to have some data
 	fileData := []byte("analytics test file")

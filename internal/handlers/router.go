@@ -51,10 +51,14 @@ func NewRouter(cfg *config.Config, db *sql.DB) http.Handler {
 
 		// Public auth routes (with rate limiting on login)
 		r.Group(func(r chi.Router) {
-			r.With(middleware.RateLimit(5, 60*time.Second, cfg.TrustedProxies)).Post("/auth/login", Login(db, cfg))
+			loginRL := middleware.RateLimit(5, 60*time.Second, cfg.TrustedProxies)
+			resetRL := middleware.RateLimit(3, 60*time.Second, cfg.TrustedProxies)
+
+			r.With(loginRL).Post("/auth/login", Login(db, cfg))
 			r.Post("/auth/register", Register(db, cfg))
-			r.Post("/auth/forgot-password", ForgotPassword(db, cfg))
-			r.Post("/auth/reset-password", ResetPassword(db, cfg))
+			r.Post("/auth/logout", Logout())
+			r.With(resetRL).Post("/auth/forgot-password", ForgotPassword(db, cfg))
+			r.With(resetRL).Post("/auth/reset-password", ResetPassword(db, cfg))
 			r.Get("/auth/verify-email", VerifyEmail(db))
 		})
 
@@ -64,6 +68,7 @@ func NewRouter(cfg *config.Config, db *sql.DB) http.Handler {
 
 			// System status (available to all authenticated users)
 			r.Get("/system/wallet-status", WalletStatus(db, cfg))
+			r.Get("/system/queue-status", QueueStatus(db))
 
 			// Profile
 			r.Get("/me", GetProfile(db))
@@ -71,8 +76,9 @@ func NewRouter(cfg *config.Config, db *sql.DB) http.Handler {
 			r.Post("/me/resend-verification", ResendVerification(db, cfg))
 			r.Put("/me/password", ChangePassword(db, cfg))
 
-			// Uploads
-			r.With(middleware.Idempotency(db)).Post("/uploads", CreateUpload(db, cfg))
+			// Uploads (S7: rate limited to 60/min per user)
+			uploadRL := middleware.RateLimitByUser(60, 60*time.Second)
+			r.With(uploadRL, middleware.Idempotency(db)).Post("/uploads", CreateUpload(db, cfg))
 			r.Get("/uploads", ListUploads(db))
 			r.Get("/uploads/{id}", GetUpload(db))
 			r.Post("/uploads/quote", QuoteUpload(db, cfg))
@@ -81,10 +87,16 @@ func NewRouter(cfg *config.Config, db *sql.DB) http.Handler {
 			r.Post("/uploads/{id}/retry", RetryUpload(db))
 			r.Post("/uploads/{id}/force-retry", ForceRetryUpload(db))
 			r.Delete("/uploads/{id}", DeleteUpload(db))
+			r.Get("/uploads/{id}/collections", UploadCollections(db))
 
 			// Tags
+			r.Get("/uploads/{id}/tags", GetTags(db))
 			r.Put("/uploads/{id}/tags", UpdateTags(db))
+			r.Get("/tags/keys", ListTagKeys(db))
+			r.Get("/tags/values", ListTagValues(db))
 			r.Get("/tags/search", SearchByTags(db))
+			r.Post("/tags/bulk", BulkTagUploads(db))
+			r.Get("/tags/facets", TagFacets(db))
 
 			// Collections
 			r.Post("/collections", CreateCollection(db))
@@ -94,6 +106,8 @@ func NewRouter(cfg *config.Config, db *sql.DB) http.Handler {
 			r.Delete("/collections/{id}", DeleteCollection(db))
 			r.Post("/collections/{id}/files", AddToCollection(db))
 			r.Delete("/collections/{id}/files/{uploadId}", RemoveFromCollection(db))
+			r.Get("/collections/{id}/tags", GetCollectionTags(db))
+			r.Put("/collections/{id}/tags", UpdateCollectionTags(db))
 
 			// API tokens (own)
 			r.Post("/tokens", CreateToken(db, cfg))
@@ -109,6 +123,12 @@ func NewRouter(cfg *config.Config, db *sql.DB) http.Handler {
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.Authenticate(db, cfg))
 			r.Use(middleware.RequireAdmin(db))
+
+			// Tag rules (admin)
+			r.Get("/admin/tag-rules", ListTagRules(db))
+			r.Post("/admin/tag-rules", CreateTagRule(db))
+			r.Put("/admin/tag-rules/{id}", UpdateTagRule(db))
+			r.Delete("/admin/tag-rules/{id}", DeleteTagRule(db))
 
 			// User management
 			r.Post("/admin/users", AdminCreateUser(db))
@@ -135,6 +155,8 @@ func NewRouter(cfg *config.Config, db *sql.DB) http.Handler {
 			r.Get("/admin/wallets", AdminListWallets(db, cfg))
 			r.Post("/admin/wallets", AdminCreateWallet(db, cfg))
 			r.Put("/admin/wallets/{id}/default", AdminSetDefaultWallet(db, cfg))
+			r.Delete("/admin/wallets/{id}", AdminDeleteWallet(db, cfg))
+			r.Post("/admin/wallets/{id}/balance", AdminRefreshWalletBalance(db, cfg))
 
 			// System settings
 			r.Get("/admin/settings", AdminGetSettings(db))
@@ -212,9 +234,55 @@ func propagateRequestID(next http.Handler) http.Handler {
 }
 
 // spaHandler serves static files, falling back to index.html for SPA routing.
+// Vue Router uses client-side routes (e.g. /login, /admin/users) that don't
+// correspond to real files. When the file server would return 404, we serve
+// index.html instead and let the Vue app handle routing.
 func spaHandler(next http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Try to serve the static file; if not found, serve index.html
-		next.ServeHTTP(w, r)
+		// Capture the response to detect 404s
+		rec := &spaResponseWriter{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+
+		// If the file server returned 404, serve index.html instead
+		if rec.status == http.StatusNotFound {
+			r.URL.Path = "/"
+			rec.reset()
+			next.ServeHTTP(w, r)
+		}
 	}
+}
+
+// spaResponseWriter wraps http.ResponseWriter to capture the status code
+// without writing the body, so we can detect 404s and serve index.html.
+type spaResponseWriter struct {
+	http.ResponseWriter
+	status      int
+	wroteHeader bool
+	wroteBody   bool
+}
+
+func (w *spaResponseWriter) WriteHeader(code int) {
+	w.status = code
+	w.wroteHeader = true
+	if code != http.StatusNotFound {
+		w.ResponseWriter.WriteHeader(code)
+	}
+}
+
+func (w *spaResponseWriter) Write(b []byte) (int, error) {
+	if w.status == http.StatusNotFound {
+		// Suppress the 404 body — we'll serve index.html instead
+		return len(b), nil
+	}
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
+	w.wroteBody = true
+	return w.ResponseWriter.Write(b)
+}
+
+func (w *spaResponseWriter) reset() {
+	w.status = http.StatusOK
+	w.wroteHeader = false
+	w.wroteBody = false
 }

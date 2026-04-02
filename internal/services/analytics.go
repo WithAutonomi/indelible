@@ -128,7 +128,7 @@ func (s *AnalyticsService) UploadAnalytics(since time.Time) (*UploadStats, error
 	// Top uploaders
 	uploaderRows, err := s.db.Query(
 		`SELECT u.user_id, COALESCE(usr.email, ''), COUNT(*), COALESCE(SUM(u.file_size), 0)
-		 FROM uploads u LEFT JOIN users usr ON u.user_id = usr.id
+		 FROM uploads u LEFT JOIN users usr ON u.user_id = usr.id AND usr.deleted_at IS NULL
 		 WHERE u.created_at >= ?
 		 GROUP BY u.user_id ORDER BY COUNT(*) DESC LIMIT 10`, sinceStr,
 	)
@@ -158,11 +158,18 @@ func (s *AnalyticsService) UploadAnalytics(since time.Time) (*UploadStats, error
 
 	for failRows.Next() {
 		var f FailureStat
-		var failedAt time.Time
+		var failedAt string
 		if err := failRows.Scan(&f.UUID, &f.Filename, &f.ErrorMessage, &failedAt); err != nil {
 			return nil, err
 		}
-		f.FailedAt = failedAt.Format("2006-01-02T15:04:05Z")
+		// Parse the datetime string from SQLite/Postgres; normalize to RFC3339-like output
+		if t, err := time.Parse("2006-01-02 15:04:05", failedAt); err == nil {
+			f.FailedAt = t.Format("2006-01-02T15:04:05Z")
+		} else if t, err := time.Parse("2006-01-02T15:04:05Z", failedAt); err == nil {
+			f.FailedAt = t.Format("2006-01-02T15:04:05Z")
+		} else {
+			f.FailedAt = failedAt
+		}
 		stats.RecentFailures = append(stats.RecentFailures, f)
 	}
 

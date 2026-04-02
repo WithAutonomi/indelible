@@ -15,8 +15,23 @@ import (
 	antd "github.com/WithAutonomi/ant-sdk/antd-go"
 
 	"github.com/WithAutonomi/indelible/internal/config"
+	"github.com/WithAutonomi/indelible/internal/evm"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
+
+// isTransientAntdError returns true for antd errors that may succeed on retry.
+func isTransientAntdError(err error) bool {
+	var netErr *antd.NetworkError
+	var unavailErr *antd.ServiceUnavailableError
+	return errors.As(err, &netErr) || errors.As(err, &unavailErr)
+}
+
+// isPermanentAntdError returns true for antd errors that will never succeed on retry.
+func isPermanentAntdError(err error) bool {
+	var badReq *antd.BadRequestError
+	var tooLarge *antd.TooLargeError
+	return errors.As(err, &badReq) || errors.As(err, &tooLarge)
+}
 
 // errGasBackoff is a sentinel error indicating the upload should be retried later
 // because gas fees are too high.
@@ -25,26 +40,40 @@ var errGasBackoff = errors.New("gas backoff")
 // UploadWorker processes queued file uploads in the background.
 type UploadWorker struct {
 	uploadSvc   *services.UploadService
+	quotaSvc    *services.QuotaService
 	txnSvc      *services.TransactionService
 	walletSvc   *services.WalletService
 	webhookSvc  *services.WebhookDeliveryService
-	settingsSvc *services.SettingsService
+	settingsSvc *services.CachedSettingsService
 	antdClient  *antd.Client
+	evmSigner   *evm.Signer // lazily initialized on first upload
 	cfg         *config.Config
 	wg          sync.WaitGroup
 	cancel      context.CancelFunc
+
+	// S9: Per-phase circuit breakers with exponential cooldown
+	prepareFailures  int
+	finalizeFailures int
+	circuitOpenUntil time.Time
+	circuitCooldown  time.Duration
 }
+
+const circuitBreakerThreshold = 5
+const circuitBreakerBaseCooldown = 30 * time.Second
+const circuitBreakerMaxCooldown = 5 * time.Minute
 
 // NewUploadWorker creates a new background upload processor.
 func NewUploadWorker(db *sql.DB, cfg *config.Config) *UploadWorker {
 	return &UploadWorker{
-		uploadSvc:   services.NewUploadService(db),
-		txnSvc:      services.NewTransactionService(db),
-		walletSvc:   services.NewWalletService(db, cfg.WalletEncryptionKey),
-		webhookSvc:  services.NewWebhookDeliveryService(db),
-		settingsSvc: services.NewSettingsService(db),
-		antdClient:  antd.NewClient(cfg.AntdURL),
-		cfg:         cfg,
+		uploadSvc:       services.NewUploadService(db),
+		quotaSvc:        services.NewQuotaService(db),
+		txnSvc:          services.NewTransactionService(db),
+		walletSvc:       services.NewWalletService(db, cfg.WalletEncryptionKey),
+		webhookSvc:      services.NewWebhookDeliveryService(db),
+		settingsSvc:     services.NewCachedSettingsService(services.NewSettingsService(db)),
+		antdClient:      antd.NewClient(cfg.AntdURL),
+		cfg:             cfg,
+		circuitCooldown: circuitBreakerBaseCooldown,
 	}
 }
 
@@ -75,6 +104,13 @@ func (w *UploadWorker) Start() {
 		w.reconcileLoop(ctx)
 	}()
 
+	// S4: Temp file garbage collector (every 5 minutes)
+	w.wg.Add(1)
+	go func() {
+		defer w.wg.Done()
+		w.tempGCLoop(ctx)
+	}()
+
 	slog.Info("upload worker started")
 }
 
@@ -102,7 +138,7 @@ func (w *UploadWorker) processLoop(ctx context.Context) {
 	defer ticker.Stop()
 
 	var inFlight sync.WaitGroup
-	sem := make(chan struct{}, 16) // hard cap; effective limit from settings
+	sem := make(chan struct{}, 32) // hard cap; effective limit from settings
 
 	for {
 		select {
@@ -110,6 +146,11 @@ func (w *UploadWorker) processLoop(ctx context.Context) {
 			inFlight.Wait()
 			return
 		case <-ticker.C:
+			// Circuit breaker: skip processing if antd is unreachable
+			if time.Now().Before(w.circuitOpenUntil) {
+				continue
+			}
+
 			maxC := w.getMaxConcurrent()
 			// Try to fill up to maxConcurrent slots
 			for len(sem) < maxC {
@@ -133,26 +174,67 @@ func (w *UploadWorker) processLoop(ctx context.Context) {
 	}
 }
 
+// maxTransientRetries is the number of times to retry a transient antd error
+// before marking the upload as failed.
+const maxTransientRetries = 3
+
 func (w *UploadWorker) processOne(ctx context.Context, upload *services.Upload) {
 	slog.Info("processing upload", "uuid", upload.UUID, "filename", upload.OriginalFilename, "size", upload.FileSize)
 	w.webhookSvc.FireUploadEvent("processing", upload)
 
-	if err := w.processUpload(ctx, upload); err != nil {
-		if errors.Is(err, errGasBackoff) {
-			// Not a failure — gas is too high, backoff and retry later
+	var lastErr error
+	for attempt := 0; attempt <= maxTransientRetries; attempt++ {
+		lastErr = w.processUpload(ctx, upload)
+		if lastErr == nil {
+			w.prepareFailures = 0
+			w.circuitCooldown = circuitBreakerBaseCooldown
+			upload.Status = "completed"
+			w.webhookSvc.FireUploadEvent("completed", upload)
+			w.cleanupTempFile(upload)
+			return
+		}
+
+		if errors.Is(lastErr, errGasBackoff) {
 			slog.Warn("upload gas backoff", "uuid", upload.UUID, "attempt", upload.BackoffAttempt+1)
 			return
 		}
-		slog.Error("upload failed", "uuid", upload.UUID, "error", err)
-		w.uploadSvc.MarkFailed(upload.ID, err.Error())
-		upload.Status = "failed"
-		w.webhookSvc.FireUploadEvent("failed", upload)
-		w.cleanupTempFile(upload)
-		return
+
+		// Permanent errors fail immediately
+		if isPermanentAntdError(lastErr) || !isTransientAntdError(lastErr) {
+			break
+		}
+
+		// Transient error — wait and retry
+		if attempt < maxTransientRetries {
+			delay := time.Duration(attempt+1) * 5 * time.Second
+			slog.Warn("transient antd error, retrying", "uuid", upload.UUID, "attempt", attempt+1, "delay", delay, "error", lastErr)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(delay):
+			}
+		}
 	}
 
-	upload.Status = "completed"
-	w.webhookSvc.FireUploadEvent("completed", upload)
+	// S9: Track consecutive transient failures with exponential cooldown
+	if isTransientAntdError(lastErr) {
+		w.prepareFailures++
+		if w.prepareFailures >= circuitBreakerThreshold {
+			w.circuitOpenUntil = time.Now().Add(w.circuitCooldown)
+			slog.Warn("circuit breaker opened — antd appears unreachable",
+				"failures", w.prepareFailures, "cooldown", w.circuitCooldown)
+			// Exponential cooldown: 30s → 60s → 120s → ... → 5min max
+			w.circuitCooldown = w.circuitCooldown * 2
+			if w.circuitCooldown > circuitBreakerMaxCooldown {
+				w.circuitCooldown = circuitBreakerMaxCooldown
+			}
+		}
+	}
+
+	slog.Error("upload failed", "uuid", upload.UUID, "error", lastErr)
+	w.uploadSvc.MarkFailed(upload.ID, lastErr.Error())
+	upload.Status = "failed"
+	w.webhookSvc.FireUploadEvent("failed", upload)
 	w.cleanupTempFile(upload)
 }
 
@@ -168,68 +250,105 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		return fmt.Errorf("File not found on server")
 	}
 
-	// Check gas fee against max_gas_fee — backoff if too high
+	// S3: Re-check quota at processing time (includes in-flight bytes)
+	if err := w.quotaSvc.CheckUserQuotaInFlight(upload.UserID, upload.FileSize); err != nil {
+		return fmt.Errorf("Quota exceeded: %w", err)
+	}
+
+	// Get default wallet — required for external signer payment
+	wallet, err := w.walletSvc.GetDefault()
+	if err != nil {
+		return fmt.Errorf("No wallet configured for payment")
+	}
+
+	walletKey, err := w.walletSvc.DecryptKey(wallet)
+	if err != nil {
+		return fmt.Errorf("Failed to decrypt wallet key")
+	}
+
+	// Phase 1: Prepare upload — encrypts file, collects network quotes
+	prepared, err := w.antdClient.PrepareUpload(ctx, tempPath)
+	if err != nil {
+		return fmt.Errorf("Failed to prepare upload: %w", err)
+	}
+
+	// Gas fee check — use the quoted total from PrepareUpload
 	if maxFeeStr, err := w.settingsSvc.Get("max_gas_fee"); err == nil {
 		if maxFee, err := strconv.ParseInt(maxFeeStr, 10, 64); err == nil && maxFee > 0 {
-			isPublic := upload.Visibility == "public"
-			quotedCost, err := w.antdClient.FileCost(ctx, tempPath, isPublic, true)
-			if err != nil {
-				return fmt.Errorf("Unable to check network fees")
-			}
 			var costVal int64
-			fmt.Sscanf(quotedCost, "%d", &costVal)
+			fmt.Sscanf(prepared.TotalAmount, "%d", &costVal)
 			if costVal > maxFee {
 				attempt := upload.BackoffAttempt + 1
 				if attempt > maxGasBackoffAttempts {
 					return fmt.Errorf("Gas fees too high — try again later")
 				}
 				backoffUntil := calcGasBackoff(attempt)
-				if err := w.uploadSvc.SetGasBackoff(upload.ID, backoffUntil, attempt, quotedCost); err != nil {
+				if err := w.uploadSvc.SetGasBackoff(upload.ID, backoffUntil, attempt, prepared.TotalAmount); err != nil {
 					return fmt.Errorf("Internal error scheduling retry")
 				}
 				slog.Info("gas fee too high, backing off",
-					"uuid", upload.UUID, "quoted", quotedCost, "max", maxFeeStr,
+					"uuid", upload.UUID, "quoted", prepared.TotalAmount, "max", maxFeeStr,
 					"attempt", attempt, "retry_at", backoffUntil.Format(time.RFC3339))
 				return errGasBackoff
 			}
-			// Gas fee acceptable — clear any previous backoff state
 			if upload.BackoffAttempt > 0 {
 				w.uploadSvc.ClearBackoff(upload.ID)
-				slog.Info("gas fee acceptable after backoff", "uuid", upload.UUID, "quoted", quotedCost, "attempts", upload.BackoffAttempt)
+				slog.Info("gas fee acceptable after backoff", "uuid", upload.UUID, "quoted", prepared.TotalAmount, "attempts", upload.BackoffAttempt)
 			}
-			slog.Info("gas fee check passed", "uuid", upload.UUID, "quoted", quotedCost, "max", maxFeeStr)
+			slog.Info("gas fee check passed", "uuid", upload.UUID, "quoted", prepared.TotalAmount, "max", maxFeeStr)
 		}
 	}
 
-	var result *antd.PutResult
-	var err error
-
-	if upload.Visibility == "public" {
-		result, err = w.antdClient.FileUploadPublic(ctx, tempPath)
-	} else {
-		// Private upload: read file bytes and use DataPutPrivate
-		data, readErr := os.ReadFile(tempPath)
-		if readErr != nil {
-			return fmt.Errorf("File not found on server")
-		}
-		result, err = w.antdClient.DataPutPrivate(ctx, data)
+	// Cache EVM config for balance queries and other uses
+	if w.cfg.EvmRPCURL == "" && prepared.RPCUrl != "" {
+		w.cfg.EvmRPCURL = prepared.RPCUrl
+		w.cfg.EvmTokenAddress = prepared.PaymentTokenAddress
 	}
 
+	// Phase 2: Sign and submit EVM payment locally
+	if w.evmSigner == nil || w.evmSigner.RPCUrl() != prepared.RPCUrl {
+		signer, err := evm.NewSigner(prepared.RPCUrl)
+		if err != nil {
+			return fmt.Errorf("Failed to connect to EVM RPC: %w", err)
+		}
+		w.evmSigner = signer
+	}
+
+	txHashes, err := w.evmSigner.PayForQuotes(ctx, walletKey, prepared.Payments, prepared.PaymentTokenAddress, prepared.DataPaymentsAddress)
 	if err != nil {
-		return fmt.Errorf("Network upload failed")
+		return fmt.Errorf("EVM payment failed: %w", err)
 	}
 
-	// Mark upload completed
-	if err := w.uploadSvc.MarkCompleted(upload.ID, result.Address, result.Cost); err != nil {
+	slog.Info("EVM payment submitted", "uuid", upload.UUID, "tx_count", len(txHashes), "total", prepared.TotalAmount)
+
+	// Phase 3: Finalize upload — builds proofs from tx hashes, stores chunks
+	result, err := w.antdClient.FinalizeUpload(ctx, prepared.UploadID, txHashes, false)
+	if err != nil {
+		return fmt.Errorf("Failed to finalize upload: %w", err)
+	}
+
+	// Mark upload completed — store the DataMap locally
+	if err := w.uploadSvc.MarkCompleted(upload.ID, result.DataMap, prepared.TotalAmount); err != nil {
 		return fmt.Errorf("Failed to save upload record")
 	}
 
-	// Record transaction against default wallet (best-effort)
-	if wallet, err := w.walletSvc.GetDefault(); err == nil {
-		w.txnSvc.Record(wallet.ID, &upload.ID, "upload", result.Cost, wallet.PaymentBalance)
+	// Collect first tx hash for audit trail
+	var firstTxHash string
+	for _, h := range txHashes {
+		firstTxHash = h
+		break
 	}
 
-	slog.Info("upload completed", "uuid", upload.UUID, "address", result.Address, "cost", result.Cost)
+	// Update wallet balance from chain (best-effort)
+	if tokenBal, gasBal, err := w.evmSigner.GetBalances(ctx, wallet.Address, prepared.PaymentTokenAddress); err == nil {
+		w.walletSvc.UpdateBalance(wallet.ID, tokenBal, gasBal)
+		w.txnSvc.Record(wallet.ID, &upload.ID, "upload", prepared.TotalAmount, tokenBal, firstTxHash)
+	} else {
+		slog.Warn("failed to query post-payment balance", "error", err)
+		w.txnSvc.Record(wallet.ID, &upload.ID, "upload", prepared.TotalAmount, wallet.PaymentBalance, firstTxHash)
+	}
+
+	slog.Info("upload completed", "uuid", upload.UUID, "cost", prepared.TotalAmount, "chunks", result.ChunksStored)
 	return nil
 }
 
@@ -243,7 +362,7 @@ func (w *UploadWorker) cleanupTempFile(upload *services.Upload) {
 }
 
 func (w *UploadWorker) reconcileLoop(ctx context.Context) {
-	ticker := time.NewTicker(5 * time.Minute)
+	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 
 	for {
@@ -251,7 +370,7 @@ func (w *UploadWorker) reconcileLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			requeued, err := w.uploadSvc.RequeueStuck(2) // stuck > 2 minutes
+			requeued, err := w.uploadSvc.RequeueStuck(1) // stuck > 1 minute
 			if err != nil {
 				slog.Error("reconciliation requeue failed", "error", err)
 			} else if requeued > 0 {
@@ -303,6 +422,62 @@ func nextCheapWindow(now time.Time) time.Time {
 		target = target.Add(24 * time.Hour)
 	}
 	return target
+}
+
+// S4: tempGCLoop periodically removes orphaned temp files.
+func (w *UploadWorker) tempGCLoop(ctx context.Context) {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			w.cleanOrphanedTempFiles()
+		}
+	}
+}
+
+func (w *UploadWorker) cleanOrphanedTempFiles() {
+	tempDir := TempUploadDir(w.cfg)
+	entries, err := os.ReadDir(tempDir)
+	if err != nil {
+		return
+	}
+
+	// Get all active temp paths from DB
+	activePaths, err := w.uploadSvc.ListActiveTempPaths()
+	if err != nil {
+		slog.Warn("temp GC: failed to list active paths", "error", err)
+		return
+	}
+	activeSet := make(map[string]struct{}, len(activePaths))
+	for _, p := range activePaths {
+		activeSet[p] = struct{}{}
+	}
+
+	var cleaned int
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		fullPath := filepath.Join(tempDir, entry.Name())
+		if _, active := activeSet[fullPath]; !active {
+			// Check file age — only clean files older than 10 minutes
+			// to avoid racing with in-progress uploads
+			info, err := entry.Info()
+			if err != nil || time.Since(info.ModTime()) < 10*time.Minute {
+				continue
+			}
+			if err := os.Remove(fullPath); err == nil {
+				cleaned++
+			}
+		}
+	}
+	if cleaned > 0 {
+		slog.Info("temp GC: cleaned orphaned files", "count", cleaned)
+	}
 }
 
 // TempUploadDir returns the path to the temp upload directory, creating it if needed.

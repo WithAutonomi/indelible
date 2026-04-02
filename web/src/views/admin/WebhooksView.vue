@@ -1,6 +1,20 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
+import { useConfirm } from 'primevue/useconfirm'
+import { useToast } from 'primevue/usetoast'
 import { api } from '../../api/client'
+import DataTable from 'primevue/datatable'
+import Column from 'primevue/column'
+import Button from 'primevue/button'
+import InputText from 'primevue/inputtext'
+import Tag from 'primevue/tag'
+import ToggleSwitch from 'primevue/toggleswitch'
+import RadioButton from 'primevue/radiobutton'
+import Checkbox from 'primevue/checkbox'
+import Dialog from 'primevue/dialog'
+import Drawer from 'primevue/drawer'
+import ConfirmDialog from 'primevue/confirmdialog'
+import Message from 'primevue/message'
 
 interface Webhook {
   id: number
@@ -23,6 +37,9 @@ interface Delivery {
   created_at: string
 }
 
+const confirm = useConfirm()
+const toast = useToast()
+
 const webhooks = ref<Webhook[]>([])
 const loading = ref(true)
 
@@ -33,16 +50,18 @@ const newType = ref('generic')
 const newEvents = ref<string[]>(['completed', 'failed'])
 const creating = ref(false)
 
-// Edit state
+// Edit state - now uses Drawer
 const editingId = ref<number | null>(null)
+const editDrawerVisible = ref(false)
 const editUrl = ref('')
 const editType = ref('generic')
 const editEvents = ref<string[]>([])
 const editEnabled = ref(true)
 const saving = ref(false)
 
-// Delivery history
-const historyId = ref<number | null>(null)
+// Delivery history - also uses Drawer
+const historyDrawerVisible = ref(false)
+const historyWebhookUrl = ref('')
 const deliveries = ref<Delivery[]>([])
 const loadingHistory = ref(false)
 
@@ -93,24 +112,21 @@ async function createWebhook() {
     newEvents.value = ['completed', 'failed']
     showCreateForm.value = false
     await fetchWebhooks()
+    toast.add({ severity: 'success', summary: 'Created', detail: 'Webhook created', life: 3000 })
   } catch (e: any) {
-    alert(e.response?.data?.error || 'Failed to create webhook')
+    toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to create webhook', life: 5000 })
   } finally {
     creating.value = false
   }
 }
 
 function startEdit(w: Webhook) {
-  if (editingId.value === w.id) {
-    editingId.value = null
-    return
-  }
   editingId.value = w.id
   editUrl.value = w.url
   editType.value = w.integration_type
   editEvents.value = parseEvents(w.events)
   editEnabled.value = w.is_enabled
-  historyId.value = null
+  editDrawerVisible.value = true
 }
 
 async function saveEdit() {
@@ -123,10 +139,12 @@ async function saveEdit() {
       events: JSON.stringify(editEvents.value),
       is_enabled: editEnabled.value,
     })
+    editDrawerVisible.value = false
     editingId.value = null
     await fetchWebhooks()
+    toast.add({ severity: 'success', summary: 'Saved', detail: 'Webhook updated', life: 3000 })
   } catch (e: any) {
-    alert(e.response?.data?.error || 'Failed to update webhook')
+    toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to update webhook', life: 5000 })
   } finally {
     saving.value = false
   }
@@ -142,20 +160,30 @@ async function toggleWebhook(w: Webhook) {
     })
     await fetchWebhooks()
   } catch {
-    alert('Failed to update webhook')
+    toast.add({ severity: 'error', summary: 'Error', detail: 'Failed to update webhook', life: 5000 })
   }
 }
 
-async function deleteWebhook(id: number) {
-  if (!confirm('Delete this webhook?')) return
-  try {
-    await api.delete(`/api/v2/admin/webhooks/${id}`)
-    if (editingId.value === id) editingId.value = null
-    if (historyId.value === id) historyId.value = null
-    await fetchWebhooks()
-  } catch {
-    alert('Failed to delete webhook')
-  }
+function deleteWebhook(id: number) {
+  confirm.require({
+    message: 'Delete this webhook?',
+    header: 'Confirm Delete',
+    icon: 'pi pi-exclamation-triangle',
+    acceptClass: 'p-button-danger',
+    accept: async () => {
+      try {
+        await api.delete(`/api/v2/admin/webhooks/${id}`)
+        if (editingId.value === id) {
+          editDrawerVisible.value = false
+          editingId.value = null
+        }
+        await fetchWebhooks()
+        toast.add({ severity: 'success', summary: 'Deleted', detail: 'Webhook deleted', life: 3000 })
+      } catch {
+        toast.add({ severity: 'error', summary: 'Error', detail: 'Failed to delete webhook', life: 5000 })
+      }
+    },
+  })
 }
 
 async function testWebhook(id: number) {
@@ -164,8 +192,7 @@ async function testWebhook(id: number) {
   try {
     const res = await api.post(`/api/v2/admin/webhooks/${id}/test`)
     testResult.value = res.data
-    // Auto-refresh history if open
-    if (historyId.value === id) await fetchHistory(id)
+    if (historyDrawerVisible.value) await fetchHistory(id)
   } catch (e: any) {
     testResult.value = { success: false, status_code: 0, error: e.response?.data?.error || 'Request failed' }
   } finally {
@@ -179,13 +206,10 @@ async function testWebhook(id: number) {
 }
 
 async function fetchHistory(id: number) {
-  if (historyId.value === id) {
-    historyId.value = null
-    return
-  }
-  historyId.value = id
+  const w = webhooks.value.find(wh => wh.id === id)
+  historyWebhookUrl.value = w?.url || ''
+  historyDrawerVisible.value = true
   loadingHistory.value = true
-  editingId.value = null
   try {
     const res = await api.get(`/api/v2/admin/webhooks/${id}/deliveries?limit=20`)
     deliveries.value = res.data.deliveries || []
@@ -196,15 +220,22 @@ async function fetchHistory(id: number) {
   }
 }
 
-async function rotateSecret(id: number) {
-  if (!confirm('Rotate this webhook\'s signing secret? The old secret will stop working immediately.')) return
-  try {
-    const res = await api.post(`/api/v2/admin/webhooks/${id}/rotate-secret`)
-    webhookSecret.value = res.data.secret
-    secretWebhookId.value = id
-  } catch {
-    alert('Failed to rotate secret')
-  }
+function rotateSecret(id: number) {
+  confirm.require({
+    message: 'Rotate this webhook\'s signing secret? The old secret will stop working immediately.',
+    header: 'Confirm Rotate',
+    icon: 'pi pi-exclamation-triangle',
+    acceptClass: 'p-button-danger',
+    accept: async () => {
+      try {
+        const res = await api.post(`/api/v2/admin/webhooks/${id}/rotate-secret`)
+        webhookSecret.value = res.data.secret
+        secretWebhookId.value = id
+      } catch {
+        toast.add({ severity: 'error', summary: 'Error', detail: 'Failed to rotate secret', life: 5000 })
+      }
+    },
+  })
 }
 
 function copySecret() {
@@ -213,303 +244,230 @@ function copySecret() {
   }
 }
 
+function eventTagSeverity(evt: string): string {
+  if (systemEvents.includes(evt)) return 'warn'
+  if (evt === 'test_ping') return 'secondary'
+  return 'info'
+}
+
 onMounted(fetchWebhooks)
 </script>
 
 <template>
   <div class="p-6">
+    <ConfirmDialog />
+
     <div class="flex items-center justify-between mb-6">
       <h1 class="text-2xl font-bold">Webhooks</h1>
-      <button @click="showCreateForm = !showCreateForm"
-        class="rounded bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700">
-        {{ showCreateForm ? 'Cancel' : 'Add Endpoint' }}
-      </button>
+      <Button label="Add Endpoint" icon="pi pi-plus" @click="showCreateForm = true" />
     </div>
 
-    <!-- Create form -->
-    <div v-if="showCreateForm" class="bg-white rounded-lg border border-gray-200 mb-6">
-      <div class="px-6 py-4 border-b border-gray-200">
-        <h2 class="text-base font-semibold text-gray-800">New Webhook</h2>
-      </div>
-      <div class="p-6 space-y-5">
+    <!-- Create dialog -->
+    <Dialog v-model:visible="showCreateForm" header="Add Webhook Endpoint" modal :style="{ width: '36rem' }">
+      <div class="space-y-5">
         <!-- URL -->
-        <div class="grid grid-cols-3 gap-6">
-          <div>
-            <label class="text-sm font-medium text-gray-700">Endpoint URL</label>
-            <p class="text-xs text-gray-400 mt-1">URL that receives event notifications via POST.</p>
-          </div>
-          <div class="col-span-2">
-            <input v-model="newUrl" type="url" placeholder="https://example.com/webhook"
-              class="block w-full max-w-lg rounded border border-gray-300 px-3 py-2 text-sm font-mono"
-              @keydown.enter.prevent="createWebhook" />
-          </div>
+        <div>
+          <label class="text-sm font-medium block mb-1">Endpoint URL</label>
+          <p class="text-xs text-surface-400 mb-2">URL that receives event notifications via POST.</p>
+          <InputText v-model="newUrl" type="url" placeholder="https://example.com/webhook"
+            class="w-full font-mono" @keydown.enter.prevent="createWebhook" />
         </div>
 
         <!-- Integration type -->
-        <div class="grid grid-cols-3 gap-6">
-          <div>
-            <label class="text-sm font-medium text-gray-700">Integration Type</label>
-            <p class="text-xs text-gray-400 mt-1">Generic sends raw JSON. Slack formats as Block Kit messages.</p>
-          </div>
-          <div class="col-span-2 flex gap-4">
-            <label class="flex items-center gap-2 cursor-pointer">
-              <input type="radio" v-model="newType" value="generic" class="text-blue-600" />
-              <span class="text-sm text-gray-700">Generic JSON</span>
-            </label>
-            <label class="flex items-center gap-2 cursor-pointer">
-              <input type="radio" v-model="newType" value="slack" class="text-blue-600" />
-              <span class="text-sm text-gray-700">Slack</span>
-            </label>
+        <div>
+          <label class="text-sm font-medium block mb-1">Integration Type</label>
+          <p class="text-xs text-surface-400 mb-2">Generic sends raw JSON. Slack formats as Block Kit messages.</p>
+          <div class="flex gap-4">
+            <div class="flex items-center gap-2">
+              <RadioButton v-model="newType" inputId="newTypeGeneric" value="generic" />
+              <label for="newTypeGeneric" class="text-sm cursor-pointer">Generic JSON</label>
+            </div>
+            <div class="flex items-center gap-2">
+              <RadioButton v-model="newType" inputId="newTypeSlack" value="slack" />
+              <label for="newTypeSlack" class="text-sm cursor-pointer">Slack</label>
+            </div>
           </div>
         </div>
 
         <!-- Events -->
-        <div class="grid grid-cols-3 gap-6">
-          <div>
-            <label class="text-sm font-medium text-gray-700">Events</label>
-            <p class="text-xs text-gray-400 mt-1">Select which events trigger this webhook.</p>
-          </div>
-          <div class="col-span-2">
-            <p class="text-xs font-medium text-gray-500 uppercase mb-2">Upload Events</p>
-            <div class="flex flex-wrap gap-3 mb-3">
-              <label v-for="evt in uploadEvents" :key="evt" class="flex items-center gap-1.5 cursor-pointer">
-                <input type="checkbox" :value="evt" v-model="newEvents" class="rounded text-blue-600" />
-                <span class="text-sm text-gray-700">{{ evt }}</span>
-              </label>
+        <div>
+          <label class="text-sm font-medium block mb-1">Events</label>
+          <p class="text-xs text-surface-400 mb-2">Select which events trigger this webhook.</p>
+          <p class="text-xs font-medium text-surface-500 uppercase mb-2">Upload Events</p>
+          <div class="flex flex-wrap gap-3 mb-3">
+            <div v-for="evt in uploadEvents" :key="evt" class="flex items-center gap-1.5">
+              <Checkbox v-model="newEvents" :inputId="'new-' + evt" :value="evt" />
+              <label :for="'new-' + evt" class="text-sm cursor-pointer">{{ evt }}</label>
             </div>
-            <p class="text-xs font-medium text-gray-500 uppercase mb-2">System Events</p>
-            <div class="flex flex-wrap gap-3">
-              <label v-for="evt in systemEvents" :key="evt" class="flex items-center gap-1.5 cursor-pointer">
-                <input type="checkbox" :value="evt" v-model="newEvents" class="rounded text-blue-600" />
-                <span class="text-sm text-gray-700">{{ evt }}</span>
-              </label>
+          </div>
+          <p class="text-xs font-medium text-surface-500 uppercase mb-2">System Events</p>
+          <div class="flex flex-wrap gap-3">
+            <div v-for="evt in systemEvents" :key="evt" class="flex items-center gap-1.5">
+              <Checkbox v-model="newEvents" :inputId="'new-sys-' + evt" :value="evt" />
+              <label :for="'new-sys-' + evt" class="text-sm cursor-pointer">{{ evt }}</label>
             </div>
           </div>
         </div>
       </div>
-      <div class="px-6 py-4 bg-gray-50 border-t border-gray-200 rounded-b-lg flex justify-end">
-        <button @click="createWebhook" :disabled="creating || !newUrl"
-          class="rounded bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-50">
-          {{ creating ? 'Creating...' : 'Create Webhook' }}
-        </button>
-      </div>
-    </div>
+      <template #footer>
+        <Button label="Cancel" severity="secondary" text @click="showCreateForm = false" />
+        <Button label="Create Webhook" :loading="creating" :disabled="!newUrl" @click="createWebhook" />
+      </template>
+    </Dialog>
 
-    <!-- Webhook secret display (shown once after create or rotate) -->
-    <div v-if="webhookSecret" class="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-6">
-      <p class="text-sm font-medium text-amber-800 mb-2">Webhook signing secret — copy now, it won't be shown again.</p>
-      <div class="flex items-center gap-2">
-        <code class="flex-1 text-sm bg-white px-3 py-2 rounded border border-amber-200 font-mono break-all select-all">{{ webhookSecret }}</code>
-        <button @click="copySecret"
-          class="shrink-0 rounded bg-amber-600 px-3 py-2 text-sm text-white hover:bg-amber-700">
-          <i class="pi pi-copy"></i>
-        </button>
-        <button @click="webhookSecret = null; secretWebhookId = null"
-          class="shrink-0 rounded border border-gray-300 px-3 py-2 text-sm text-gray-600 hover:bg-gray-100">
-          Dismiss
-        </button>
+    <!-- Webhook secret display -->
+    <Message v-if="webhookSecret" severity="warn" :closable="false" class="mb-6">
+      <div>
+        <p class="font-medium mb-2">Webhook signing secret -- copy now, it won't be shown again.</p>
+        <div class="flex items-center gap-2">
+          <code class="flex-1 text-sm bg-white px-3 py-2 rounded border border-amber-200 font-mono break-all select-all">{{ webhookSecret }}</code>
+          <Button icon="pi pi-copy" severity="warn" @click="copySecret" />
+          <Button label="Dismiss" severity="secondary" outlined @click="webhookSecret = null; secretWebhookId = null" />
+        </div>
       </div>
-    </div>
+    </Message>
 
     <!-- Webhooks list -->
-    <div class="bg-white rounded-lg border border-gray-200">
-      <div class="px-6 py-4 border-b border-gray-200">
-        <h2 class="text-base font-semibold text-gray-800">Configured Endpoints</h2>
+    <div class="bg-surface-0 rounded-lg border border-surface-200">
+      <div class="px-6 py-4 border-b border-surface-200">
+        <h2 class="text-base font-semibold">Configured Endpoints</h2>
       </div>
-      <div v-if="loading" class="p-6 text-center text-gray-400">Loading...</div>
-      <div v-else-if="webhooks.length === 0" class="p-6 text-center text-gray-400">
-        No webhooks configured. Click "Add Endpoint" to create one.
-      </div>
-      <div v-else>
-        <table class="w-full">
-          <thead class="text-left text-xs text-gray-500 uppercase bg-gray-50">
-            <tr>
-              <th class="px-6 py-3">URL</th>
-              <th class="px-6 py-3">Type</th>
-              <th class="px-6 py-3">Events</th>
-              <th class="px-6 py-3">Status</th>
-              <th class="px-6 py-3 text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-gray-100">
-            <template v-for="w in webhooks" :key="w.id">
-              <!-- Main row -->
-              <tr class="hover:bg-gray-50">
-                <td class="px-6 py-3 text-sm font-mono text-gray-700 max-w-xs truncate">{{ w.url }}</td>
-                <td class="px-6 py-3">
-                  <span class="text-xs font-medium px-2 py-0.5 rounded"
-                    :class="w.integration_type === 'slack' ? 'bg-purple-50 text-purple-700' : 'bg-gray-100 text-gray-600'">
-                    {{ w.integration_type }}
-                  </span>
-                </td>
-                <td class="px-6 py-3">
-                  <div class="flex flex-wrap gap-1">
-                    <span v-for="evt in parseEvents(w.events)" :key="evt"
-                      class="text-xs px-1.5 py-0.5 rounded"
-                      :class="systemEvents.includes(evt) ? 'bg-amber-50 text-amber-700' : 'bg-blue-50 text-blue-700'">
-                      {{ evt }}
-                    </span>
-                  </div>
-                </td>
-                <td class="px-6 py-3">
-                  <button @click.stop="toggleWebhook(w)"
-                    class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors"
-                    :class="w.is_enabled ? 'bg-blue-600' : 'bg-gray-200'">
-                    <span class="inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform"
-                      :class="w.is_enabled ? 'translate-x-4' : 'translate-x-0.5'" />
-                  </button>
-                </td>
-                <td class="px-6 py-3 text-right">
-                  <div class="flex items-center justify-end gap-2">
-                    <!-- Test result toast -->
-                    <span v-if="testingId === w.id && testResult" class="text-xs mr-1"
-                      :class="testResult.success ? 'text-green-600' : 'text-red-500'">
-                      {{ testResult.success ? `OK (${testResult.status_code})` : (testResult.error || 'Failed') }}
-                    </span>
-                    <button @click.stop="rotateSecret(w.id)"
-                      class="text-gray-400 hover:text-amber-600" title="Rotate signing secret">
-                      <i class="pi pi-refresh text-sm"></i>
-                    </button>
-                    <button @click.stop="testWebhook(w.id)" :disabled="testingId === w.id && !testResult"
-                      class="text-gray-400 hover:text-blue-600 disabled:opacity-50" title="Send test ping">
-                      <i class="pi pi-bolt text-sm"></i>
-                    </button>
-                    <button @click.stop="fetchHistory(w.id)"
-                      class="text-gray-400 hover:text-gray-600" title="Delivery history"
-                      :class="historyId === w.id ? 'text-blue-600' : ''">
-                      <i class="pi pi-history text-sm"></i>
-                    </button>
-                    <button @click.stop="startEdit(w)"
-                      class="text-gray-400 hover:text-gray-600" title="Edit"
-                      :class="editingId === w.id ? 'text-blue-600' : ''">
-                      <i class="pi pi-pencil text-sm"></i>
-                    </button>
-                    <button @click.stop="deleteWebhook(w.id)" class="text-gray-400 hover:text-red-500" title="Delete">
-                      <i class="pi pi-trash text-sm"></i>
-                    </button>
-                  </div>
-                </td>
-              </tr>
 
-              <!-- Edit panel -->
-              <tr v-if="editingId === w.id">
-                <td colspan="5" class="bg-gray-50 px-6 py-5 border-t border-gray-100">
-                  <div class="space-y-4">
-                    <div class="grid grid-cols-3 gap-6">
-                      <div>
-                        <label class="text-sm font-medium text-gray-700">Endpoint URL</label>
-                      </div>
-                      <div class="col-span-2">
-                        <input v-model="editUrl" type="url"
-                          class="block w-full max-w-lg rounded border border-gray-300 px-3 py-2 text-sm font-mono" />
-                      </div>
-                    </div>
-                    <div class="grid grid-cols-3 gap-6">
-                      <div>
-                        <label class="text-sm font-medium text-gray-700">Integration Type</label>
-                      </div>
-                      <div class="col-span-2 flex gap-4">
-                        <label class="flex items-center gap-2 cursor-pointer">
-                          <input type="radio" v-model="editType" value="generic" class="text-blue-600" />
-                          <span class="text-sm text-gray-700">Generic JSON</span>
-                        </label>
-                        <label class="flex items-center gap-2 cursor-pointer">
-                          <input type="radio" v-model="editType" value="slack" class="text-blue-600" />
-                          <span class="text-sm text-gray-700">Slack</span>
-                        </label>
-                      </div>
-                    </div>
-                    <div class="grid grid-cols-3 gap-6">
-                      <div>
-                        <label class="text-sm font-medium text-gray-700">Events</label>
-                      </div>
-                      <div class="col-span-2">
-                        <p class="text-xs font-medium text-gray-500 uppercase mb-2">Upload</p>
-                        <div class="flex flex-wrap gap-3 mb-3">
-                          <label v-for="evt in uploadEvents" :key="evt" class="flex items-center gap-1.5 cursor-pointer">
-                            <input type="checkbox" :value="evt" v-model="editEvents" class="rounded text-blue-600" />
-                            <span class="text-sm text-gray-700">{{ evt }}</span>
-                          </label>
-                        </div>
-                        <p class="text-xs font-medium text-gray-500 uppercase mb-2">System</p>
-                        <div class="flex flex-wrap gap-3">
-                          <label v-for="evt in systemEvents" :key="evt" class="flex items-center gap-1.5 cursor-pointer">
-                            <input type="checkbox" :value="evt" v-model="editEvents" class="rounded text-blue-600" />
-                            <span class="text-sm text-gray-700">{{ evt }}</span>
-                          </label>
-                        </div>
-                      </div>
-                    </div>
-                    <div class="grid grid-cols-3 gap-6">
-                      <div>
-                        <label class="text-sm font-medium text-gray-700">Enabled</label>
-                      </div>
-                      <div class="col-span-2 flex items-center">
-                        <button type="button" @click="editEnabled = !editEnabled"
-                          class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors"
-                          :class="editEnabled ? 'bg-blue-600' : 'bg-gray-200'">
-                          <span class="inline-block h-4 w-4 rounded-full bg-white transition-transform"
-                            :class="editEnabled ? 'translate-x-6' : 'translate-x-1'" />
-                        </button>
-                        <span class="ml-3 text-sm text-gray-500">{{ editEnabled ? 'Enabled' : 'Disabled' }}</span>
-                      </div>
-                    </div>
-                    <div class="flex gap-2 pt-2">
-                      <button @click="saveEdit" :disabled="saving"
-                        class="rounded bg-blue-600 px-4 py-1.5 text-sm text-white hover:bg-blue-700 disabled:opacity-50">
-                        {{ saving ? 'Saving...' : 'Save Changes' }}
-                      </button>
-                      <button @click="editingId = null"
-                        class="rounded border px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100">
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                </td>
-              </tr>
-
-              <!-- Delivery history panel -->
-              <tr v-if="historyId === w.id">
-                <td colspan="5" class="bg-gray-50 px-6 py-5 border-t border-gray-100">
-                  <h3 class="text-sm font-semibold text-gray-700 mb-3">Recent Deliveries</h3>
-                  <div v-if="loadingHistory" class="text-sm text-gray-400">Loading...</div>
-                  <div v-else-if="deliveries.length === 0" class="text-sm text-gray-400">No delivery history.</div>
-                  <table v-else class="w-full text-sm">
-                    <thead class="text-left text-xs text-gray-500 uppercase">
-                      <tr>
-                        <th class="pb-2 pr-4">Time</th>
-                        <th class="pb-2 pr-4">Event</th>
-                        <th class="pb-2 pr-4">Status</th>
-                        <th class="pb-2 pr-4">Attempts</th>
-                        <th class="pb-2">Result</th>
-                      </tr>
-                    </thead>
-                    <tbody class="divide-y divide-gray-100">
-                      <tr v-for="d in deliveries" :key="d.id">
-                        <td class="py-2 pr-4 text-gray-500 whitespace-nowrap">{{ formatDate(d.created_at) }}</td>
-                        <td class="py-2 pr-4">
-                          <span class="text-xs px-1.5 py-0.5 rounded"
-                            :class="systemEvents.includes(d.event_type) ? 'bg-amber-50 text-amber-700' : d.event_type === 'test_ping' ? 'bg-gray-100 text-gray-600' : 'bg-blue-50 text-blue-700'">
-                            {{ d.event_type }}
-                          </span>
-                        </td>
-                        <td class="py-2 pr-4 text-gray-500">{{ d.status_code || '—' }}</td>
-                        <td class="py-2 pr-4 text-gray-500">{{ d.attempts }}</td>
-                        <td class="py-2">
-                          <span class="text-xs font-medium px-2 py-0.5 rounded"
-                            :class="d.success ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'">
-                            {{ d.success ? 'OK' : (d.error_message || 'Failed') }}
-                          </span>
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </td>
-              </tr>
-            </template>
-          </tbody>
-        </table>
-      </div>
+      <DataTable :value="webhooks" :loading="loading" stripedRows>
+        <template #empty>No webhooks configured. Click "Add Endpoint" to create one.</template>
+        <Column field="url" header="URL" sortable>
+          <template #body="{ data }">
+            <span class="font-mono text-sm max-w-xs truncate block">{{ data.url }}</span>
+          </template>
+        </Column>
+        <Column field="integration_type" header="Type" sortable style="width: 8rem">
+          <template #body="{ data }">
+            <Tag :value="data.integration_type" :severity="data.integration_type === 'slack' ? 'danger' : 'secondary'" />
+          </template>
+        </Column>
+        <Column field="events" header="Events" sortable>
+          <template #body="{ data }">
+            <div class="flex flex-wrap gap-1">
+              <Tag v-for="evt in parseEvents(data.events)" :key="evt" :value="evt" :severity="eventTagSeverity(evt)" />
+            </div>
+          </template>
+        </Column>
+        <Column field="is_enabled" header="Status" sortable style="width: 6rem">
+          <template #body="{ data }">
+            <ToggleSwitch :modelValue="data.is_enabled" @update:modelValue="toggleWebhook(data)" />
+          </template>
+        </Column>
+        <Column header="Actions" style="width: 14rem">
+          <template #body="{ data }">
+            <div class="flex items-center gap-1">
+              <!-- Test result toast -->
+              <span v-if="testingId === data.id && testResult" class="text-xs mr-1"
+                :class="testResult.success ? 'text-green-600' : 'text-red-500'">
+                {{ testResult.success ? `OK (${testResult.status_code})` : (testResult.error || 'Failed') }}
+              </span>
+              <Button icon="pi pi-refresh" severity="warn" text rounded size="small"
+                aria-label="Rotate signing secret" v-tooltip.top="'Rotate signing secret'" @click="rotateSecret(data.id)" />
+              <Button icon="pi pi-bolt" severity="info" text rounded size="small"
+                :disabled="testingId === data.id && !testResult" aria-label="Send test ping" v-tooltip.top="'Send test ping'"
+                @click="testWebhook(data.id)" />
+              <Button icon="pi pi-history" severity="secondary" text rounded size="small"
+                aria-label="Delivery history" v-tooltip.top="'Delivery history'" @click="fetchHistory(data.id)" />
+              <Button icon="pi pi-pencil" severity="secondary" text rounded size="small"
+                aria-label="Edit" v-tooltip.top="'Edit'" @click="startEdit(data)" />
+              <Button icon="pi pi-trash" severity="danger" text rounded size="small"
+                aria-label="Delete" v-tooltip.top="'Delete'" @click="deleteWebhook(data.id)" />
+            </div>
+          </template>
+        </Column>
+      </DataTable>
     </div>
+
+    <!-- Edit Drawer -->
+    <Drawer v-model:visible="editDrawerVisible" header="Edit Webhook" position="right" class="w-full max-w-lg">
+      <div class="space-y-5">
+        <div>
+          <label class="text-sm font-medium block mb-1">Endpoint URL</label>
+          <InputText v-model="editUrl" type="url" class="w-full font-mono" />
+        </div>
+
+        <div>
+          <label class="text-sm font-medium block mb-2">Integration Type</label>
+          <div class="flex gap-4">
+            <div class="flex items-center gap-2">
+              <RadioButton v-model="editType" inputId="editTypeGeneric" value="generic" />
+              <label for="editTypeGeneric" class="text-sm cursor-pointer">Generic JSON</label>
+            </div>
+            <div class="flex items-center gap-2">
+              <RadioButton v-model="editType" inputId="editTypeSlack" value="slack" />
+              <label for="editTypeSlack" class="text-sm cursor-pointer">Slack</label>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <label class="text-sm font-medium block mb-2">Events</label>
+          <p class="text-xs font-medium text-surface-500 uppercase mb-2">Upload</p>
+          <div class="flex flex-wrap gap-3 mb-3">
+            <div v-for="evt in uploadEvents" :key="evt" class="flex items-center gap-1.5">
+              <Checkbox v-model="editEvents" :inputId="'edit-' + evt" :value="evt" />
+              <label :for="'edit-' + evt" class="text-sm cursor-pointer">{{ evt }}</label>
+            </div>
+          </div>
+          <p class="text-xs font-medium text-surface-500 uppercase mb-2">System</p>
+          <div class="flex flex-wrap gap-3">
+            <div v-for="evt in systemEvents" :key="evt" class="flex items-center gap-1.5">
+              <Checkbox v-model="editEvents" :inputId="'edit-sys-' + evt" :value="evt" />
+              <label :for="'edit-sys-' + evt" class="text-sm cursor-pointer">{{ evt }}</label>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <label class="text-sm font-medium block mb-2">Enabled</label>
+          <div class="flex items-center gap-3">
+            <ToggleSwitch v-model="editEnabled" />
+            <span class="text-sm text-surface-500">{{ editEnabled ? 'Enabled' : 'Disabled' }}</span>
+          </div>
+        </div>
+
+        <div class="flex gap-2 pt-2">
+          <Button :label="saving ? 'Saving...' : 'Save Changes'" :loading="saving" @click="saveEdit" />
+          <Button label="Cancel" severity="secondary" outlined @click="editDrawerVisible = false" />
+        </div>
+      </div>
+    </Drawer>
+
+    <!-- Delivery History Drawer -->
+    <Drawer v-model:visible="historyDrawerVisible" :header="'Delivery History'" position="right" class="w-full max-w-2xl">
+      <p v-if="historyWebhookUrl" class="text-sm font-mono text-surface-500 mb-4 truncate">{{ historyWebhookUrl }}</p>
+      <DataTable :value="deliveries" :loading="loadingHistory" stripedRows size="small">
+        <template #empty>No delivery history.</template>
+        <Column field="created_at" header="Time" sortable>
+          <template #body="{ data }">
+            <span class="text-surface-500 whitespace-nowrap">{{ formatDate(data.created_at) }}</span>
+          </template>
+        </Column>
+        <Column field="event_type" header="Event" sortable>
+          <template #body="{ data }">
+            <Tag :value="data.event_type" :severity="eventTagSeverity(data.event_type)" />
+          </template>
+        </Column>
+        <Column field="status_code" header="Status" sortable>
+          <template #body="{ data }">
+            <span class="text-surface-500">{{ data.status_code || '--' }}</span>
+          </template>
+        </Column>
+        <Column field="attempts" header="Attempts" sortable>
+          <template #body="{ data }">
+            <span class="text-surface-500">{{ data.attempts }}</span>
+          </template>
+        </Column>
+        <Column field="success" header="Result" sortable>
+          <template #body="{ data }">
+            <Tag :value="data.success ? 'OK' : (data.error_message || 'Failed')" :severity="data.success ? 'success' : 'danger'" />
+          </template>
+        </Column>
+      </DataTable>
+    </Drawer>
   </div>
 </template>

@@ -3,6 +3,7 @@ package services
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/WithAutonomi/indelible/internal/crypto"
@@ -47,7 +48,9 @@ func (s *WalletService) Create(name, address, privateKey string) (*Wallet, error
 
 	// Check if there are any existing wallets
 	var count int64
-	s.db.QueryRow(`SELECT COUNT(*) FROM wallets`).Scan(&count)
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM wallets`).Scan(&count); err != nil {
+		return nil, fmt.Errorf("failed to check existing wallets: %w", err)
+	}
 	isDefault := count == 0
 
 	result, err := s.db.Exec(
@@ -142,6 +145,20 @@ func (s *WalletService) SetDefault(id int64) error {
 	}
 
 	return tx.Commit()
+}
+
+// Delete removes a wallet. Cannot delete the default wallet.
+func (s *WalletService) Delete(id int64) error {
+	var isDefault bool
+	err := s.db.QueryRow(`SELECT is_default FROM wallets WHERE id = ?`, id).Scan(&isDefault)
+	if err != nil {
+		return ErrWalletNotFound
+	}
+	if isDefault {
+		return errors.New("cannot delete the default wallet")
+	}
+	_, err = s.db.Exec(`DELETE FROM wallets WHERE id = ?`, id)
+	return err
 }
 
 // DecryptKey decrypts and returns the wallet's private key.

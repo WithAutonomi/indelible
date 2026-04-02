@@ -90,6 +90,33 @@ func (rl *RateLimiter) Check(key string) RateLimitResult {
 	}
 }
 
+// RateLimitByUser returns middleware that limits requests per authenticated user ID.
+func RateLimitByUser(max int, window time.Duration) func(http.Handler) http.Handler {
+	limiter := NewRateLimiter(max, window)
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			userID := GetUserID(r.Context())
+			key := fmt.Sprintf("user:%d", userID)
+			result := limiter.Check(key)
+
+			w.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%d", result.Limit))
+			w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", result.Remaining))
+			w.Header().Set("X-RateLimit-Reset", fmt.Sprintf("%d", result.ResetAt.Unix()))
+
+			if !result.Allowed {
+				retryAfter := int(time.Until(result.ResetAt).Seconds()) + 1
+				w.Header().Set("Retry-After", fmt.Sprintf("%d", retryAfter))
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusTooManyRequests)
+				w.Write([]byte(`{"error":"upload rate limit exceeded, please try again later","code":"rate_limit_exceeded"}`))
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // RateLimit returns middleware that limits requests per IP.
 // trustedProxies controls whether X-Forwarded-For is honoured.
 func RateLimit(max int, window time.Duration, trustedProxies []string) func(http.Handler) http.Handler {

@@ -1,11 +1,28 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { useConfirm } from 'primevue/useconfirm'
+import { useToast } from 'primevue/usetoast'
 import { api } from '../../api/client'
 import { useAuthStore } from '../../stores/auth'
+import type { Upload, Collection } from '../../types/api'
+import DataTable from 'primevue/datatable'
+import Column from 'primevue/column'
+import Button from 'primevue/button'
+import InputText from 'primevue/inputtext'
+import Select from 'primevue/select'
+import Tag from 'primevue/tag'
+import Card from 'primevue/card'
+import Dialog from 'primevue/dialog'
+import AutoComplete from 'primevue/autocomplete'
+import Skeleton from 'primevue/skeleton'
+import Message from 'primevue/message'
+import ConfirmDialog from 'primevue/confirmdialog'
 
 const auth = useAuthStore()
 const router = useRouter()
+const confirm = useConfirm()
+const toast = useToast()
 const noWallet = ref(false)
 
 async function checkWalletStatus() {
@@ -17,21 +34,85 @@ async function checkWalletStatus() {
   }
 }
 
-const uploads = ref<any[]>([])
+const uploads = ref<Upload[]>([])
+const selectedUploads = ref<Upload[]>([])
 const loading = ref(true)
 const page = ref(1)
 const total = ref(0)
 const limit = 20
+const bulkProcessing = ref(false)
 
 const tagKey = ref('')
 const tagValue = ref('')
 const searchQuery = ref('')
+const tagKeySuggestions = ref<string[]>([])
+const tagValueSuggestions = ref<string[]>([])
+let keyDebounce: ReturnType<typeof setTimeout> | null = null
+let valueDebounce: ReturnType<typeof setTimeout> | null = null
+
+function searchTagKeys(event: { query: string }) {
+  if (keyDebounce) clearTimeout(keyDebounce)
+  keyDebounce = setTimeout(async () => {
+    try {
+      const res = await api.get('/api/v2/tags/keys')
+      const all: string[] = res.data.keys || []
+      tagKeySuggestions.value = event.query
+        ? all.filter(k => k.toLowerCase().includes(event.query.toLowerCase()))
+        : all
+    } catch {
+      tagKeySuggestions.value = []
+    }
+  }, 300)
+}
+
+function searchTagValues(event: { query: string }) {
+  if (valueDebounce) clearTimeout(valueDebounce)
+  if (!tagKey.value) {
+    tagValueSuggestions.value = []
+    return
+  }
+  valueDebounce = setTimeout(async () => {
+    try {
+      const res = await api.get('/api/v2/tags/values', { params: { key: tagKey.value } })
+      const all: string[] = res.data.values || []
+      tagValueSuggestions.value = event.query
+        ? all.filter(v => v.toLowerCase().includes(event.query.toLowerCase()))
+        : all
+    } catch {
+      tagValueSuggestions.value = []
+    }
+  }, 300)
+}
 
 const file = ref<File | null>(null)
 const visibility = ref('private')
 const uploading = ref(false)
-const uploadMsg = ref('')
-const uploadError = ref('')
+const uploadTagKey = ref('')
+const uploadTagValue = ref('')
+const uploadTags = ref<{ key: string; value: string }[]>([])
+
+const visibilityOptions = [
+  { label: 'Private', value: 'private' },
+  { label: 'Public', value: 'public' },
+]
+
+function addUploadTag() {
+  const k = uploadTagKey.value.trim()
+  const v = uploadTagValue.value.trim()
+  if (!k || !v) return
+  const existing = uploadTags.value.findIndex(t => t.key === k)
+  if (existing >= 0) {
+    uploadTags.value[existing].value = v
+  } else {
+    uploadTags.value.push({ key: k, value: v })
+  }
+  uploadTagKey.value = ''
+  uploadTagValue.value = ''
+}
+
+function removeUploadTag(key: string) {
+  uploadTags.value = uploadTags.value.filter(t => t.key !== key)
+}
 
 function onFileSelect(e: Event) {
   const target = e.target as HTMLInputElement
@@ -41,24 +122,30 @@ function onFileSelect(e: Event) {
 async function handleUpload() {
   if (!file.value) return
   uploading.value = true
-  uploadMsg.value = ''
-  uploadError.value = ''
 
   const formData = new FormData()
   formData.append('file', file.value)
   formData.append('visibility', visibility.value)
 
+  // Include tags if any were added
+  if (uploadTags.value.length > 0) {
+    const tagMap: Record<string, string> = {}
+    for (const t of uploadTags.value) tagMap[t.key] = t.value
+    formData.append('tags', JSON.stringify(tagMap))
+  }
+
   try {
     await api.post('/api/v2/uploads', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
-    uploadMsg.value = 'File queued for upload!'
+    toast.add({ severity: 'success', summary: 'Queued', detail: 'File queued for upload', life: 3000 })
     file.value = null
+    uploadTags.value = []
     const input = document.getElementById('upload-file-input') as HTMLInputElement
     if (input) input.value = ''
     await fetchUploads()
   } catch (e: any) {
-    uploadError.value = e.response?.data?.error || 'Upload failed'
+    toast.add({ severity: 'error', summary: 'Upload Failed', detail: e.response?.data?.error || 'Upload failed', life: 5000 })
   } finally {
     uploading.value = false
   }
@@ -99,7 +186,10 @@ async function searchByTags() {
   }
 }
 
+const downloading = ref<string | null>(null)
+
 async function download(uuid: string, name: string) {
+  downloading.value = uuid
   try {
     const res = await api.get(`/api/v2/uploads/${uuid}/download`, {
       responseType: 'blob',
@@ -111,26 +201,37 @@ async function download(uuid: string, name: string) {
     a.click()
     window.URL.revokeObjectURL(url)
   } catch {
-    alert('Download failed — file may not be completed yet.')
+    toast.add({ severity: 'error', summary: 'Download Failed', detail: 'File may not be completed yet', life: 5000 })
+  } finally {
+    downloading.value = null
   }
 }
 
-async function cancelUpload(uuid: string) {
-  if (!confirm('Cancel this upload?')) return
-  try {
-    await api.post(`/api/v2/uploads/${uuid}/cancel`)
-    await fetchUploads()
-  } catch (e: any) {
-    alert(e.response?.data?.error || 'Failed to cancel upload')
-  }
+function cancelUpload(uuid: string) {
+  confirm.require({
+    message: 'Cancel this upload?',
+    header: 'Confirm Cancel',
+    icon: 'pi pi-exclamation-triangle',
+    acceptClass: 'p-button-danger',
+    accept: async () => {
+      try {
+        await api.post(`/api/v2/uploads/${uuid}/cancel`)
+        toast.add({ severity: 'success', summary: 'Cancelled', detail: 'Upload cancelled', life: 3000 })
+        await fetchUploads()
+      } catch (e: any) {
+        toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to cancel upload', life: 5000 })
+      }
+    },
+  })
 }
 
 async function retryUpload(uuid: string) {
   try {
     await api.post(`/api/v2/uploads/${uuid}/retry`)
+    toast.add({ severity: 'success', summary: 'Retrying', detail: 'Upload queued for retry', life: 3000 })
     await fetchUploads()
   } catch (e: any) {
-    alert(e.response?.data?.error || 'Failed to retry upload')
+    toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to retry upload', life: 5000 })
   }
 }
 
@@ -139,17 +240,184 @@ async function forceRetry(uuid: string) {
     await api.post(`/api/v2/uploads/${uuid}/force-retry`)
     await fetchUploads()
   } catch (e: any) {
-    alert(e.response?.data?.error || 'Failed to force retry')
+    toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to force retry', life: 5000 })
   }
 }
 
-async function deleteUpload(uuid: string) {
-  if (!confirm('Permanently delete this upload record?')) return
+function deleteUpload(uuid: string) {
+  confirm.require({
+    message: 'Permanently delete this upload record?',
+    header: 'Confirm Delete',
+    icon: 'pi pi-exclamation-triangle',
+    acceptClass: 'p-button-danger',
+    accept: async () => {
+      try {
+        await api.delete(`/api/v2/uploads/${uuid}`)
+        toast.add({ severity: 'success', summary: 'Deleted', detail: 'Upload deleted', life: 3000 })
+        await fetchUploads()
+      } catch (e: any) {
+        toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to delete upload', life: 5000 })
+      }
+    },
+  })
+}
+
+// Bulk operations
+function bulkDelete() {
+  const targets = selectedUploads.value.filter(u => u.status === 'completed' || u.status === 'failed')
+  if (!targets.length) return
+  confirm.require({
+    message: `Delete ${targets.length} upload${targets.length === 1 ? '' : 's'}? This cannot be undone.`,
+    header: 'Confirm Bulk Delete',
+    icon: 'pi pi-exclamation-triangle',
+    acceptClass: 'p-button-danger',
+    accept: async () => {
+      bulkProcessing.value = true
+      let ok = 0, fail = 0
+      for (const u of targets) {
+        try {
+          await api.delete(`/api/v2/uploads/${u.uuid}`)
+          ok++
+        } catch {
+          fail++
+        }
+      }
+      bulkProcessing.value = false
+      selectedUploads.value = []
+      toast.add({ severity: ok ? 'success' : 'error', summary: 'Bulk Delete', detail: `${ok} deleted${fail ? `, ${fail} failed` : ''}`, life: 4000 })
+      await fetchUploads()
+    },
+  })
+}
+
+async function bulkRetry() {
+  const targets = selectedUploads.value.filter(u => u.status === 'failed')
+  if (!targets.length) return
+  bulkProcessing.value = true
+  let ok = 0, fail = 0
+  for (const u of targets) {
+    try {
+      await api.post(`/api/v2/uploads/${u.uuid}/retry`)
+      ok++
+    } catch {
+      fail++
+    }
+  }
+  bulkProcessing.value = false
+  selectedUploads.value = []
+  toast.add({ severity: ok ? 'success' : 'error', summary: 'Bulk Retry', detail: `${ok} queued for retry${fail ? `, ${fail} failed` : ''}`, life: 4000 })
+  await fetchUploads()
+}
+
+// Tags management
+const tagsDialogVisible = ref(false)
+const tagsUploadUuid = ref('')
+const tagsUploadName = ref('')
+const tags = ref<{ key: string; value: string }[]>([])
+const newTagKey = ref('')
+const newTagValue = ref('')
+const tagsSaving = ref(false)
+
+async function openTags(uuid: string, name: string) {
+  tagsUploadUuid.value = uuid
+  tagsUploadName.value = name
+  tagsDialogVisible.value = true
   try {
-    await api.delete(`/api/v2/uploads/${uuid}`)
-    await fetchUploads()
+    const res = await api.get(`/api/v2/uploads/${uuid}/tags`)
+    const tagMap = res.data.tags || {}
+    tags.value = Object.entries(tagMap).map(([key, value]) => ({ key, value: value as string }))
+  } catch {
+    tags.value = []
+  }
+}
+
+function addTag() {
+  const k = newTagKey.value.trim()
+  const v = newTagValue.value.trim()
+  if (!k || !v) return
+  if (tags.value.some(t => t.key === k)) {
+    tags.value = tags.value.map(t => t.key === k ? { key: k, value: v } : t)
+  } else {
+    tags.value.push({ key: k, value: v })
+  }
+  newTagKey.value = ''
+  newTagValue.value = ''
+}
+
+function removeTag(key: string) {
+  tags.value = tags.value.filter(t => t.key !== key)
+}
+
+async function saveTags() {
+  tagsSaving.value = true
+  try {
+    const tagMap: Record<string, string> = {}
+    for (const t of tags.value) tagMap[t.key] = t.value
+    await api.put(`/api/v2/uploads/${tagsUploadUuid.value}/tags`, { tags: tagMap })
+    toast.add({ severity: 'success', summary: 'Saved', detail: 'Tags updated', life: 3000 })
+    tagsDialogVisible.value = false
   } catch (e: any) {
-    alert(e.response?.data?.error || 'Failed to delete upload')
+    toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to save tags', life: 5000 })
+  } finally {
+    tagsSaving.value = false
+  }
+}
+
+// Add to collection
+const collectDialogVisible = ref(false)
+const collectUploadUuid = ref('')
+const collectUploadName = ref('')
+const collections = ref<Collection[]>([])
+const loadingCollections = ref(false)
+const addingToCollection = ref<number | null>(null)
+const addedToCollections = ref<number[]>([])
+
+function isInCollection(id: number): boolean {
+  return addedToCollections.value.includes(id)
+}
+
+async function openCollections(uuid: string, name: string) {
+  collectUploadUuid.value = uuid
+  collectUploadName.value = name
+  addedToCollections.value = []
+  collectDialogVisible.value = true
+  loadingCollections.value = true
+  try {
+    const res = await api.get('/api/v2/collections')
+    collections.value = res.data.collections || []
+    // Check which collections already contain this file
+    const found: number[] = []
+    for (const c of collections.value) {
+      try {
+        const filesRes = await api.get(`/api/v2/collections/${c.id}`)
+        const files = filesRes.data.files || []
+        if (files.some((f: { uuid: string }) => f.uuid === uuid)) {
+          found.push(c.id)
+        }
+      } catch {
+        // ignore per-collection errors
+      }
+    }
+    addedToCollections.value = found
+  } catch {
+    collections.value = []
+  } finally {
+    loadingCollections.value = false
+  }
+}
+
+async function addToCollection(collectionId: number) {
+  addingToCollection.value = collectionId
+  try {
+    await api.post(`/api/v2/collections/${collectionId}/files`, {
+      upload_uuid: collectUploadUuid.value,
+    })
+    addedToCollections.value = [...addedToCollections.value, collectionId]
+    toast.add({ severity: 'success', summary: 'Added', detail: 'File added to collection', life: 3000 })
+  } catch (e: any) {
+    toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to add to collection', life: 5000 })
+  } finally {
+    addingToCollection.value = null
   }
 }
 
@@ -171,13 +439,13 @@ function formatDate(iso: string) {
   return `${dd}-${mm}-${yyyy} ${hh}:${min}`
 }
 
-function statusClass(status: string, detail?: string) {
-  if (detail === 'gas_backoff') return 'text-orange-700 bg-orange-50'
+function statusSeverity(status: string, detail?: string): string {
+  if (detail === 'gas_backoff') return 'warn'
   switch (status) {
-    case 'completed': return 'text-green-700 bg-green-50'
-    case 'failed': return 'text-red-700 bg-red-50'
-    case 'processing': return 'text-blue-700 bg-blue-50'
-    default: return 'text-yellow-700 bg-yellow-50'
+    case 'completed': return 'success'
+    case 'failed': return 'danger'
+    case 'processing': return 'warn'
+    default: return 'info'
   }
 }
 
@@ -188,6 +456,11 @@ function statusLabel(u: any) {
   return u.status
 }
 
+function onPage(event: any) {
+  page.value = event.page + 1
+  fetchUploads()
+}
+
 onMounted(() => {
   fetchUploads()
   checkWalletStatus()
@@ -196,152 +469,226 @@ onMounted(() => {
 
 <template>
   <div class="p-6">
+    <ConfirmDialog />
+
     <h1 class="text-2xl font-bold mb-6">Uploads</h1>
 
     <!-- No wallet warning -->
-    <div v-if="noWallet" class="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-4 flex items-center justify-between">
-      <div>
-        <p class="text-sm font-medium text-amber-800">No wallet configured</p>
-        <p class="text-sm text-amber-700">A wallet must be added before files can be uploaded to the network.</p>
+    <Message v-if="noWallet" severity="warn" :closable="false" class="mb-4">
+      <div class="flex items-center justify-between w-full">
+        <div>
+          <p class="font-medium">No wallet configured</p>
+          <p class="text-sm">A wallet must be added before files can be uploaded to the network.</p>
+        </div>
+        <Button v-if="auth.isAdmin" label="Add Wallet" severity="warn" size="small"
+          @click="router.push('/admin/wallets?add=1')" class="ml-4" />
+        <span v-else class="text-xs ml-4 whitespace-nowrap">Contact your administrator</span>
       </div>
-      <button v-if="auth.isAdmin" @click="router.push('/admin/wallets?add=1')"
-        class="rounded bg-amber-600 px-4 py-2 text-sm text-white hover:bg-amber-700 whitespace-nowrap ml-4">
-        Add Wallet
-      </button>
-      <span v-else class="text-xs text-amber-600 ml-4 whitespace-nowrap">Contact your administrator</span>
-    </div>
+    </Message>
 
     <!-- Upload card -->
-    <div class="bg-white rounded-lg border border-gray-200 p-4 mb-4" :class="{ 'opacity-50 pointer-events-none select-none': noWallet }">
-      <div v-if="uploadMsg" class="mb-3 rounded bg-green-50 p-3 text-green-700 text-sm">{{ uploadMsg }}</div>
-      <div v-if="uploadError" class="mb-3 rounded bg-red-50 p-3 text-red-700 text-sm">{{ uploadError }}</div>
-      <form @submit.prevent="handleUpload" class="flex flex-col sm:flex-row items-start gap-4">
-        <div class="flex-1">
-          <input id="upload-file-input" type="file" @change="onFileSelect" :disabled="noWallet"
-            class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
-        </div>
-        <select v-model="visibility" :disabled="noWallet" class="rounded border border-gray-300 px-3 py-2 text-sm">
-          <option value="private">Private</option>
-          <option value="public">Public</option>
-        </select>
-        <button type="submit" :disabled="!file || uploading || noWallet"
-          class="rounded bg-blue-600 px-5 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-50">
-          {{ uploading ? 'Uploading...' : 'Upload' }}
-        </button>
-      </form>
-    </div>
+    <Card class="mb-4" :class="{ 'opacity-50 pointer-events-none select-none': noWallet }">
+      <template #content>
+        <form @submit.prevent="handleUpload" class="flex flex-col gap-4">
+          <div class="flex flex-col sm:flex-row items-start gap-4">
+            <div class="flex-1">
+              <input id="upload-file-input" type="file" @change="onFileSelect" :disabled="noWallet"
+                class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
+            </div>
+            <Select v-model="visibility" :options="visibilityOptions" optionLabel="label" optionValue="value"
+              :disabled="noWallet" class="w-36" />
+            <Button type="submit" :label="uploading ? 'Uploading...' : 'Upload'" icon="pi pi-upload"
+              :disabled="!file || uploading || noWallet" :loading="uploading" />
+          </div>
+
+          <!-- Upload-time tags -->
+          <div v-if="file" class="border-t border-surface-200 pt-3">
+            <p class="text-xs text-surface-500 mb-2">Tags (optional — applied when the file is queued)</p>
+            <div class="flex flex-wrap gap-1 mb-2" v-if="uploadTags.length">
+              <Tag v-for="t in uploadTags" :key="t.key" :value="`${t.key}: ${t.value}`" severity="info" class="cursor-pointer" @click="removeUploadTag(t.key)" v-tooltip.top="'Click to remove'" />
+            </div>
+            <div class="flex gap-2 items-center">
+              <InputText v-model="uploadTagKey" placeholder="Key" size="small" class="w-28" @keyup.enter="addUploadTag" />
+              <InputText v-model="uploadTagValue" placeholder="Value" size="small" class="w-28" @keyup.enter="addUploadTag" />
+              <Button icon="pi pi-plus" size="small" text rounded @click="addUploadTag" :disabled="!uploadTagKey.trim() || !uploadTagValue.trim()" aria-label="Add tag" />
+            </div>
+          </div>
+        </form>
+      </template>
+    </Card>
 
     <!-- Search / filter bar -->
-    <div class="bg-white rounded-lg border border-gray-200 p-4 mb-4 flex flex-wrap gap-3 items-end">
-      <div>
-        <label class="block text-xs text-gray-500 mb-1">Filename</label>
-        <input v-model="searchQuery" type="text" placeholder="Search..."
-          class="rounded border border-gray-300 px-3 py-1.5 text-sm w-48" />
-      </div>
-      <div>
-        <label class="block text-xs text-gray-500 mb-1">Tag Key</label>
-        <input v-model="tagKey" type="text" placeholder="e.g. project"
-          class="rounded border border-gray-300 px-3 py-1.5 text-sm w-32" />
-      </div>
-      <div>
-        <label class="block text-xs text-gray-500 mb-1">Tag Value</label>
-        <input v-model="tagValue" type="text" placeholder="e.g. alpha"
-          class="rounded border border-gray-300 px-3 py-1.5 text-sm w-32" />
-      </div>
-      <button @click="searchByTags"
-        class="rounded bg-gray-100 px-4 py-1.5 text-sm text-gray-700 hover:bg-gray-200">
-        <i class="pi pi-search mr-1"></i> Search
-      </button>
-      <button @click="tagKey = ''; tagValue = ''; searchQuery = ''; fetchUploads()"
-        class="rounded px-4 py-1.5 text-sm text-gray-500 hover:text-gray-700">
-        Clear
-      </button>
+    <Card class="mb-4">
+      <template #content>
+        <div class="flex flex-wrap gap-3 items-end">
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">Filename</label>
+            <InputText v-model="searchQuery" placeholder="Search..." size="small" class="w-48" />
+          </div>
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">Tag Key</label>
+            <AutoComplete v-model="tagKey" :suggestions="tagKeySuggestions" @complete="searchTagKeys"
+              placeholder="e.g. project" dropdown size="small" class="w-40" />
+          </div>
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">Tag Value</label>
+            <AutoComplete v-model="tagValue" :suggestions="tagValueSuggestions" @complete="searchTagValues"
+              placeholder="e.g. alpha" dropdown size="small" class="w-40" />
+          </div>
+          <Button label="Search" icon="pi pi-search" severity="secondary" size="small" @click="searchByTags" />
+          <Button label="Clear" text size="small"
+            @click="tagKey = ''; tagValue = ''; searchQuery = ''; fetchUploads()" />
+        </div>
+      </template>
+    </Card>
+
+    <!-- Bulk action bar -->
+    <div v-if="selectedUploads.length" class="mb-2 flex items-center gap-3 px-4 py-2 bg-primary-50 rounded-lg border border-primary-200">
+      <span class="text-sm font-medium">{{ selectedUploads.length }} selected</span>
+      <Button label="Delete" icon="pi pi-trash" severity="danger" size="small" outlined
+        :loading="bulkProcessing" :disabled="!selectedUploads.some(u => u.status === 'completed' || u.status === 'failed')"
+        @click="bulkDelete" />
+      <Button label="Retry" icon="pi pi-refresh" severity="warn" size="small" outlined
+        :loading="bulkProcessing" :disabled="!selectedUploads.some(u => u.status === 'failed')"
+        @click="bulkRetry" />
+      <Button label="Clear" text size="small" @click="selectedUploads = []" />
     </div>
 
     <!-- Table -->
-    <div class="bg-white rounded-lg border border-gray-200">
-      <div v-if="loading" class="p-6 text-center text-gray-400">Loading...</div>
-      <div v-else-if="uploads.length === 0" class="p-6 text-center text-gray-400">No uploads found.</div>
-      <table v-else class="w-full">
-        <thead class="text-left text-xs text-gray-500 uppercase bg-gray-50">
-          <tr>
-            <th class="px-6 py-3">Name</th>
-            <th class="px-6 py-3">Size</th>
-            <th class="px-6 py-3">Visibility</th>
-            <th class="px-6 py-3">Status</th>
-            <th class="px-6 py-3">Created</th>
-            <th class="px-6 py-3">Actions</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-gray-100">
-          <tr v-for="u in uploads" :key="u.uuid">
-            <td class="px-6 py-3 text-sm font-medium text-gray-800">{{ u.original_filename }}</td>
-            <td class="px-6 py-3 text-sm text-gray-500">{{ formatSize(u.file_size) }}</td>
-            <td class="px-6 py-3 text-sm text-gray-500">{{ u.visibility }}</td>
-            <td class="px-6 py-3">
-              <span class="text-xs font-medium px-2 py-1 rounded" :class="statusClass(u.status, u.status_detail)">
-                {{ statusLabel(u) }}
+    <Card>
+      <template #content>
+        <DataTable :value="uploads" v-model:selection="selectedUploads" :loading="loading" stripedRows
+          paginator :rows="limit" :totalRecords="total" :lazy="true" @page="onPage"
+          paginatorTemplate="FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink CurrentPageReport"
+          currentPageReportTemplate="Showing {first} to {last} of {totalRecords}"
+          dataKey="uuid"
+          :pt="{ root: { class: '-mt-2' } }">
+          <template #empty>No uploads found.</template>
+          <Column selectionMode="multiple" headerStyle="width: 3rem" />
+          <Column field="original_filename" header="Name" sortable>
+            <template #body="{ data }">
+              <span :class="data.visibility === 'public' ? 'text-amber-600 font-medium' : ''">
+                {{ data.original_filename }}
               </span>
-              <p v-if="u.error_message" class="text-xs text-red-500 mt-1" :title="u.error_message">
-                {{ u.error_message.length > 50 ? u.error_message.substring(0, 50) + '...' : u.error_message }}
-              </p>
-            </td>
-            <td class="px-6 py-3 text-sm text-gray-400">{{ formatDate(u.created_at) }}</td>
-            <td class="px-6 py-3">
-              <div class="flex gap-2 items-center">
-                <!-- Completed: download, delete -->
-                <button v-if="u.status === 'completed'" @click="download(u.uuid, u.original_filename)"
-                  class="text-blue-600 hover:text-blue-800 text-sm" title="Download">
-                  <i class="pi pi-download"></i>
-                </button>
-                <button v-if="u.status === 'completed'" @click="deleteUpload(u.uuid)"
-                  class="text-red-500 hover:text-red-700 text-sm" title="Delete">
-                  <i class="pi pi-trash"></i>
-                </button>
-                <!-- Queued (not backoff): cancel -->
-                <button v-if="u.status === 'queued' && u.status_detail !== 'gas_backoff'" @click="cancelUpload(u.uuid)"
-                  class="text-red-500 hover:text-red-700 text-sm" title="Cancel">
-                  <i class="pi pi-times"></i>
-                </button>
-                <!-- Processing: cancel -->
-                <button v-if="u.status === 'processing'" @click="cancelUpload(u.uuid)"
-                  class="text-red-500 hover:text-red-700 text-sm" title="Cancel">
-                  <i class="pi pi-times"></i>
-                </button>
-                <!-- Gas backoff: force retry, cancel -->
-                <button v-if="u.status_detail === 'gas_backoff'" @click="forceRetry(u.uuid)"
-                  class="text-blue-600 hover:text-blue-800 text-sm" title="Retry now">
-                  <i class="pi pi-refresh"></i>
-                </button>
-                <button v-if="u.status_detail === 'gas_backoff'" @click="cancelUpload(u.uuid)"
-                  class="text-red-500 hover:text-red-700 text-sm" title="Cancel">
-                  <i class="pi pi-times"></i>
-                </button>
-                <!-- Failed: retry, delete -->
-                <button v-if="u.status === 'failed'" @click="retryUpload(u.uuid)"
-                  class="text-blue-600 hover:text-blue-800 text-sm" title="Retry">
-                  <i class="pi pi-refresh"></i>
-                </button>
-                <button v-if="u.status === 'failed'" @click="deleteUpload(u.uuid)"
-                  class="text-red-500 hover:text-red-700 text-sm" title="Delete">
-                  <i class="pi pi-trash"></i>
-                </button>
+              <i v-if="data.visibility === 'public'" class="pi pi-info-circle text-amber-500 ml-1.5 text-xs"
+                v-tooltip.top="'This file is publicly accessible on the network'" />
+            </template>
+          </Column>
+          <Column field="file_size" header="Size" sortable>
+            <template #body="{ data }">{{ formatSize(data.file_size) }}</template>
+          </Column>
+          <Column field="status" header="Status" sortable>
+            <template #body="{ data }">
+              <div>
+                <Tag :value="statusLabel(data)" :severity="statusSeverity(data.status, data.status_detail)" />
+                <p v-if="data.error_message" class="text-xs text-red-500 mt-1" :title="data.error_message">
+                  {{ data.error_message.length > 50 ? data.error_message.substring(0, 50) + '...' : data.error_message }}
+                </p>
               </div>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+            </template>
+          </Column>
+          <Column field="created_at" header="Created" sortable>
+            <template #body="{ data }">
+              <span class="text-gray-400">{{ formatDate(data.created_at) }}</span>
+            </template>
+          </Column>
+          <Column header="Actions">
+            <template #body="{ data }">
+              <div class="flex gap-1 items-center">
+                <!-- Completed: download, delete -->
+                <Button v-if="data.status === 'completed'" icon="pi pi-download" label="Download"
+                  outlined size="small"
+                  :loading="downloading === data.uuid" @click="download(data.uuid, data.original_filename)" />
+                <Button v-if="data.status === 'completed'" icon="pi pi-tag" text rounded size="small"
+                  severity="secondary" aria-label="Tags" @click="openTags(data.uuid, data.original_filename)" v-tooltip.top="'Tags'" />
+                <Button v-if="data.status === 'completed'" icon="pi pi-folder" text rounded size="small"
+                  severity="secondary" aria-label="Add to Collection" @click="openCollections(data.uuid, data.original_filename)" v-tooltip.top="'Add to Collection'" />
+                <Button v-if="data.status === 'completed'" icon="pi pi-trash" text rounded size="small"
+                  severity="secondary" aria-label="Delete" @click="deleteUpload(data.uuid)" v-tooltip.top="'Delete'" />
 
-      <!-- Pagination -->
-      <div v-if="total > limit" class="flex items-center justify-between px-6 py-3 border-t border-gray-100">
-        <p class="text-sm text-gray-500">{{ total }} total</p>
-        <div class="flex gap-2">
-          <button @click="page--; fetchUploads()" :disabled="page <= 1"
-            class="rounded border px-3 py-1 text-sm disabled:opacity-50">Prev</button>
-          <button @click="page++; fetchUploads()" :disabled="page * limit >= total"
-            class="rounded border px-3 py-1 text-sm disabled:opacity-50">Next</button>
+                <!-- Queued (not backoff): cancel -->
+                <Button v-if="data.status === 'queued' && data.status_detail !== 'gas_backoff'"
+                  icon="pi pi-times" text rounded size="small" severity="danger"
+                  aria-label="Cancel" @click="cancelUpload(data.uuid)" v-tooltip.top="'Cancel'" />
+
+                <!-- Processing: cancel -->
+                <Button v-if="data.status === 'processing'" icon="pi pi-times" text rounded size="small"
+                  severity="danger" aria-label="Cancel" @click="cancelUpload(data.uuid)" v-tooltip.top="'Cancel'" />
+
+                <!-- Gas backoff: force retry, cancel -->
+                <Button v-if="data.status_detail === 'gas_backoff'" icon="pi pi-refresh" text rounded size="small"
+                  aria-label="Retry now" @click="forceRetry(data.uuid)" v-tooltip.top="'Retry now'" />
+                <Button v-if="data.status_detail === 'gas_backoff'" icon="pi pi-times" text rounded size="small"
+                  severity="danger" aria-label="Cancel" @click="cancelUpload(data.uuid)" v-tooltip.top="'Cancel'" />
+
+                <!-- Failed: retry, delete -->
+                <Button v-if="data.status === 'failed'" icon="pi pi-refresh" text rounded size="small"
+                  aria-label="Retry" @click="retryUpload(data.uuid)" v-tooltip.top="'Retry'" />
+                <Button v-if="data.status === 'failed'" icon="pi pi-trash" text rounded size="small"
+                  severity="danger" aria-label="Delete" @click="deleteUpload(data.uuid)" v-tooltip.top="'Delete'" />
+              </div>
+            </template>
+          </Column>
+        </DataTable>
+      </template>
+    </Card>
+
+    <!-- Tags dialog -->
+    <Dialog v-model:visible="tagsDialogVisible" :header="'Tags: ' + tagsUploadName" modal class="w-full max-w-lg">
+      <div class="space-y-4">
+        <!-- Existing tags -->
+        <div v-if="tags.length" class="space-y-2">
+          <div v-for="t in tags" :key="t.key" class="flex items-center gap-2">
+            <Tag :value="t.key" severity="info" />
+            <span class="text-sm">=</span>
+            <span class="text-sm">{{ t.value }}</span>
+            <Button icon="pi pi-times" text rounded size="small" severity="danger" aria-label="Remove tag"
+              v-tooltip.top="'Remove'" @click="removeTag(t.key)" />
+          </div>
+        </div>
+        <p v-else class="text-sm text-surface-400">No tags yet.</p>
+
+        <!-- Add tag -->
+        <div class="flex gap-2 items-end pt-2 border-t border-surface-200">
+          <div class="flex-1">
+            <label class="block text-xs text-surface-500 mb-1">Key</label>
+            <InputText v-model="newTagKey" placeholder="e.g. department" size="small" class="w-full" @keyup.enter="addTag" />
+          </div>
+          <div class="flex-1">
+            <label class="block text-xs text-surface-500 mb-1">Value</label>
+            <InputText v-model="newTagValue" placeholder="e.g. engineering" size="small" class="w-full" @keyup.enter="addTag" />
+          </div>
+          <Button icon="pi pi-plus" size="small" outlined @click="addTag" :disabled="!newTagKey.trim() || !newTagValue.trim()" />
         </div>
       </div>
-    </div>
+
+      <template #footer>
+        <Button label="Cancel" text @click="tagsDialogVisible = false" />
+        <Button label="Save" icon="pi pi-check" :loading="tagsSaving" @click="saveTags" />
+      </template>
+    </Dialog>
+
+    <!-- Add to collection dialog -->
+    <Dialog v-model:visible="collectDialogVisible" :header="'Add to Collection: ' + collectUploadName" modal :style="{ width: '28rem' }">
+      <div v-if="loadingCollections" class="flex flex-col gap-2 py-2">
+        <Skeleton v-for="i in 3" :key="i" height="3rem" borderRadius="8px" />
+      </div>
+      <div v-else-if="collections.length === 0" class="py-4 text-center text-surface-400">
+        No collections yet. Create one on the <router-link to="/collections" class="text-primary hover:underline">Collections page</router-link>.
+      </div>
+      <div v-else class="flex flex-col gap-1">
+        <div v-for="c in collections" :key="c.id"
+          class="flex items-center justify-between px-3 py-2 rounded-lg hover:bg-surface-50">
+          <div>
+            <p class="text-sm font-medium">{{ c.name }}</p>
+            <p class="text-xs text-surface-400">{{ c.file_count || 0 }} files</p>
+          </div>
+          <Button v-if="isInCollection(c.id)" icon="pi pi-check" size="small" text severity="success"
+            disabled aria-label="Already in this collection" v-tooltip.top="'Already in this collection'" />
+          <Button v-else label="Add" icon="pi pi-plus" size="small" outlined
+            :loading="addingToCollection === c.id" @click="addToCollection(c.id)" />
+        </div>
+      </div>
+    </Dialog>
   </div>
 </template>

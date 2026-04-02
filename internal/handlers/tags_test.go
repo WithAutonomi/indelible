@@ -28,6 +28,7 @@ func uploadAndGetUUID(t *testing.T, router http.Handler, token string, filename 
 func TestUpdateAndGetTags(t *testing.T) {
 	router := setupTestRouter(t)
 	adminToken := registerAndGetToken(t, router, "admin@test.com", "password123", "Admin", "User")
+	createTestWallet(t, router, adminToken)
 
 	uuid := uploadAndGetUUID(t, router, adminToken, "tagged-file.txt")
 
@@ -63,6 +64,7 @@ func TestUpdateAndGetTags(t *testing.T) {
 func TestUpdateTags_Replace(t *testing.T) {
 	router := setupTestRouter(t)
 	adminToken := registerAndGetToken(t, router, "admin@test.com", "password123", "Admin", "User")
+	createTestWallet(t, router, adminToken)
 
 	uuid := uploadAndGetUUID(t, router, adminToken, "replace-tags.txt")
 
@@ -102,6 +104,7 @@ func TestUpdateTags_Replace(t *testing.T) {
 func TestSearchByTags(t *testing.T) {
 	router := setupTestRouter(t)
 	adminToken := registerAndGetToken(t, router, "admin@test.com", "password123", "Admin", "User")
+	createTestWallet(t, router, adminToken)
 
 	// Upload and tag two files
 	uuid1 := uploadAndGetUUID(t, router, adminToken, "legal-doc.pdf")
@@ -157,6 +160,7 @@ func TestSearchByTags(t *testing.T) {
 func TestUpdateTags_OtherUserCantTag(t *testing.T) {
 	router := setupTestRouter(t)
 	adminToken := registerAndGetToken(t, router, "admin@test.com", "password123", "Admin", "User")
+	createTestWallet(t, router, adminToken)
 	userToken := registerAndGetToken(t, router, "user@test.com", "password123", "Normal", "User")
 
 	uuid := uploadAndGetUUID(t, router, adminToken, "admin-file.txt")

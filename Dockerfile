@@ -7,7 +7,7 @@ COPY web/ ./
 RUN npm run build
 
 # Build backend
-FROM golang:1.23-alpine AS backend
+FROM golang:1.25-alpine AS backend
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
@@ -21,4 +21,6 @@ RUN apk add --no-cache ca-certificates tzdata
 COPY --from=backend /indelible /usr/local/bin/indelible
 RUN mkdir -p /var/lib/indelible
 EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
 ENTRYPOINT ["indelible"]

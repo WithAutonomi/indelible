@@ -1,8 +1,20 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { api } from '../../api/client'
+import DataTable from 'primevue/datatable'
+import Column from 'primevue/column'
+import Button from 'primevue/button'
+import InputText from 'primevue/inputtext'
+import Select from 'primevue/select'
+import Tag from 'primevue/tag'
+import Tabs from 'primevue/tabs'
+import TabList from 'primevue/tablist'
+import Tab from 'primevue/tab'
+import TabPanels from 'primevue/tabpanels'
+import TabPanel from 'primevue/tabpanel'
+import DatePicker from 'primevue/datepicker'
 
-const activeTab = ref<'audit' | 'system' | 'user'>('audit')
+const activeTab = ref('audit')
 const entries = ref<any[]>([])
 const total = ref(0)
 const loading = ref(true)
@@ -12,8 +24,20 @@ const page = ref(1)
 // Filters
 const eventType = ref('')
 const level = ref('')
-const since = ref('')
-const until = ref('')
+const sinceDate = ref<Date | null>(null)
+const untilDate = ref<Date | null>(null)
+
+const levelOptions = [
+  { label: 'All', value: '' },
+  { label: 'Info', value: 'info' },
+  { label: 'Warn', value: 'warn' },
+  { label: 'Error', value: 'error' },
+]
+
+function formatDateParam(d: Date | null): string {
+  if (!d) return ''
+  return d.toISOString().split('T')[0]
+}
 
 async function fetchLogs() {
   loading.value = true
@@ -22,8 +46,10 @@ async function fetchLogs() {
       limit,
       offset: (page.value - 1) * limit,
     }
-    if (since.value) params.since = since.value
-    if (until.value) params.until = until.value
+    const sinceStr = formatDateParam(sinceDate.value)
+    const untilStr = formatDateParam(untilDate.value)
+    if (sinceStr) params.since = sinceStr
+    if (untilStr) params.until = untilStr
 
     let endpoint = ''
     if (activeTab.value === 'audit') {
@@ -46,17 +72,17 @@ async function fetchLogs() {
   }
 }
 
-function switchTab(tab: 'audit' | 'system' | 'user') {
-  activeTab.value = tab
+function switchTab(tab: string | number) {
+  activeTab.value = tab as string
   page.value = 1
   fetchLogs()
 }
 
-function severityClass(sev: string) {
+function severitySeverity(sev: string): string {
   switch (sev) {
-    case 'error': return 'text-red-700 bg-red-50'
-    case 'warn': return 'text-yellow-700 bg-yellow-50'
-    default: return 'text-blue-700 bg-blue-50'
+    case 'error': return 'danger'
+    case 'warn': return 'warn'
+    default: return 'info'
   }
 }
 
@@ -67,88 +93,88 @@ onMounted(fetchLogs)
   <div class="p-6">
     <h1 class="text-2xl font-bold mb-6">Logs</h1>
 
-    <!-- Tabs -->
-    <div class="flex gap-1 mb-4">
-      <button v-for="tab in (['audit', 'system', 'user'] as const)" :key="tab"
-        @click="switchTab(tab)"
-        class="px-4 py-2 rounded-t text-sm font-medium"
-        :class="activeTab === tab ? 'bg-white border border-b-0 border-gray-200 text-blue-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'">
-        {{ tab.charAt(0).toUpperCase() + tab.slice(1) }}
-      </button>
-    </div>
+    <Tabs :value="activeTab" @update:value="switchTab">
+      <TabList>
+        <Tab value="audit">Audit</Tab>
+        <Tab value="system">System</Tab>
+        <Tab value="user">User</Tab>
+      </TabList>
+      <TabPanels>
+        <TabPanel v-for="tab in ['audit', 'system', 'user']" :key="tab" :value="tab">
+          <!-- Filters -->
+          <div class="flex flex-wrap gap-3 items-end mb-4 mt-2">
+            <div v-if="activeTab === 'audit'">
+              <label class="block text-xs text-surface-500 mb-1">Event Type</label>
+              <InputText v-model="eventType" placeholder="e.g. login" class="w-36" size="small" />
+            </div>
+            <div v-if="activeTab === 'system'">
+              <label class="block text-xs text-surface-500 mb-1">Level</label>
+              <Select v-model="level" :options="levelOptions" optionLabel="label" optionValue="value" class="w-32" />
+            </div>
+            <div>
+              <label class="block text-xs text-surface-500 mb-1">Since</label>
+              <DatePicker v-model="sinceDate" dateFormat="yy-mm-dd" showIcon class="w-40" />
+            </div>
+            <div>
+              <label class="block text-xs text-surface-500 mb-1">Until</label>
+              <DatePicker v-model="untilDate" dateFormat="yy-mm-dd" showIcon class="w-40" />
+            </div>
+            <Button icon="pi pi-search" label="Filter" severity="secondary" @click="page = 1; fetchLogs()" />
+          </div>
 
-    <!-- Filters -->
-    <div class="bg-white rounded-lg border border-gray-200 p-4 mb-4 flex flex-wrap gap-3 items-end">
-      <div v-if="activeTab === 'audit'">
-        <label class="block text-xs text-gray-500 mb-1">Event Type</label>
-        <input v-model="eventType" type="text" placeholder="e.g. login"
-          class="rounded border border-gray-300 px-3 py-1.5 text-sm w-36" />
-      </div>
-      <div v-if="activeTab === 'system'">
-        <label class="block text-xs text-gray-500 mb-1">Level</label>
-        <select v-model="level" class="rounded border border-gray-300 px-3 py-1.5 text-sm">
-          <option value="">All</option>
-          <option value="info">Info</option>
-          <option value="warn">Warn</option>
-          <option value="error">Error</option>
-        </select>
-      </div>
-      <div>
-        <label class="block text-xs text-gray-500 mb-1">Since</label>
-        <input v-model="since" type="date" class="rounded border border-gray-300 px-3 py-1.5 text-sm" />
-      </div>
-      <div>
-        <label class="block text-xs text-gray-500 mb-1">Until</label>
-        <input v-model="until" type="date" class="rounded border border-gray-300 px-3 py-1.5 text-sm" />
-      </div>
-      <button @click="page = 1; fetchLogs()"
-        class="rounded bg-gray-100 px-4 py-1.5 text-sm text-gray-700 hover:bg-gray-200">
-        <i class="pi pi-search mr-1"></i> Filter
-      </button>
-    </div>
+          <!-- Table -->
+          <DataTable :value="entries" :loading="loading" stripedRows class="rounded-lg border border-surface-200"
+            :pt="{ root: { class: 'bg-surface-0' } }">
+            <template #empty>No log entries found.</template>
+            <Column field="created_at" header="Time" sortable>
+              <template #body="{ data }">
+                <span class="text-xs text-surface-400 whitespace-nowrap">{{ new Date(data.created_at).toLocaleString() }}</span>
+              </template>
+            </Column>
+            <Column v-if="activeTab !== 'system'" field="event_type" header="Event" sortable>
+              <template #body="{ data }">
+                <span class="text-sm">{{ data.event_type }}</span>
+              </template>
+            </Column>
+            <Column v-if="activeTab === 'system'" field="level" header="Level" sortable>
+              <template #body="{ data }">
+                <Tag :value="data.level" :severity="severitySeverity(data.level)" />
+              </template>
+            </Column>
+            <Column v-if="activeTab === 'system'" field="component" header="Component" sortable>
+              <template #body="{ data }">
+                <span class="text-sm text-surface-500">{{ data.component }}</span>
+              </template>
+            </Column>
+            <Column :field="activeTab === 'system' ? 'message' : 'detail'" :header="activeTab === 'system' ? 'Message' : 'Detail'" sortable>
+              <template #body="{ data }">
+                <span class="text-sm text-surface-600 max-w-md truncate block">{{ activeTab === 'system' ? data.message : data.detail }}</span>
+              </template>
+            </Column>
+            <Column v-if="activeTab !== 'system'" field="severity" header="Severity" sortable>
+              <template #body="{ data }">
+                <Tag :value="data.severity" :severity="severitySeverity(data.severity)" />
+              </template>
+            </Column>
+            <Column v-if="activeTab === 'audit'" field="ip_address" header="IP" sortable>
+              <template #body="{ data }">
+                <span class="text-xs text-surface-400">{{ data.ip_address || '-' }}</span>
+              </template>
+            </Column>
+          </DataTable>
 
-    <!-- Table -->
-    <div class="bg-white rounded-lg border border-gray-200">
-      <div v-if="loading" class="p-6 text-center text-gray-400">Loading...</div>
-      <div v-else-if="entries.length === 0" class="p-6 text-center text-gray-400">No log entries found.</div>
-      <table v-else class="w-full">
-        <thead class="text-left text-xs text-gray-500 uppercase bg-gray-50">
-          <tr>
-            <th class="px-4 py-3">Time</th>
-            <th v-if="activeTab !== 'system'" class="px-4 py-3">Event</th>
-            <th v-if="activeTab === 'system'" class="px-4 py-3">Level</th>
-            <th v-if="activeTab === 'system'" class="px-4 py-3">Component</th>
-            <th class="px-4 py-3">{{ activeTab === 'system' ? 'Message' : 'Detail' }}</th>
-            <th v-if="activeTab !== 'system'" class="px-4 py-3">Severity</th>
-            <th v-if="activeTab === 'audit'" class="px-4 py-3">IP</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-gray-100">
-          <tr v-for="e in entries" :key="e.id">
-            <td class="px-4 py-2 text-xs text-gray-400 whitespace-nowrap">{{ new Date(e.created_at).toLocaleString() }}</td>
-            <td v-if="activeTab !== 'system'" class="px-4 py-2 text-sm text-gray-700">{{ e.event_type }}</td>
-            <td v-if="activeTab === 'system'" class="px-4 py-2">
-              <span class="text-xs font-medium px-2 py-0.5 rounded" :class="severityClass(e.level)">{{ e.level }}</span>
-            </td>
-            <td v-if="activeTab === 'system'" class="px-4 py-2 text-sm text-gray-500">{{ e.component }}</td>
-            <td class="px-4 py-2 text-sm text-gray-600 max-w-md truncate">{{ activeTab === 'system' ? e.message : e.detail }}</td>
-            <td v-if="activeTab !== 'system'" class="px-4 py-2">
-              <span class="text-xs font-medium px-2 py-0.5 rounded" :class="severityClass(e.severity)">{{ e.severity }}</span>
-            </td>
-            <td v-if="activeTab === 'audit'" class="px-4 py-2 text-xs text-gray-400">{{ e.ip_address || '-' }}</td>
-          </tr>
-        </tbody>
-      </table>
-
-      <div v-if="total > limit" class="flex items-center justify-between px-4 py-3 border-t border-gray-100">
-        <p class="text-sm text-gray-500">{{ total }} total</p>
-        <div class="flex gap-2">
-          <button @click="page--; fetchLogs()" :disabled="page <= 1"
-            class="rounded border px-3 py-1 text-sm disabled:opacity-50">Prev</button>
-          <button @click="page++; fetchLogs()" :disabled="page * limit >= total"
-            class="rounded border px-3 py-1 text-sm disabled:opacity-50">Next</button>
-        </div>
-      </div>
-    </div>
+          <!-- Pagination -->
+          <div v-if="total > limit" class="flex items-center justify-between mt-4">
+            <p class="text-sm text-surface-500">{{ total }} total</p>
+            <div class="flex gap-2">
+              <Button label="Prev" severity="secondary" outlined size="small" :disabled="page <= 1"
+                @click="page--; fetchLogs()" />
+              <Button label="Next" severity="secondary" outlined size="small" :disabled="page * limit >= total"
+                @click="page++; fetchLogs()" />
+            </div>
+          </div>
+        </TabPanel>
+      </TabPanels>
+    </Tabs>
   </div>
 </template>

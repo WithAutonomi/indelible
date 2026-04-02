@@ -2,6 +2,8 @@
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
+import Button from 'primevue/button'
+import Avatar from 'primevue/avatar'
 
 const auth = useAuthStore()
 const router = useRouter()
@@ -9,6 +11,11 @@ const router = useRouter()
 const userName = computed(() => {
   if (!auth.user) return ''
   return `${auth.user.first_name} ${auth.user.last_name}`
+})
+
+const initials = computed(() => {
+  if (!auth.user) return ''
+  return `${auth.user.first_name?.[0] ?? ''}${auth.user.last_name?.[0] ?? ''}`
 })
 
 function logout() {
@@ -28,6 +35,7 @@ const navItems = computed(() => {
       { label: 'Users', icon: 'pi pi-users', to: '/admin/users' },
       { label: 'Wallets', icon: 'pi pi-wallet', to: '/admin/wallets' },
       { label: 'Quotas', icon: 'pi pi-gauge', to: '/admin/quotas' },
+      { label: 'Tag Rules', icon: 'pi pi-tags', to: '/admin/tag-rules' },
       { label: 'Webhooks', icon: 'pi pi-bell', to: '/admin/webhooks' },
       { label: 'SCIM', icon: 'pi pi-sync', to: '/admin/scim' },
       { label: 'Settings', icon: 'pi pi-cog', to: '/admin/settings' },
@@ -40,39 +48,35 @@ const navItems = computed(() => {
 </script>
 
 <template>
-  <div class="flex min-h-screen bg-gray-50">
+  <div class="flex min-h-screen bg-surface-50">
     <!-- Sidebar -->
-    <aside class="w-60 bg-white border-r border-gray-200 flex flex-col">
-      <div class="p-4 border-b border-gray-200">
-        <h1 class="text-xl font-bold text-gray-800">Indelible</h1>
-        <p class="text-xs text-gray-400 mt-1">Autonomi Storage Gateway</p>
+    <aside class="w-60 bg-surface-0 border-r border-surface-200 flex flex-col">
+      <div class="p-4 border-b border-surface-200">
+        <h1 class="text-xl font-bold text-surface-800">Indelible</h1>
+        <p class="text-xs text-surface-400 mt-1">Autonomi Storage Gateway</p>
       </div>
 
-      <nav class="flex-1 p-3 space-y-1">
+      <nav class="flex-1 p-3 space-y-0.5">
         <router-link
           v-for="item in navItems"
           :key="item.to"
           :to="item.to"
-          class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-100 transition-colors"
-          active-class="!bg-blue-50 !text-blue-700 font-medium"
+          class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-surface-600 hover:bg-surface-100 transition-colors"
+          active-class="!bg-primary/10 !text-primary font-medium"
         >
           <i :class="item.icon" class="text-base"></i>
           {{ item.label }}
         </router-link>
       </nav>
 
-      <div class="p-3 border-t border-gray-200">
+      <div class="p-3 border-t border-surface-200">
         <div class="flex items-center gap-3 px-3 py-2">
-          <div class="w-8 h-8 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-sm font-medium">
-            {{ auth.user?.first_name?.[0] }}{{ auth.user?.last_name?.[0] }}
-          </div>
+          <Avatar :label="initials" shape="circle" class="bg-primary/10 text-primary" />
           <router-link to="/profile" class="flex-1 min-w-0 hover:opacity-80">
-            <p class="text-sm font-medium text-gray-700 truncate">{{ userName }}</p>
-            <p class="text-xs text-gray-400 truncate">{{ auth.user?.email }}</p>
+            <p class="text-sm font-medium text-surface-700 truncate">{{ userName }}</p>
+            <p class="text-xs text-surface-400 truncate">{{ auth.user?.email }}</p>
           </router-link>
-          <button @click="logout" class="text-gray-400 hover:text-gray-600" title="Logout">
-            <i class="pi pi-sign-out"></i>
-          </button>
+          <Button icon="pi pi-sign-out" text rounded severity="secondary" @click="logout" v-tooltip="'Logout'" />
         </div>
       </div>
     </aside>

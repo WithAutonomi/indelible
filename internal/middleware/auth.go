@@ -25,16 +25,21 @@ func Authenticate(db *sql.DB, cfg *config.Config) func(http.Handler) http.Handle
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			authHeader := r.Header.Get("Authorization")
-			if authHeader == "" {
-				http.Error(w, `{"error":"missing authorization header","code":"unauthorized"}`, http.StatusUnauthorized)
-				return
-			}
-
-			tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
-			if tokenStr == authHeader {
-				http.Error(w, `{"error":"invalid authorization format","code":"unauthorized"}`, http.StatusUnauthorized)
-				return
+			// Extract token: try httpOnly cookie first, then Authorization header
+			var tokenStr string
+			if cookie, err := r.Cookie("session"); err == nil && cookie.Value != "" {
+				tokenStr = cookie.Value
+			} else {
+				authHeader := r.Header.Get("Authorization")
+				if authHeader == "" {
+					http.Error(w, `{"error":"missing authorization","code":"unauthorized"}`, http.StatusUnauthorized)
+					return
+				}
+				tokenStr = strings.TrimPrefix(authHeader, "Bearer ")
+				if tokenStr == authHeader {
+					http.Error(w, `{"error":"invalid authorization format","code":"unauthorized"}`, http.StatusUnauthorized)
+					return
+				}
 			}
 
 			// Try JWT first
@@ -45,6 +50,14 @@ func Authenticate(db *sql.DB, cfg *config.Config) func(http.Handler) http.Handle
 				if err != nil || !user.IsActive {
 					http.Error(w, `{"error":"user not found or inactive","code":"unauthorized"}`, http.StatusUnauthorized)
 					return
+				}
+
+				// Reject JWTs issued before a password change
+				if user.PasswordChangedAt.Valid && claims.IssuedAt != nil {
+					if claims.IssuedAt.Time.Before(user.PasswordChangedAt.Time) {
+						http.Error(w, `{"error":"session invalidated by password change","code":"unauthorized"}`, http.StatusUnauthorized)
+						return
+					}
 				}
 
 				ctx := context.WithValue(r.Context(), UserIDKey, claims.UserID)

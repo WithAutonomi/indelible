@@ -27,6 +27,24 @@ func registerAndGetToken(t *testing.T, router http.Handler, email, password, fir
 	return resp["token"].(string)
 }
 
+// createTestWallet is a test helper that creates a wallet via the admin API.
+// The upload handler requires a default wallet to exist before accepting files.
+func createTestWallet(t *testing.T, router http.Handler, adminToken string) {
+	t.Helper()
+	body, _ := json.Marshal(map[string]string{
+		"name":        "test-wallet",
+		"private_key": "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+	})
+	req := httptest.NewRequest("POST", "/api/v2/admin/wallets", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create test wallet: got %d, body: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestAdminListUsers(t *testing.T) {
 	router := setupTestRouter(t)
 	adminToken := registerAndGetToken(t, router, "admin@test.com", "password123", "Admin", "User")

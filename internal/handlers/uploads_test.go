@@ -33,6 +33,7 @@ func createMultipartUpload(t *testing.T, filename string, data []byte, visibilit
 func TestCreateUpload_Queued(t *testing.T) {
 	router := setupTestRouter(t)
 	adminToken := registerAndGetToken(t, router, "admin@test.com", "password123", "Admin", "User")
+	createTestWallet(t, router, adminToken)
 
 	// Upload a file
 	fileData := []byte("hello world, this is a test file for upload")
@@ -72,6 +73,7 @@ func TestCreateUpload_Queued(t *testing.T) {
 func TestCreateUpload_DefaultPrivate(t *testing.T) {
 	router := setupTestRouter(t)
 	adminToken := registerAndGetToken(t, router, "admin@test.com", "password123", "Admin", "User")
+	createTestWallet(t, router, adminToken)
 
 	// Upload without visibility — should default to private
 	fileData := []byte("private file content")
@@ -99,6 +101,7 @@ func TestCreateUpload_DefaultPrivate(t *testing.T) {
 func TestListUploads(t *testing.T) {
 	router := setupTestRouter(t)
 	adminToken := registerAndGetToken(t, router, "admin@test.com", "password123", "Admin", "User")
+	createTestWallet(t, router, adminToken)
 
 	// Upload two files
 	for i := 0; i < 2; i++ {
@@ -140,6 +143,7 @@ func TestListUploads(t *testing.T) {
 func TestGetUpload(t *testing.T) {
 	router := setupTestRouter(t)
 	adminToken := registerAndGetToken(t, router, "admin@test.com", "password123", "Admin", "User")
+	createTestWallet(t, router, adminToken)
 
 	// Upload a file
 	fileData := []byte("get me later")
@@ -177,6 +181,7 @@ func TestGetUpload(t *testing.T) {
 func TestGetUpload_OtherUserCantSee(t *testing.T) {
 	router := setupTestRouter(t)
 	adminToken := registerAndGetToken(t, router, "admin@test.com", "password123", "Admin", "User")
+	createTestWallet(t, router, adminToken)
 	userToken := registerAndGetToken(t, router, "user@test.com", "password123", "Normal", "User")
 
 	// Admin uploads a file
@@ -206,6 +211,7 @@ func TestGetUpload_OtherUserCantSee(t *testing.T) {
 func TestDownload_NotCompleted(t *testing.T) {
 	router := setupTestRouter(t)
 	adminToken := registerAndGetToken(t, router, "admin@test.com", "password123", "Admin", "User")
+	createTestWallet(t, router, adminToken)
 
 	// Upload a file (will be in "queued" state, not "completed")
 	fileData := []byte("cant download yet")
@@ -234,6 +240,7 @@ func TestDownload_NotCompleted(t *testing.T) {
 func TestCreateUpload_NoFile(t *testing.T) {
 	router := setupTestRouter(t)
 	adminToken := registerAndGetToken(t, router, "admin@test.com", "password123", "Admin", "User")
+	createTestWallet(t, router, adminToken)
 
 	// POST without a file
 	req := httptest.NewRequest("POST", "/api/v2/uploads", nil)
@@ -250,6 +257,7 @@ func TestCreateUpload_NoFile(t *testing.T) {
 func TestCreateUpload_InvalidVisibility(t *testing.T) {
 	router := setupTestRouter(t)
 	adminToken := registerAndGetToken(t, router, "admin@test.com", "password123", "Admin", "User")
+	createTestWallet(t, router, adminToken)
 
 	fileData := []byte("some data")
 	body, contentType := createMultipartUpload(t, "test.txt", fileData, "invalid")
