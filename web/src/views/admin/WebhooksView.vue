@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { useConfirm } from 'primevue/useconfirm'
+import { useToast } from 'primevue/usetoast'
 import { api } from '../../api/client'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
@@ -11,6 +13,7 @@ import RadioButton from 'primevue/radiobutton'
 import Checkbox from 'primevue/checkbox'
 import Dialog from 'primevue/dialog'
 import Drawer from 'primevue/drawer'
+import ConfirmDialog from 'primevue/confirmdialog'
 import Message from 'primevue/message'
 
 interface Webhook {
@@ -33,6 +36,9 @@ interface Delivery {
   error_message?: string
   created_at: string
 }
+
+const confirm = useConfirm()
+const toast = useToast()
 
 const webhooks = ref<Webhook[]>([])
 const loading = ref(true)
@@ -106,8 +112,9 @@ async function createWebhook() {
     newEvents.value = ['completed', 'failed']
     showCreateForm.value = false
     await fetchWebhooks()
+    toast.add({ severity: 'success', summary: 'Created', detail: 'Webhook created', life: 3000 })
   } catch (e: any) {
-    alert(e.response?.data?.error || 'Failed to create webhook')
+    toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to create webhook', life: 5000 })
   } finally {
     creating.value = false
   }
@@ -135,8 +142,9 @@ async function saveEdit() {
     editDrawerVisible.value = false
     editingId.value = null
     await fetchWebhooks()
+    toast.add({ severity: 'success', summary: 'Saved', detail: 'Webhook updated', life: 3000 })
   } catch (e: any) {
-    alert(e.response?.data?.error || 'Failed to update webhook')
+    toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to update webhook', life: 5000 })
   } finally {
     saving.value = false
   }
@@ -152,22 +160,30 @@ async function toggleWebhook(w: Webhook) {
     })
     await fetchWebhooks()
   } catch {
-    alert('Failed to update webhook')
+    toast.add({ severity: 'error', summary: 'Error', detail: 'Failed to update webhook', life: 5000 })
   }
 }
 
-async function deleteWebhook(id: number) {
-  if (!confirm('Delete this webhook?')) return
-  try {
-    await api.delete(`/api/v2/admin/webhooks/${id}`)
-    if (editingId.value === id) {
-      editDrawerVisible.value = false
-      editingId.value = null
-    }
-    await fetchWebhooks()
-  } catch {
-    alert('Failed to delete webhook')
-  }
+function deleteWebhook(id: number) {
+  confirm.require({
+    message: 'Delete this webhook?',
+    header: 'Confirm Delete',
+    icon: 'pi pi-exclamation-triangle',
+    acceptClass: 'p-button-danger',
+    accept: async () => {
+      try {
+        await api.delete(`/api/v2/admin/webhooks/${id}`)
+        if (editingId.value === id) {
+          editDrawerVisible.value = false
+          editingId.value = null
+        }
+        await fetchWebhooks()
+        toast.add({ severity: 'success', summary: 'Deleted', detail: 'Webhook deleted', life: 3000 })
+      } catch {
+        toast.add({ severity: 'error', summary: 'Error', detail: 'Failed to delete webhook', life: 5000 })
+      }
+    },
+  })
 }
 
 async function testWebhook(id: number) {
@@ -204,15 +220,22 @@ async function fetchHistory(id: number) {
   }
 }
 
-async function rotateSecret(id: number) {
-  if (!confirm('Rotate this webhook\'s signing secret? The old secret will stop working immediately.')) return
-  try {
-    const res = await api.post(`/api/v2/admin/webhooks/${id}/rotate-secret`)
-    webhookSecret.value = res.data.secret
-    secretWebhookId.value = id
-  } catch {
-    alert('Failed to rotate secret')
-  }
+function rotateSecret(id: number) {
+  confirm.require({
+    message: 'Rotate this webhook\'s signing secret? The old secret will stop working immediately.',
+    header: 'Confirm Rotate',
+    icon: 'pi pi-exclamation-triangle',
+    acceptClass: 'p-button-danger',
+    accept: async () => {
+      try {
+        const res = await api.post(`/api/v2/admin/webhooks/${id}/rotate-secret`)
+        webhookSecret.value = res.data.secret
+        secretWebhookId.value = id
+      } catch {
+        toast.add({ severity: 'error', summary: 'Error', detail: 'Failed to rotate secret', life: 5000 })
+      }
+    },
+  })
 }
 
 function copySecret() {
@@ -232,6 +255,8 @@ onMounted(fetchWebhooks)
 
 <template>
   <div class="p-6">
+    <ConfirmDialog />
+
     <div class="flex items-center justify-between mb-6">
       <h1 class="text-2xl font-bold">Webhooks</h1>
       <Button label="Add Endpoint" icon="pi pi-plus" @click="showCreateForm = true" />
@@ -341,16 +366,16 @@ onMounted(fetchWebhooks)
                 {{ testResult.success ? `OK (${testResult.status_code})` : (testResult.error || 'Failed') }}
               </span>
               <Button icon="pi pi-refresh" severity="warn" text rounded size="small"
-                v-tooltip.top="'Rotate signing secret'" @click="rotateSecret(data.id)" />
+                aria-label="Rotate signing secret" v-tooltip.top="'Rotate signing secret'" @click="rotateSecret(data.id)" />
               <Button icon="pi pi-bolt" severity="info" text rounded size="small"
-                :disabled="testingId === data.id && !testResult" v-tooltip.top="'Send test ping'"
+                :disabled="testingId === data.id && !testResult" aria-label="Send test ping" v-tooltip.top="'Send test ping'"
                 @click="testWebhook(data.id)" />
               <Button icon="pi pi-history" severity="secondary" text rounded size="small"
-                v-tooltip.top="'Delivery history'" @click="fetchHistory(data.id)" />
+                aria-label="Delivery history" v-tooltip.top="'Delivery history'" @click="fetchHistory(data.id)" />
               <Button icon="pi pi-pencil" severity="secondary" text rounded size="small"
-                v-tooltip.top="'Edit'" @click="startEdit(data)" />
+                aria-label="Edit" v-tooltip.top="'Edit'" @click="startEdit(data)" />
               <Button icon="pi pi-trash" severity="danger" text rounded size="small"
-                v-tooltip.top="'Delete'" @click="deleteWebhook(data.id)" />
+                aria-label="Delete" v-tooltip.top="'Delete'" @click="deleteWebhook(data.id)" />
             </div>
           </template>
         </Column>

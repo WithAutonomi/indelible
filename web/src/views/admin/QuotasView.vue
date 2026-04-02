@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { useConfirm } from 'primevue/useconfirm'
+import { useToast } from 'primevue/usetoast'
 import { api } from '../../api/client'
+import type { Quota } from '../../types/api'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import Button from 'primevue/button'
@@ -9,8 +12,12 @@ import InputNumber from 'primevue/inputnumber'
 import Select from 'primevue/select'
 import ProgressBar from 'primevue/progressbar'
 import Dialog from 'primevue/dialog'
+import ConfirmDialog from 'primevue/confirmdialog'
 
-const quotas = ref<any[]>([])
+const confirm = useConfirm()
+const toast = useToast()
+
+const quotas = ref<Quota[]>([])
 const loading = ref(true)
 const showCreate = ref(false)
 const newEntityType = ref('system')
@@ -47,21 +54,30 @@ async function createQuota() {
     })
     showCreate.value = false
     await fetchQuotas()
+    toast.add({ severity: 'success', summary: 'Created', detail: 'Quota created', life: 3000 })
   } catch (e: any) {
-    alert(e.response?.data?.error || 'Failed to create quota')
+    toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to create quota', life: 5000 })
   } finally {
     creating.value = false
   }
 }
 
-async function deleteQuota(id: number) {
-  if (!confirm('Delete this quota?')) return
-  try {
-    await api.delete(`/api/v2/admin/quotas/${id}`)
-    await fetchQuotas()
-  } catch {
-    alert('Failed to delete quota')
-  }
+function deleteQuota(id: number) {
+  confirm.require({
+    message: 'Delete this quota?',
+    header: 'Confirm Delete',
+    icon: 'pi pi-exclamation-triangle',
+    acceptClass: 'p-button-danger',
+    accept: async () => {
+      try {
+        await api.delete(`/api/v2/admin/quotas/${id}`)
+        await fetchQuotas()
+        toast.add({ severity: 'success', summary: 'Deleted', detail: 'Quota deleted', life: 3000 })
+      } catch {
+        toast.add({ severity: 'error', summary: 'Error', detail: 'Failed to delete quota', life: 5000 })
+      }
+    },
+  })
 }
 
 function formatBytes(bytes: number) {
@@ -87,6 +103,8 @@ onMounted(fetchQuotas)
 
 <template>
   <div class="p-6">
+    <ConfirmDialog />
+
     <div class="flex items-center justify-between mb-6">
       <h1 class="text-2xl font-bold">Storage Quotas</h1>
       <Button icon="pi pi-plus" label="New Quota" @click="showCreate = !showCreate" />
@@ -147,7 +165,8 @@ onMounted(fetchQuotas)
       </Column>
       <Column header="Actions" style="width: 5rem">
         <template #body="{ data }">
-          <Button icon="pi pi-trash" severity="danger" text rounded size="small" @click="deleteQuota(data.id)" />
+          <Button icon="pi pi-trash" severity="danger" text rounded size="small" aria-label="Delete quota"
+            v-tooltip.top="'Delete'" @click="deleteQuota(data.id)" />
         </template>
       </Column>
     </DataTable>

@@ -1,17 +1,25 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { useConfirm } from 'primevue/useconfirm'
+import { useToast } from 'primevue/usetoast'
 import { api } from '../../api/client'
+import type { User } from '../../types/api'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import Button from 'primevue/button'
 import InputText from 'primevue/inputtext'
 import Select from 'primevue/select'
 import Dialog from 'primevue/dialog'
+import ConfirmDialog from 'primevue/confirmdialog'
 import Tag from 'primevue/tag'
 
-const users = ref<any[]>([])
+const confirm = useConfirm()
+const toast = useToast()
+
+const users = ref<User[]>([])
 const loading = ref(true)
-const editingUser = ref<any>(null)
+const editingUser = ref<User | null>(null)
+const showEditDialog = ref(false)
 const editPermissions = ref('')
 const saving = ref(false)
 
@@ -46,8 +54,9 @@ async function createUser() {
     newPermissions.value = 'read'
     showCreate.value = false
     await fetchUsers()
+    toast.add({ severity: 'success', summary: 'Created', detail: 'User created', life: 3000 })
   } catch (e: any) {
-    alert(e.response?.data?.error || 'Failed to create user')
+    toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to create user', life: 5000 })
   } finally {
     creating.value = false
   }
@@ -65,9 +74,10 @@ async function fetchUsers() {
   }
 }
 
-function startEdit(u: any) {
+function startEdit(u: User) {
   editingUser.value = u
   editPermissions.value = u.permissions || ''
+  showEditDialog.value = true
 }
 
 async function savePermissions() {
@@ -77,23 +87,33 @@ async function savePermissions() {
     await api.put(`/api/v2/admin/users/${editingUser.value.id}/permissions`, {
       permissions: editPermissions.value,
     })
+    showEditDialog.value = false
     editingUser.value = null
     await fetchUsers()
+    toast.add({ severity: 'success', summary: 'Updated', detail: 'Permissions updated', life: 3000 })
   } catch (e: any) {
-    alert(e.response?.data?.error || 'Failed to update permissions')
+    toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to update permissions', life: 5000 })
   } finally {
     saving.value = false
   }
 }
 
-async function deleteUser(id: number) {
-  if (!confirm('Delete this user? This cannot be undone.')) return
-  try {
-    await api.delete(`/api/v2/admin/users/${id}`)
-    await fetchUsers()
-  } catch (e: any) {
-    alert(e.response?.data?.error || 'Failed to delete user')
-  }
+function deleteUser(id: number) {
+  confirm.require({
+    message: 'Delete this user? This cannot be undone.',
+    header: 'Confirm Delete',
+    icon: 'pi pi-exclamation-triangle',
+    acceptClass: 'p-button-danger',
+    accept: async () => {
+      try {
+        await api.delete(`/api/v2/admin/users/${id}`)
+        await fetchUsers()
+        toast.add({ severity: 'success', summary: 'Deleted', detail: 'User deleted', life: 3000 })
+      } catch (e: any) {
+        toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to delete user', life: 5000 })
+      }
+    },
+  })
 }
 
 function formatDate(iso: string) {
@@ -117,6 +137,8 @@ onMounted(fetchUsers)
 
 <template>
   <div class="p-6">
+    <ConfirmDialog />
+
     <div class="flex items-center justify-between mb-6">
       <h1 class="text-2xl font-bold">User Management</h1>
       <Button icon="pi pi-plus" label="Add User" @click="showCreate = !showCreate" />
@@ -155,7 +177,7 @@ onMounted(fetchUsers)
     </Dialog>
 
     <!-- Edit permissions dialog -->
-    <Dialog v-model:visible="editingUser" modal :header="editingUser ? `Edit Permissions: ${editingUser.first_name} ${editingUser.last_name}` : ''" class="w-full max-w-lg">
+    <Dialog v-model:visible="showEditDialog" modal :header="editingUser ? `Edit Permissions: ${editingUser.first_name} ${editingUser.last_name}` : ''" class="w-full max-w-lg">
       <div class="grid grid-cols-3 gap-6 py-2">
         <div>
           <label class="text-sm font-medium">Permissions</label>
@@ -167,7 +189,7 @@ onMounted(fetchUsers)
       </div>
       <template #footer>
         <div class="flex justify-end gap-2">
-          <Button label="Cancel" severity="secondary" outlined @click="editingUser = null" />
+          <Button label="Cancel" severity="secondary" outlined @click="showEditDialog = false" />
           <Button :label="saving ? 'Saving...' : 'Save'" :loading="saving" @click="savePermissions" />
         </div>
       </template>
@@ -206,8 +228,10 @@ onMounted(fetchUsers)
       <Column header="Actions">
         <template #body="{ data }">
           <div class="flex gap-2">
-            <Button icon="pi pi-pencil" severity="info" text rounded size="small" @click="startEdit(data)" />
-            <Button icon="pi pi-trash" severity="danger" text rounded size="small" @click="deleteUser(data.id)" />
+            <Button icon="pi pi-pencil" severity="info" text rounded size="small" aria-label="Edit permissions"
+              v-tooltip.top="'Edit'" @click="startEdit(data)" />
+            <Button icon="pi pi-trash" severity="danger" text rounded size="small" aria-label="Delete user"
+              v-tooltip.top="'Delete'" @click="deleteUser(data.id)" />
           </div>
         </template>
       </Column>

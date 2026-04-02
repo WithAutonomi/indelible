@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, reactive, watch, onMounted } from 'vue'
+import { useToast } from 'primevue/usetoast'
 import { api } from '../../api/client'
 import { useAuthStore } from '../../stores/auth'
 import Button from 'primevue/button'
@@ -9,6 +10,7 @@ import Card from 'primevue/card'
 import Message from 'primevue/message'
 
 const auth = useAuthStore()
+const toast = useToast()
 
 // Profile card - dirty tracking
 const profileSaved = ref({ firstName: '', lastName: '' })
@@ -58,7 +60,7 @@ async function updateProfile() {
     profileMsg.value = 'Profile updated.'
     setTimeout(() => profileMsg.value = '', 3000)
   } catch (e: any) {
-    alert(e.response?.data?.error || 'Failed to update profile')
+    toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to update profile', life: 5000 })
   } finally {
     saving.value = false
   }

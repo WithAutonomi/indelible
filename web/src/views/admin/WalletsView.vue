@@ -2,7 +2,9 @@
 import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useConfirm } from 'primevue/useconfirm'
+import { useToast } from 'primevue/usetoast'
 import { api } from '../../api/client'
+import type { Wallet } from '../../types/api'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import Button from 'primevue/button'
@@ -14,7 +16,8 @@ import Dialog from 'primevue/dialog'
 
 const route = useRoute()
 const confirm = useConfirm()
-const wallets = ref<any[]>([])
+const toast = useToast()
+const wallets = ref<Wallet[]>([])
 const loading = ref(true)
 const showCreate = ref(false)
 const newName = ref('')
@@ -44,8 +47,9 @@ async function createWallet() {
     newPrivateKey.value = ''
     showCreate.value = false
     await fetchWallets()
+    toast.add({ severity: 'success', summary: 'Created', detail: 'Wallet added', life: 3000 })
   } catch (e: any) {
-    alert(e.response?.data?.error || 'Failed to create wallet')
+    toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to create wallet', life: 5000 })
   } finally {
     creating.value = false
   }
@@ -54,9 +58,10 @@ async function createWallet() {
 async function setDefault(id: number) {
   try {
     await api.put(`/api/v2/admin/wallets/${id}/default`)
+    toast.add({ severity: 'success', summary: 'Updated', detail: 'Default wallet changed', life: 3000 })
     await fetchWallets()
   } catch {
-    alert('Failed to set default wallet')
+    toast.add({ severity: 'error', summary: 'Error', detail: 'Failed to set default wallet', life: 5000 })
   }
 }
 
@@ -69,9 +74,10 @@ function deleteWallet(id: number, name: string) {
     accept: async () => {
       try {
         await api.delete(`/api/v2/admin/wallets/${id}`)
+        toast.add({ severity: 'success', summary: 'Deleted', detail: 'Wallet deleted', life: 3000 })
         await fetchWallets()
       } catch (e: any) {
-        alert(e.response?.data?.error || 'Failed to delete wallet')
+        toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to delete wallet', life: 5000 })
       }
     },
   })
@@ -84,13 +90,13 @@ async function refreshBalance(id: number) {
   try {
     const res = await api.post(`/api/v2/admin/wallets/${id}/balance`)
     // Update the wallet in-place
-    const w = wallets.value.find((w: any) => w.id === id)
+    const w = wallets.value.find((w) => w.id === id)
     if (w) {
       w.payment_balance = res.data.payment_balance
       w.gas_balance = res.data.gas_balance
     }
   } catch (e: any) {
-    alert(e.response?.data?.error || 'Failed to refresh balance')
+    toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to refresh balance', life: 5000 })
   } finally {
     refreshingBalance.value = null
   }
@@ -177,7 +183,7 @@ onMounted(() => {
               </div>
             </div>
             <Button icon="pi pi-refresh" text rounded size="small" severity="secondary"
-              :loading="refreshingBalance === data.id" @click="refreshBalance(data.id)"
+              :loading="refreshingBalance === data.id" aria-label="Refresh from chain" @click="refreshBalance(data.id)"
               v-tooltip.top="'Refresh from chain'" />
           </div>
         </template>
@@ -196,8 +202,15 @@ onMounted(() => {
         <template #body="{ data }">
           <div class="flex gap-1 items-center">
             <Button v-if="!data.is_default" label="Set Default" severity="info" text size="small" @click="setDefault(data.id)" />
-            <Button v-if="!data.is_default" icon="pi pi-trash" text rounded size="small" severity="secondary"
-              @click="deleteWallet(data.id, data.name)" v-tooltip.top="'Delete'" />
+            <Button v-else label="Default" text size="small" disabled class="opacity-40"
+              v-tooltip.top="'This is the active wallet'" />
+            <Button icon="pi pi-trash" text rounded size="small"
+              :severity="data.is_default ? 'secondary' : 'secondary'"
+              :disabled="data.is_default"
+              :class="{ 'opacity-30': data.is_default }"
+              aria-label="Delete wallet"
+              @click="!data.is_default && deleteWallet(data.id, data.name)"
+              v-tooltip.top="data.is_default ? 'Set another wallet as default before deleting' : 'Delete'" />
           </div>
         </template>
       </Column>

@@ -13,6 +13,47 @@ import (
 	"github.com/WithAutonomi/indelible/internal/services"
 )
 
+// ListTagKeys returns all distinct tag keys used by the current user.
+func ListTagKeys(db *sql.DB) http.HandlerFunc {
+	tagSvc := services.NewTagService(db)
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID := middleware.GetUserID(r.Context())
+		keys, err := tagSvc.ListKeys(userID)
+		if err != nil {
+			jsonError(w, "failed to list tag keys", http.StatusInternalServerError)
+			return
+		}
+		if keys == nil {
+			keys = []string{}
+		}
+		jsonResponse(w, http.StatusOK, map[string]any{"keys": keys})
+	}
+}
+
+// ListTagValues returns all distinct values for a given tag key used by the current user.
+func ListTagValues(db *sql.DB) http.HandlerFunc {
+	tagSvc := services.NewTagService(db)
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID := middleware.GetUserID(r.Context())
+		key := r.URL.Query().Get("key")
+		if key == "" {
+			jsonError(w, "key query parameter is required", http.StatusBadRequest)
+			return
+		}
+		values, err := tagSvc.ListValues(userID, key)
+		if err != nil {
+			jsonError(w, "failed to list tag values", http.StatusInternalServerError)
+			return
+		}
+		if values == nil {
+			values = []string{}
+		}
+		jsonResponse(w, http.StatusOK, map[string]any{"values": values})
+	}
+}
+
 // GetTags godoc
 // @Summary Get tags for an upload
 // @Description Returns all tags on an upload as a key-value map

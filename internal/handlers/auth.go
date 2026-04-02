@@ -134,6 +134,17 @@ func Login(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 
 		_ = userSvc.UpdateLastLogin(user.ID)
 
+		// Set httpOnly session cookie (browser auth)
+		http.SetCookie(w, &http.Cookie{
+			Name:     "session",
+			Value:    token,
+			Path:     "/",
+			MaxAge:   expiryHours * 3600,
+			HttpOnly: true,
+			Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
+			SameSite: http.SameSiteLaxMode,
+		})
+
 		perms, _ := permSvc.GetEffective(user.ID)
 
 		jsonResponse(w, http.StatusOK, authResponse{
@@ -227,10 +238,36 @@ func Register(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
+		http.SetCookie(w, &http.Cookie{
+			Name:     "session",
+			Value:    token,
+			Path:     "/",
+			MaxAge:   expiryHours * 3600,
+			HttpOnly: true,
+			Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
+			SameSite: http.SameSiteLaxMode,
+		})
+
 		jsonResponse(w, http.StatusCreated, authResponse{
 			Token: token,
 			User:  toUserResponse(user, permLevel),
 		})
+	}
+}
+
+// Logout clears the session cookie.
+func Logout() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{
+			Name:     "session",
+			Value:    "",
+			Path:     "/",
+			MaxAge:   -1,
+			HttpOnly: true,
+			Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
+			SameSite: http.SameSiteLaxMode,
+		})
+		jsonResponse(w, http.StatusOK, map[string]string{"status": "logged out"})
 	}
 }
 

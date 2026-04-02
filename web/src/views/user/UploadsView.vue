@@ -2,8 +2,10 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useConfirm } from 'primevue/useconfirm'
+import { useToast } from 'primevue/usetoast'
 import { api } from '../../api/client'
 import { useAuthStore } from '../../stores/auth'
+import type { Upload, Collection } from '../../types/api'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import Button from 'primevue/button'
@@ -12,12 +14,15 @@ import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 import Card from 'primevue/card'
 import Dialog from 'primevue/dialog'
+import AutoComplete from 'primevue/autocomplete'
+import Skeleton from 'primevue/skeleton'
 import Message from 'primevue/message'
 import ConfirmDialog from 'primevue/confirmdialog'
 
 const auth = useAuthStore()
 const router = useRouter()
 const confirm = useConfirm()
+const toast = useToast()
 const noWallet = ref(false)
 
 async function checkWalletStatus() {
@@ -29,21 +34,59 @@ async function checkWalletStatus() {
   }
 }
 
-const uploads = ref<any[]>([])
+const uploads = ref<Upload[]>([])
+const selectedUploads = ref<Upload[]>([])
 const loading = ref(true)
 const page = ref(1)
 const total = ref(0)
 const limit = 20
+const bulkProcessing = ref(false)
 
 const tagKey = ref('')
 const tagValue = ref('')
 const searchQuery = ref('')
+const tagKeySuggestions = ref<string[]>([])
+const tagValueSuggestions = ref<string[]>([])
+let keyDebounce: ReturnType<typeof setTimeout> | null = null
+let valueDebounce: ReturnType<typeof setTimeout> | null = null
+
+function searchTagKeys(event: { query: string }) {
+  if (keyDebounce) clearTimeout(keyDebounce)
+  keyDebounce = setTimeout(async () => {
+    try {
+      const res = await api.get('/api/v2/tags/keys')
+      const all: string[] = res.data.keys || []
+      tagKeySuggestions.value = event.query
+        ? all.filter(k => k.toLowerCase().includes(event.query.toLowerCase()))
+        : all
+    } catch {
+      tagKeySuggestions.value = []
+    }
+  }, 300)
+}
+
+function searchTagValues(event: { query: string }) {
+  if (valueDebounce) clearTimeout(valueDebounce)
+  if (!tagKey.value) {
+    tagValueSuggestions.value = []
+    return
+  }
+  valueDebounce = setTimeout(async () => {
+    try {
+      const res = await api.get('/api/v2/tags/values', { params: { key: tagKey.value } })
+      const all: string[] = res.data.values || []
+      tagValueSuggestions.value = event.query
+        ? all.filter(v => v.toLowerCase().includes(event.query.toLowerCase()))
+        : all
+    } catch {
+      tagValueSuggestions.value = []
+    }
+  }, 300)
+}
 
 const file = ref<File | null>(null)
 const visibility = ref('private')
 const uploading = ref(false)
-const uploadMsg = ref('')
-const uploadError = ref('')
 
 const visibilityOptions = [
   { label: 'Private', value: 'private' },
@@ -58,8 +101,6 @@ function onFileSelect(e: Event) {
 async function handleUpload() {
   if (!file.value) return
   uploading.value = true
-  uploadMsg.value = ''
-  uploadError.value = ''
 
   const formData = new FormData()
   formData.append('file', file.value)
@@ -69,13 +110,13 @@ async function handleUpload() {
     await api.post('/api/v2/uploads', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
-    uploadMsg.value = 'File queued for upload!'
+    toast.add({ severity: 'success', summary: 'Queued', detail: 'File queued for upload', life: 3000 })
     file.value = null
     const input = document.getElementById('upload-file-input') as HTMLInputElement
     if (input) input.value = ''
     await fetchUploads()
   } catch (e: any) {
-    uploadError.value = e.response?.data?.error || 'Upload failed'
+    toast.add({ severity: 'error', summary: 'Upload Failed', detail: e.response?.data?.error || 'Upload failed', life: 5000 })
   } finally {
     uploading.value = false
   }
@@ -131,7 +172,7 @@ async function download(uuid: string, name: string) {
     a.click()
     window.URL.revokeObjectURL(url)
   } catch {
-    alert('Download failed — file may not be completed yet.')
+    toast.add({ severity: 'error', summary: 'Download Failed', detail: 'File may not be completed yet', life: 5000 })
   } finally {
     downloading.value = null
   }
@@ -146,9 +187,10 @@ function cancelUpload(uuid: string) {
     accept: async () => {
       try {
         await api.post(`/api/v2/uploads/${uuid}/cancel`)
+        toast.add({ severity: 'success', summary: 'Cancelled', detail: 'Upload cancelled', life: 3000 })
         await fetchUploads()
       } catch (e: any) {
-        alert(e.response?.data?.error || 'Failed to cancel upload')
+        toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to cancel upload', life: 5000 })
       }
     },
   })
@@ -157,9 +199,10 @@ function cancelUpload(uuid: string) {
 async function retryUpload(uuid: string) {
   try {
     await api.post(`/api/v2/uploads/${uuid}/retry`)
+    toast.add({ severity: 'success', summary: 'Retrying', detail: 'Upload queued for retry', life: 3000 })
     await fetchUploads()
   } catch (e: any) {
-    alert(e.response?.data?.error || 'Failed to retry upload')
+    toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to retry upload', life: 5000 })
   }
 }
 
@@ -168,7 +211,7 @@ async function forceRetry(uuid: string) {
     await api.post(`/api/v2/uploads/${uuid}/force-retry`)
     await fetchUploads()
   } catch (e: any) {
-    alert(e.response?.data?.error || 'Failed to force retry')
+    toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to force retry', life: 5000 })
   }
 }
 
@@ -181,12 +224,60 @@ function deleteUpload(uuid: string) {
     accept: async () => {
       try {
         await api.delete(`/api/v2/uploads/${uuid}`)
+        toast.add({ severity: 'success', summary: 'Deleted', detail: 'Upload deleted', life: 3000 })
         await fetchUploads()
       } catch (e: any) {
-        alert(e.response?.data?.error || 'Failed to delete upload')
+        toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to delete upload', life: 5000 })
       }
     },
   })
+}
+
+// Bulk operations
+function bulkDelete() {
+  const targets = selectedUploads.value.filter(u => u.status === 'completed' || u.status === 'failed')
+  if (!targets.length) return
+  confirm.require({
+    message: `Delete ${targets.length} upload${targets.length === 1 ? '' : 's'}? This cannot be undone.`,
+    header: 'Confirm Bulk Delete',
+    icon: 'pi pi-exclamation-triangle',
+    acceptClass: 'p-button-danger',
+    accept: async () => {
+      bulkProcessing.value = true
+      let ok = 0, fail = 0
+      for (const u of targets) {
+        try {
+          await api.delete(`/api/v2/uploads/${u.uuid}`)
+          ok++
+        } catch {
+          fail++
+        }
+      }
+      bulkProcessing.value = false
+      selectedUploads.value = []
+      toast.add({ severity: ok ? 'success' : 'error', summary: 'Bulk Delete', detail: `${ok} deleted${fail ? `, ${fail} failed` : ''}`, life: 4000 })
+      await fetchUploads()
+    },
+  })
+}
+
+async function bulkRetry() {
+  const targets = selectedUploads.value.filter(u => u.status === 'failed')
+  if (!targets.length) return
+  bulkProcessing.value = true
+  let ok = 0, fail = 0
+  for (const u of targets) {
+    try {
+      await api.post(`/api/v2/uploads/${u.uuid}/retry`)
+      ok++
+    } catch {
+      fail++
+    }
+  }
+  bulkProcessing.value = false
+  selectedUploads.value = []
+  toast.add({ severity: ok ? 'success' : 'error', summary: 'Bulk Retry', detail: `${ok} queued for retry${fail ? `, ${fail} failed` : ''}`, life: 4000 })
+  await fetchUploads()
 }
 
 // Tags management
@@ -234,11 +325,70 @@ async function saveTags() {
     const tagMap: Record<string, string> = {}
     for (const t of tags.value) tagMap[t.key] = t.value
     await api.put(`/api/v2/uploads/${tagsUploadUuid.value}/tags`, { tags: tagMap })
+    toast.add({ severity: 'success', summary: 'Saved', detail: 'Tags updated', life: 3000 })
     tagsDialogVisible.value = false
   } catch (e: any) {
-    alert(e.response?.data?.error || 'Failed to save tags')
+    toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to save tags', life: 5000 })
   } finally {
     tagsSaving.value = false
+  }
+}
+
+// Add to collection
+const collectDialogVisible = ref(false)
+const collectUploadUuid = ref('')
+const collectUploadName = ref('')
+const collections = ref<Collection[]>([])
+const loadingCollections = ref(false)
+const addingToCollection = ref<number | null>(null)
+const addedToCollections = ref<number[]>([])
+
+function isInCollection(id: number): boolean {
+  return addedToCollections.value.includes(id)
+}
+
+async function openCollections(uuid: string, name: string) {
+  collectUploadUuid.value = uuid
+  collectUploadName.value = name
+  addedToCollections.value = []
+  collectDialogVisible.value = true
+  loadingCollections.value = true
+  try {
+    const res = await api.get('/api/v2/collections')
+    collections.value = res.data.collections || []
+    // Check which collections already contain this file
+    const found: number[] = []
+    for (const c of collections.value) {
+      try {
+        const filesRes = await api.get(`/api/v2/collections/${c.id}`)
+        const files = filesRes.data.files || []
+        if (files.some((f: { uuid: string }) => f.uuid === uuid)) {
+          found.push(c.id)
+        }
+      } catch {
+        // ignore per-collection errors
+      }
+    }
+    addedToCollections.value = found
+  } catch {
+    collections.value = []
+  } finally {
+    loadingCollections.value = false
+  }
+}
+
+async function addToCollection(collectionId: number) {
+  addingToCollection.value = collectionId
+  try {
+    await api.post(`/api/v2/collections/${collectionId}/files`, {
+      upload_uuid: collectUploadUuid.value,
+    })
+    addedToCollections.value = [...addedToCollections.value, collectionId]
+    toast.add({ severity: 'success', summary: 'Added', detail: 'File added to collection', life: 3000 })
+  } catch (e: any) {
+    toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to add to collection', life: 5000 })
+  } finally {
+    addingToCollection.value = null
   }
 }
 
@@ -310,8 +460,6 @@ onMounted(() => {
     <!-- Upload card -->
     <Card class="mb-4" :class="{ 'opacity-50 pointer-events-none select-none': noWallet }">
       <template #content>
-        <Message v-if="uploadMsg" severity="success" :closable="false" class="mb-4">{{ uploadMsg }}</Message>
-        <Message v-if="uploadError" severity="error" :closable="false" class="mb-4">{{ uploadError }}</Message>
         <form @submit.prevent="handleUpload" class="flex flex-col sm:flex-row items-start gap-4">
           <div class="flex-1">
             <input id="upload-file-input" type="file" @change="onFileSelect" :disabled="noWallet"
@@ -335,11 +483,13 @@ onMounted(() => {
           </div>
           <div>
             <label class="block text-xs text-gray-500 mb-1">Tag Key</label>
-            <InputText v-model="tagKey" placeholder="e.g. project" size="small" class="w-32" />
+            <AutoComplete v-model="tagKey" :suggestions="tagKeySuggestions" @complete="searchTagKeys"
+              placeholder="e.g. project" dropdown size="small" class="w-40" />
           </div>
           <div>
             <label class="block text-xs text-gray-500 mb-1">Tag Value</label>
-            <InputText v-model="tagValue" placeholder="e.g. alpha" size="small" class="w-32" />
+            <AutoComplete v-model="tagValue" :suggestions="tagValueSuggestions" @complete="searchTagValues"
+              placeholder="e.g. alpha" dropdown size="small" class="w-40" />
           </div>
           <Button label="Search" icon="pi pi-search" severity="secondary" size="small" @click="searchByTags" />
           <Button label="Clear" text size="small"
@@ -348,13 +498,29 @@ onMounted(() => {
       </template>
     </Card>
 
+    <!-- Bulk action bar -->
+    <div v-if="selectedUploads.length" class="mb-2 flex items-center gap-3 px-4 py-2 bg-primary-50 rounded-lg border border-primary-200">
+      <span class="text-sm font-medium">{{ selectedUploads.length }} selected</span>
+      <Button label="Delete" icon="pi pi-trash" severity="danger" size="small" outlined
+        :loading="bulkProcessing" :disabled="!selectedUploads.some(u => u.status === 'completed' || u.status === 'failed')"
+        @click="bulkDelete" />
+      <Button label="Retry" icon="pi pi-refresh" severity="warn" size="small" outlined
+        :loading="bulkProcessing" :disabled="!selectedUploads.some(u => u.status === 'failed')"
+        @click="bulkRetry" />
+      <Button label="Clear" text size="small" @click="selectedUploads = []" />
+    </div>
+
     <!-- Table -->
     <Card>
       <template #content>
-        <DataTable :value="uploads" :loading="loading" stripedRows
+        <DataTable :value="uploads" v-model:selection="selectedUploads" :loading="loading" stripedRows
           paginator :rows="limit" :totalRecords="total" :lazy="true" @page="onPage"
+          paginatorTemplate="FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink CurrentPageReport"
+          currentPageReportTemplate="Showing {first} to {last} of {totalRecords}"
+          dataKey="uuid"
           :pt="{ root: { class: '-mt-2' } }">
           <template #empty>No uploads found.</template>
+          <Column selectionMode="multiple" headerStyle="width: 3rem" />
           <Column field="original_filename" header="Name" sortable>
             <template #body="{ data }">
               <span :class="data.visibility === 'public' ? 'text-amber-600 font-medium' : ''">
@@ -390,30 +556,32 @@ onMounted(() => {
                   outlined size="small"
                   :loading="downloading === data.uuid" @click="download(data.uuid, data.original_filename)" />
                 <Button v-if="data.status === 'completed'" icon="pi pi-tag" text rounded size="small"
-                  severity="secondary" @click="openTags(data.uuid, data.original_filename)" v-tooltip.top="'Tags'" />
+                  severity="secondary" aria-label="Tags" @click="openTags(data.uuid, data.original_filename)" v-tooltip.top="'Tags'" />
+                <Button v-if="data.status === 'completed'" icon="pi pi-folder" text rounded size="small"
+                  severity="secondary" aria-label="Add to Collection" @click="openCollections(data.uuid, data.original_filename)" v-tooltip.top="'Add to Collection'" />
                 <Button v-if="data.status === 'completed'" icon="pi pi-trash" text rounded size="small"
-                  severity="secondary" @click="deleteUpload(data.uuid)" v-tooltip.top="'Delete'" />
+                  severity="secondary" aria-label="Delete" @click="deleteUpload(data.uuid)" v-tooltip.top="'Delete'" />
 
                 <!-- Queued (not backoff): cancel -->
                 <Button v-if="data.status === 'queued' && data.status_detail !== 'gas_backoff'"
                   icon="pi pi-times" text rounded size="small" severity="danger"
-                  @click="cancelUpload(data.uuid)" v-tooltip.top="'Cancel'" />
+                  aria-label="Cancel" @click="cancelUpload(data.uuid)" v-tooltip.top="'Cancel'" />
 
                 <!-- Processing: cancel -->
                 <Button v-if="data.status === 'processing'" icon="pi pi-times" text rounded size="small"
-                  severity="danger" @click="cancelUpload(data.uuid)" v-tooltip.top="'Cancel'" />
+                  severity="danger" aria-label="Cancel" @click="cancelUpload(data.uuid)" v-tooltip.top="'Cancel'" />
 
                 <!-- Gas backoff: force retry, cancel -->
                 <Button v-if="data.status_detail === 'gas_backoff'" icon="pi pi-refresh" text rounded size="small"
-                  @click="forceRetry(data.uuid)" v-tooltip.top="'Retry now'" />
+                  aria-label="Retry now" @click="forceRetry(data.uuid)" v-tooltip.top="'Retry now'" />
                 <Button v-if="data.status_detail === 'gas_backoff'" icon="pi pi-times" text rounded size="small"
-                  severity="danger" @click="cancelUpload(data.uuid)" v-tooltip.top="'Cancel'" />
+                  severity="danger" aria-label="Cancel" @click="cancelUpload(data.uuid)" v-tooltip.top="'Cancel'" />
 
                 <!-- Failed: retry, delete -->
                 <Button v-if="data.status === 'failed'" icon="pi pi-refresh" text rounded size="small"
-                  @click="retryUpload(data.uuid)" v-tooltip.top="'Retry'" />
+                  aria-label="Retry" @click="retryUpload(data.uuid)" v-tooltip.top="'Retry'" />
                 <Button v-if="data.status === 'failed'" icon="pi pi-trash" text rounded size="small"
-                  severity="danger" @click="deleteUpload(data.uuid)" v-tooltip.top="'Delete'" />
+                  severity="danger" aria-label="Delete" @click="deleteUpload(data.uuid)" v-tooltip.top="'Delete'" />
               </div>
             </template>
           </Column>
@@ -430,7 +598,8 @@ onMounted(() => {
             <Tag :value="t.key" severity="info" />
             <span class="text-sm">=</span>
             <span class="text-sm">{{ t.value }}</span>
-            <Button icon="pi pi-times" text rounded size="small" severity="danger" @click="removeTag(t.key)" />
+            <Button icon="pi pi-times" text rounded size="small" severity="danger" aria-label="Remove tag"
+              v-tooltip.top="'Remove'" @click="removeTag(t.key)" />
           </div>
         </div>
         <p v-else class="text-sm text-surface-400">No tags yet.</p>
@@ -453,6 +622,29 @@ onMounted(() => {
         <Button label="Cancel" text @click="tagsDialogVisible = false" />
         <Button label="Save" icon="pi pi-check" :loading="tagsSaving" @click="saveTags" />
       </template>
+    </Dialog>
+
+    <!-- Add to collection dialog -->
+    <Dialog v-model:visible="collectDialogVisible" :header="'Add to Collection: ' + collectUploadName" modal :style="{ width: '28rem' }">
+      <div v-if="loadingCollections" class="flex flex-col gap-2 py-2">
+        <Skeleton v-for="i in 3" :key="i" height="3rem" borderRadius="8px" />
+      </div>
+      <div v-else-if="collections.length === 0" class="py-4 text-center text-surface-400">
+        No collections yet. Create one on the <router-link to="/collections" class="text-primary hover:underline">Collections page</router-link>.
+      </div>
+      <div v-else class="flex flex-col gap-1">
+        <div v-for="c in collections" :key="c.id"
+          class="flex items-center justify-between px-3 py-2 rounded-lg hover:bg-surface-50">
+          <div>
+            <p class="text-sm font-medium">{{ c.name }}</p>
+            <p class="text-xs text-surface-400">{{ c.file_count || 0 }} files</p>
+          </div>
+          <Button v-if="isInCollection(c.id)" icon="pi pi-check" size="small" text severity="success"
+            disabled aria-label="Already in this collection" v-tooltip.top="'Already in this collection'" />
+          <Button v-else label="Add" icon="pi pi-plus" size="small" outlined
+            :loading="addingToCollection === c.id" @click="addToCollection(c.id)" />
+        </div>
+      </div>
     </Dialog>
   </div>
 </template>

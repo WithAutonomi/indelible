@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, watch } from 'vue'
+import { useToast } from 'primevue/usetoast'
 import { api } from '../../api/client'
 import Button from 'primevue/button'
 import InputText from 'primevue/inputtext'
@@ -12,9 +13,10 @@ import TabList from 'primevue/tablist'
 import Tab from 'primevue/tab'
 import TabPanels from 'primevue/tabpanels'
 import TabPanel from 'primevue/tabpanel'
+import Skeleton from 'primevue/skeleton'
 
+const toast = useToast()
 const loading = ref(true)
-const globalMsg = ref('')
 
 // OIDC state
 const oidcProviders = ref<any[]>([])
@@ -153,10 +155,9 @@ async function saveCard(card: string) {
       opsDirty.value = false
     }
 
-    globalMsg.value = 'Settings saved.'
-    setTimeout(() => globalMsg.value = '', 3000)
+    toast.add({ severity: 'success', summary: 'Saved', detail: 'Settings saved', life: 3000 })
   } catch (e: any) {
-    alert(e.response?.data?.error || 'Failed to save settings')
+    toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to save settings', life: 5000 })
   } finally {
     generalSaving.value = false
     uploadsSaving.value = false
@@ -189,7 +190,7 @@ async function exportSettings() {
     a.click()
     URL.revokeObjectURL(url)
   } catch {
-    alert('Export failed')
+    toast.add({ severity: 'error', summary: 'Error', detail: 'Export failed', life: 5000 })
   }
 }
 
@@ -202,10 +203,9 @@ async function importSettings(e: Event) {
     const data = JSON.parse(text)
     await api.post('/api/v2/admin/settings/import', data)
     await fetchSettings()
-    globalMsg.value = 'Settings imported.'
-    setTimeout(() => globalMsg.value = '', 3000)
+    toast.add({ severity: 'success', summary: 'Imported', detail: 'Settings imported', life: 3000 })
   } catch {
-    alert('Import failed')
+    toast.add({ severity: 'error', summary: 'Error', detail: 'Import failed', life: 5000 })
   }
 }
 
@@ -236,8 +236,16 @@ onMounted(async () => {
       </div>
     </div>
 
-    <Message v-if="globalMsg" severity="success" :closable="false" class="mb-4">{{ globalMsg }}</Message>
-    <div v-if="loading" class="text-center text-surface-400 py-12">Loading...</div>
+    <div v-if="loading" class="space-y-4 py-4">
+      <Skeleton height="2.5rem" width="16rem" />
+      <Skeleton height="1px" />
+      <div class="space-y-5">
+        <div class="grid grid-cols-3 gap-6" v-for="i in 3" :key="i">
+          <Skeleton height="1.5rem" width="10rem" />
+          <Skeleton height="2.5rem" class="col-span-2" />
+        </div>
+      </div>
+    </div>
 
     <Tabs v-else value="0">
       <TabList>

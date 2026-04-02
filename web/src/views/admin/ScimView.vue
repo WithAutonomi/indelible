@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { useConfirm } from 'primevue/useconfirm'
+import { useToast } from 'primevue/usetoast'
 import { api } from '../../api/client'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
@@ -8,6 +10,7 @@ import InputText from 'primevue/inputtext'
 import Tag from 'primevue/tag'
 import ToggleSwitch from 'primevue/toggleswitch'
 import Dialog from 'primevue/dialog'
+import ConfirmDialog from 'primevue/confirmdialog'
 import Message from 'primevue/message'
 
 interface ScimToken {
@@ -19,6 +22,9 @@ interface ScimToken {
   created_at: string
   revoked_at: string | null
 }
+
+const confirm = useConfirm()
+const toast = useToast()
 
 const tokens = ref<ScimToken[]>([])
 const loading = ref(true)
@@ -54,8 +60,9 @@ async function toggleScim() {
       scim_enabled: scimEnabled.value ? 'false' : 'true',
     })
     scimEnabled.value = !scimEnabled.value
+    toast.add({ severity: 'success', summary: 'Updated', detail: `SCIM ${scimEnabled.value ? 'enabled' : 'disabled'}`, life: 3000 })
   } catch {
-    alert('Failed to update SCIM setting')
+    toast.add({ severity: 'error', summary: 'Error', detail: 'Failed to update SCIM setting', life: 5000 })
   }
 }
 
@@ -81,22 +88,31 @@ async function createToken() {
     })
     newSecret.value = res.data.secret
     newName.value = ''
+    toast.add({ severity: 'success', summary: 'Created', detail: 'SCIM token created', life: 3000 })
     await fetchTokens()
   } catch (e: any) {
-    alert(e.response?.data?.error || 'Failed to create token')
+    toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to create token', life: 5000 })
   } finally {
     creating.value = false
   }
 }
 
-async function revokeToken(id: number) {
-  if (!confirm('Revoke this SCIM token? Identity providers using it will lose access.')) return
-  try {
-    await api.delete(`/api/v2/admin/scim/tokens/${id}`)
-    await fetchTokens()
-  } catch {
-    alert('Failed to revoke token')
-  }
+function revokeToken(id: number) {
+  confirm.require({
+    message: 'Revoke this SCIM token? Identity providers using it will lose access.',
+    header: 'Confirm Revoke',
+    icon: 'pi pi-exclamation-triangle',
+    acceptClass: 'p-button-danger',
+    accept: async () => {
+      try {
+        await api.delete(`/api/v2/admin/scim/tokens/${id}`)
+        await fetchTokens()
+        toast.add({ severity: 'success', summary: 'Revoked', detail: 'SCIM token revoked', life: 3000 })
+      } catch {
+        toast.add({ severity: 'error', summary: 'Error', detail: 'Failed to revoke token', life: 5000 })
+      }
+    },
+  })
 }
 
 function copySecret() {
@@ -115,6 +131,8 @@ onMounted(() => {
 
 <template>
   <div class="p-6">
+    <ConfirmDialog />
+
     <div class="flex items-center justify-between mb-6">
       <h1 class="text-2xl font-bold">SCIM Provisioning</h1>
     </div>

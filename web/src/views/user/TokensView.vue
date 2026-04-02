@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useConfirm } from 'primevue/useconfirm'
+import { useToast } from 'primevue/usetoast'
 import { api } from '../../api/client'
+import type { ApiToken } from '../../types/api'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import Button from 'primevue/button'
@@ -13,8 +15,9 @@ import Card from 'primevue/card'
 import ConfirmDialog from 'primevue/confirmdialog'
 
 const confirm = useConfirm()
+const toast = useToast()
 
-const tokens = ref<any[]>([])
+const tokens = ref<ApiToken[]>([])
 const loading = ref(true)
 const showCreate = ref(false)
 const newTokenName = ref('')
@@ -51,9 +54,10 @@ async function createToken() {
     })
     createdTokenValue.value = res.data.secret
     newTokenName.value = ''
+    toast.add({ severity: 'success', summary: 'Created', detail: 'API token created', life: 3000 })
     await fetchTokens()
   } catch (e: any) {
-    alert(e.response?.data?.error || 'Failed to create token')
+    toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to create token', life: 5000 })
   } finally {
     creating.value = false
   }
@@ -68,9 +72,10 @@ function revokeToken(id: number) {
     accept: async () => {
       try {
         await api.delete(`/api/v2/tokens/${id}`)
+        toast.add({ severity: 'success', summary: 'Revoked', detail: 'Token revoked', life: 3000 })
         await fetchTokens()
       } catch {
-        alert('Failed to revoke token')
+        toast.add({ severity: 'error', summary: 'Error', detail: 'Failed to revoke token', life: 5000 })
       }
     },
   })
