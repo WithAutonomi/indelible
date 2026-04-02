@@ -117,19 +117,41 @@ func CreateUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	uploadSvc := services.NewUploadService(db)
 	quotaSvc := services.NewQuotaService(db)
 	webhookSvc := services.NewWebhookDeliveryService(db)
-	maxUploadSize := int64(10 << 30) // 10 GB default
+	settingsSvc := services.NewSettingsService(db)
 
 	walletSvc := services.NewWalletService(db, cfg.WalletEncryptionKey)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Pre-flight: reject early if no wallet is configured
-		if wallet, err := walletSvc.GetDefault(); err != nil || wallet == nil {
+		wallet, err := walletSvc.GetDefault()
+		if err != nil || wallet == nil {
 			jsonErrorWithCode(w, "No wallet configured", "wallet_not_configured", http.StatusServiceUnavailable)
 			return
 		}
 
 		userID := middleware.GetUserID(r.Context())
 		tokenID := middleware.GetTokenID(r.Context())
+
+		// S1: Check queue depth limit
+		if maxQueuedStr, err := settingsSvc.Get("max_queued_uploads"); err == nil {
+			if maxQueued, err := strconv.ParseInt(maxQueuedStr, 10, 64); err == nil && maxQueued > 0 {
+				counts, _ := uploadSvc.CountByStatus()
+				inFlight := counts["queued"] + counts["processing"]
+				if inFlight >= maxQueued {
+					w.Header().Set("Retry-After", "30")
+					jsonErrorWithCode(w, "Upload queue is full, please try again later", "queue_full", http.StatusTooManyRequests)
+					return
+				}
+			}
+		}
+
+		// S14: Read max_upload_size_bytes from settings
+		maxUploadSize := int64(10 << 30) // 10 GB fallback
+		if maxStr, err := settingsSvc.Get("max_upload_size_bytes"); err == nil {
+			if n, err := strconv.ParseInt(maxStr, 10, 64); err == nil && n > 0 {
+				maxUploadSize = n
+			}
+		}
 
 		// Limit request body size
 		r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
@@ -220,9 +242,16 @@ func CreateUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 
 		webhookSvc.FireUploadEvent("queued", upload)
 
+		// S10: Include queue position for backpressure signaling
+		queuePos := int64(0)
+		if counts, err := uploadSvc.CountByStatus(); err == nil {
+			queuePos = counts["queued"]
+		}
+
 		jsonResponse(w, http.StatusAccepted, map[string]any{
-			"message": "upload queued",
-			"upload":  toUploadResponse(upload),
+			"message":        "upload queued",
+			"upload":         toUploadResponse(upload),
+			"queue_position": queuePos,
 		})
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 
 	_ "github.com/lib/pq"
 	_ "modernc.org/sqlite"
@@ -33,6 +34,13 @@ func Open(dbURL string) (*sql.DB, error) {
 			db.Close()
 			return nil, fmt.Errorf("setting SQLite pragmas: %w", err)
 		}
+	}
+
+	// Connection pool tuning for Postgres
+	if driver == "postgres" {
+		db.SetMaxOpenConns(25)
+		db.SetMaxIdleConns(5)
+		db.SetConnMaxLifetime(5 * time.Minute)
 	}
 
 	if err := db.Ping(); err != nil {

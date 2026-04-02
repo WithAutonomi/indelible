@@ -371,8 +371,8 @@ func TestConstants(t *testing.T) {
 	if circuitBreakerThreshold != 5 {
 		t.Errorf("circuitBreakerThreshold = %d, want 5", circuitBreakerThreshold)
 	}
-	if circuitBreakerCooldown != 30*time.Second {
-		t.Errorf("circuitBreakerCooldown = %v, want 30s", circuitBreakerCooldown)
+	if circuitBreakerBaseCooldown != 30*time.Second {
+		t.Errorf("circuitBreakerBaseCooldown = %v, want 30s", circuitBreakerBaseCooldown)
 	}
 	if maxTransientRetries != 3 {
 		t.Errorf("maxTransientRetries = %d, want 3", maxTransientRetries)

@@ -40,34 +40,40 @@ var errGasBackoff = errors.New("gas backoff")
 // UploadWorker processes queued file uploads in the background.
 type UploadWorker struct {
 	uploadSvc   *services.UploadService
+	quotaSvc    *services.QuotaService
 	txnSvc      *services.TransactionService
 	walletSvc   *services.WalletService
 	webhookSvc  *services.WebhookDeliveryService
-	settingsSvc *services.SettingsService
+	settingsSvc *services.CachedSettingsService
 	antdClient  *antd.Client
 	evmSigner   *evm.Signer // lazily initialized on first upload
 	cfg         *config.Config
 	wg          sync.WaitGroup
 	cancel      context.CancelFunc
 
-	// Simple circuit breaker: pause processing when antd is unreachable
-	consecutiveFailures int
-	circuitOpenUntil    time.Time
+	// S9: Per-phase circuit breakers with exponential cooldown
+	prepareFailures  int
+	finalizeFailures int
+	circuitOpenUntil time.Time
+	circuitCooldown  time.Duration
 }
 
-const circuitBreakerThreshold = 5 // consecutive transient failures before opening
-const circuitBreakerCooldown = 30 * time.Second
+const circuitBreakerThreshold = 5
+const circuitBreakerBaseCooldown = 30 * time.Second
+const circuitBreakerMaxCooldown = 5 * time.Minute
 
 // NewUploadWorker creates a new background upload processor.
 func NewUploadWorker(db *sql.DB, cfg *config.Config) *UploadWorker {
 	return &UploadWorker{
-		uploadSvc:   services.NewUploadService(db),
-		txnSvc:      services.NewTransactionService(db),
-		walletSvc:   services.NewWalletService(db, cfg.WalletEncryptionKey),
-		webhookSvc:  services.NewWebhookDeliveryService(db),
-		settingsSvc: services.NewSettingsService(db),
-		antdClient:  antd.NewClient(cfg.AntdURL),
-		cfg:         cfg,
+		uploadSvc:       services.NewUploadService(db),
+		quotaSvc:        services.NewQuotaService(db),
+		txnSvc:          services.NewTransactionService(db),
+		walletSvc:       services.NewWalletService(db, cfg.WalletEncryptionKey),
+		webhookSvc:      services.NewWebhookDeliveryService(db),
+		settingsSvc:     services.NewCachedSettingsService(services.NewSettingsService(db)),
+		antdClient:      antd.NewClient(cfg.AntdURL),
+		cfg:             cfg,
+		circuitCooldown: circuitBreakerBaseCooldown,
 	}
 }
 
@@ -98,6 +104,13 @@ func (w *UploadWorker) Start() {
 		w.reconcileLoop(ctx)
 	}()
 
+	// S4: Temp file garbage collector (every 5 minutes)
+	w.wg.Add(1)
+	go func() {
+		defer w.wg.Done()
+		w.tempGCLoop(ctx)
+	}()
+
 	slog.Info("upload worker started")
 }
 
@@ -125,7 +138,7 @@ func (w *UploadWorker) processLoop(ctx context.Context) {
 	defer ticker.Stop()
 
 	var inFlight sync.WaitGroup
-	sem := make(chan struct{}, 16) // hard cap; effective limit from settings
+	sem := make(chan struct{}, 32) // hard cap; effective limit from settings
 
 	for {
 		select {
@@ -173,7 +186,8 @@ func (w *UploadWorker) processOne(ctx context.Context, upload *services.Upload) 
 	for attempt := 0; attempt <= maxTransientRetries; attempt++ {
 		lastErr = w.processUpload(ctx, upload)
 		if lastErr == nil {
-			w.consecutiveFailures = 0
+			w.prepareFailures = 0
+			w.circuitCooldown = circuitBreakerBaseCooldown
 			upload.Status = "completed"
 			w.webhookSvc.FireUploadEvent("completed", upload)
 			w.cleanupTempFile(upload)
@@ -202,13 +216,18 @@ func (w *UploadWorker) processOne(ctx context.Context, upload *services.Upload) 
 		}
 	}
 
-	// Track consecutive transient failures for circuit breaker
+	// S9: Track consecutive transient failures with exponential cooldown
 	if isTransientAntdError(lastErr) {
-		w.consecutiveFailures++
-		if w.consecutiveFailures >= circuitBreakerThreshold {
-			w.circuitOpenUntil = time.Now().Add(circuitBreakerCooldown)
+		w.prepareFailures++
+		if w.prepareFailures >= circuitBreakerThreshold {
+			w.circuitOpenUntil = time.Now().Add(w.circuitCooldown)
 			slog.Warn("circuit breaker opened — antd appears unreachable",
-				"failures", w.consecutiveFailures, "cooldown", circuitBreakerCooldown)
+				"failures", w.prepareFailures, "cooldown", w.circuitCooldown)
+			// Exponential cooldown: 30s → 60s → 120s → ... → 5min max
+			w.circuitCooldown = w.circuitCooldown * 2
+			if w.circuitCooldown > circuitBreakerMaxCooldown {
+				w.circuitCooldown = circuitBreakerMaxCooldown
+			}
 		}
 	}
 
@@ -229,6 +248,11 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 	// Verify temp file exists
 	if _, err := os.Stat(tempPath); err != nil {
 		return fmt.Errorf("File not found on server")
+	}
+
+	// S3: Re-check quota at processing time (includes in-flight bytes)
+	if err := w.quotaSvc.CheckUserQuotaInFlight(upload.UserID, upload.FileSize); err != nil {
+		return fmt.Errorf("Quota exceeded: %w", err)
 	}
 
 	// Get default wallet — required for external signer payment
@@ -398,6 +422,62 @@ func nextCheapWindow(now time.Time) time.Time {
 		target = target.Add(24 * time.Hour)
 	}
 	return target
+}
+
+// S4: tempGCLoop periodically removes orphaned temp files.
+func (w *UploadWorker) tempGCLoop(ctx context.Context) {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			w.cleanOrphanedTempFiles()
+		}
+	}
+}
+
+func (w *UploadWorker) cleanOrphanedTempFiles() {
+	tempDir := TempUploadDir(w.cfg)
+	entries, err := os.ReadDir(tempDir)
+	if err != nil {
+		return
+	}
+
+	// Get all active temp paths from DB
+	activePaths, err := w.uploadSvc.ListActiveTempPaths()
+	if err != nil {
+		slog.Warn("temp GC: failed to list active paths", "error", err)
+		return
+	}
+	activeSet := make(map[string]struct{}, len(activePaths))
+	for _, p := range activePaths {
+		activeSet[p] = struct{}{}
+	}
+
+	var cleaned int
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		fullPath := filepath.Join(tempDir, entry.Name())
+		if _, active := activeSet[fullPath]; !active {
+			// Check file age — only clean files older than 10 minutes
+			// to avoid racing with in-progress uploads
+			info, err := entry.Info()
+			if err != nil || time.Since(info.ModTime()) < 10*time.Minute {
+				continue
+			}
+			if err := os.Remove(fullPath); err == nil {
+				cleaned++
+			}
+		}
+	}
+	if cleaned > 0 {
+		slog.Info("temp GC: cleaned orphaned files", "count", cleaned)
+	}
 }
 
 // TempUploadDir returns the path to the temp upload directory, creating it if needed.

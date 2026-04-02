@@ -485,6 +485,25 @@ func (s *UploadService) Delete(id int64) error {
 	return nil
 }
 
+// ListActiveTempPaths returns all temp_path values for uploads still in queued or processing state.
+func (s *UploadService) ListActiveTempPaths() ([]string, error) {
+	rows, err := s.db.Query(`SELECT temp_path FROM uploads WHERE status IN ('queued', 'processing') AND temp_path IS NOT NULL AND temp_path != ''`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var paths []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		paths = append(paths, p)
+	}
+	return paths, rows.Err()
+}
+
 func scanUploads(rows *sql.Rows, total int64) ([]*Upload, int64, error) {
 	var uploads []*Upload
 	for rows.Next() {

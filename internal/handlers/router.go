@@ -68,6 +68,7 @@ func NewRouter(cfg *config.Config, db *sql.DB) http.Handler {
 
 			// System status (available to all authenticated users)
 			r.Get("/system/wallet-status", WalletStatus(db, cfg))
+			r.Get("/system/queue-status", QueueStatus(db))
 
 			// Profile
 			r.Get("/me", GetProfile(db))
@@ -75,8 +76,9 @@ func NewRouter(cfg *config.Config, db *sql.DB) http.Handler {
 			r.Post("/me/resend-verification", ResendVerification(db, cfg))
 			r.Put("/me/password", ChangePassword(db, cfg))
 
-			// Uploads
-			r.With(middleware.Idempotency(db)).Post("/uploads", CreateUpload(db, cfg))
+			// Uploads (S7: rate limited to 60/min per user)
+			uploadRL := middleware.RateLimitByUser(60, 60*time.Second)
+			r.With(uploadRL, middleware.Idempotency(db)).Post("/uploads", CreateUpload(db, cfg))
 			r.Get("/uploads", ListUploads(db))
 			r.Get("/uploads/{id}", GetUpload(db))
 			r.Post("/uploads/quote", QuoteUpload(db, cfg))

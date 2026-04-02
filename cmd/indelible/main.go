@@ -115,10 +115,10 @@ func main() {
 	diskAlertWorker.Start()
 	defer diskAlertWorker.Stop()
 
-	// Idempotency key cleanup (every hour)
+	// S15: Idempotency key cleanup (every 5 minutes instead of hourly)
 	go func() {
 		for {
-			time.Sleep(time.Hour)
+			time.Sleep(5 * time.Minute)
 			middleware.CleanupIdempotencyKeys(db)
 		}
 	}()
