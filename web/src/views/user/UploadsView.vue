@@ -87,11 +87,32 @@ function searchTagValues(event: { query: string }) {
 const file = ref<File | null>(null)
 const visibility = ref('private')
 const uploading = ref(false)
+const uploadTagKey = ref('')
+const uploadTagValue = ref('')
+const uploadTags = ref<{ key: string; value: string }[]>([])
 
 const visibilityOptions = [
   { label: 'Private', value: 'private' },
   { label: 'Public', value: 'public' },
 ]
+
+function addUploadTag() {
+  const k = uploadTagKey.value.trim()
+  const v = uploadTagValue.value.trim()
+  if (!k || !v) return
+  const existing = uploadTags.value.findIndex(t => t.key === k)
+  if (existing >= 0) {
+    uploadTags.value[existing].value = v
+  } else {
+    uploadTags.value.push({ key: k, value: v })
+  }
+  uploadTagKey.value = ''
+  uploadTagValue.value = ''
+}
+
+function removeUploadTag(key: string) {
+  uploadTags.value = uploadTags.value.filter(t => t.key !== key)
+}
 
 function onFileSelect(e: Event) {
   const target = e.target as HTMLInputElement
@@ -106,12 +127,20 @@ async function handleUpload() {
   formData.append('file', file.value)
   formData.append('visibility', visibility.value)
 
+  // Include tags if any were added
+  if (uploadTags.value.length > 0) {
+    const tagMap: Record<string, string> = {}
+    for (const t of uploadTags.value) tagMap[t.key] = t.value
+    formData.append('tags', JSON.stringify(tagMap))
+  }
+
   try {
     await api.post('/api/v2/uploads', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
     toast.add({ severity: 'success', summary: 'Queued', detail: 'File queued for upload', life: 3000 })
     file.value = null
+    uploadTags.value = []
     const input = document.getElementById('upload-file-input') as HTMLInputElement
     if (input) input.value = ''
     await fetchUploads()
@@ -460,15 +489,30 @@ onMounted(() => {
     <!-- Upload card -->
     <Card class="mb-4" :class="{ 'opacity-50 pointer-events-none select-none': noWallet }">
       <template #content>
-        <form @submit.prevent="handleUpload" class="flex flex-col sm:flex-row items-start gap-4">
-          <div class="flex-1">
-            <input id="upload-file-input" type="file" @change="onFileSelect" :disabled="noWallet"
-              class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
+        <form @submit.prevent="handleUpload" class="flex flex-col gap-4">
+          <div class="flex flex-col sm:flex-row items-start gap-4">
+            <div class="flex-1">
+              <input id="upload-file-input" type="file" @change="onFileSelect" :disabled="noWallet"
+                class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
+            </div>
+            <Select v-model="visibility" :options="visibilityOptions" optionLabel="label" optionValue="value"
+              :disabled="noWallet" class="w-36" />
+            <Button type="submit" :label="uploading ? 'Uploading...' : 'Upload'" icon="pi pi-upload"
+              :disabled="!file || uploading || noWallet" :loading="uploading" />
           </div>
-          <Select v-model="visibility" :options="visibilityOptions" optionLabel="label" optionValue="value"
-            :disabled="noWallet" class="w-36" />
-          <Button type="submit" :label="uploading ? 'Uploading...' : 'Upload'" icon="pi pi-upload"
-            :disabled="!file || uploading || noWallet" :loading="uploading" />
+
+          <!-- Upload-time tags -->
+          <div v-if="file" class="border-t border-surface-200 pt-3">
+            <p class="text-xs text-surface-500 mb-2">Tags (optional — applied when the file is queued)</p>
+            <div class="flex flex-wrap gap-1 mb-2" v-if="uploadTags.length">
+              <Tag v-for="t in uploadTags" :key="t.key" :value="`${t.key}: ${t.value}`" severity="info" class="cursor-pointer" @click="removeUploadTag(t.key)" v-tooltip.top="'Click to remove'" />
+            </div>
+            <div class="flex gap-2 items-center">
+              <InputText v-model="uploadTagKey" placeholder="Key" size="small" class="w-28" @keyup.enter="addUploadTag" />
+              <InputText v-model="uploadTagValue" placeholder="Value" size="small" class="w-28" @keyup.enter="addUploadTag" />
+              <Button icon="pi pi-plus" size="small" text rounded @click="addUploadTag" :disabled="!uploadTagKey.trim() || !uploadTagValue.trim()" aria-label="Add tag" />
+            </div>
+          </div>
         </form>
       </template>
     </Card>

@@ -594,17 +594,24 @@ File metadata and virtual folder structure, stored in the local database (not on
 
 **Tagging:**
 - Custom key-value tags on uploaded files (e.g., `department:legal`, `project:alpha`, `client:acme`)
-- Tags assigned at upload time (via UI or API) and editable after upload
-- Stored in local DB as a `file_tags` table, indexed for fast lookup
+- Tags set at upload time via `tags` form field (JSON object) or editable after upload via `PUT /uploads/{id}/tags`
+- Stored in `file_tags` table with composite indexes for fast lookup
+- Auto-tag rules: admin-defined rules that automatically apply tags based on content type, filename regex, file size, or visibility (Admin > Tag Rules)
+- Tag facets endpoint (`GET /tags/facets`) returns aggregated key/value/count for filter UIs
+- Bulk tag operations (`POST /tags/bulk`) to apply/remove tags across multiple uploads by UUID list or label selector
 
 **Search:**
-- Full-text search across filenames and tag values
-- Filter by: tag key/value, uploader, date range, file type, folder/collection
-- SQL-backed — works on both SQLite (FTS5) and PostgreSQL (tsvector)
+- Label selector syntax (modeled on Kubernetes): `selector=department=engineering,status!=archived,env in (prod,staging)`
+- Operators: `=` (equality), `!=` (inequality), `in` (set membership), `notin` (set exclusion), key exists, `!key` (not exists)
+- Backward-compatible `tag.key=value` query params for simple AND-only searches
+- Filename substring search via `q` param, combinable with selectors
+- All queries use parameterized SQL — no injection risk
 
 **Virtual Folders / Collections:**
 - Logical grouping of files into folders or collections (database-only, not on network)
 - Hierarchical folder structure (parent/child) for organising uploads
+- Collection-level tags (`GET/PUT /collections/{id}/tags`) — inherited by files when added to the collection
+- Tag inheritance is additive: collection tags propagate to files without overwriting existing file tags
 - Supports bulk operations: bulk tag, bulk legal hold
 - Required for dashboard usability at scale — "Case #12345", "Q1 Tax Docs"
 - `collections` table with `collection_files` join table

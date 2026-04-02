@@ -173,16 +173,32 @@ func SearchByTags(db *sql.DB) http.HandlerFunc {
 		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 		offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
 		query := r.URL.Query().Get("q")
+		selector := r.URL.Query().Get("selector")
 
-		// Parse tag filters from query params: tag.key=value
-		tagFilters := make(map[string]string)
-		for k, vals := range r.URL.Query() {
-			if len(k) > 4 && k[:4] == "tag." {
-				tagFilters[k[4:]] = vals[0]
+		var results []*services.SearchResult
+		var total int64
+		var err error
+
+		if selector != "" {
+			// New: label selector syntax (e.g., "department=engineering,status!=archived")
+			reqs, parseErr := services.ParseSelector(selector)
+			if parseErr != nil {
+				jsonError(w, "invalid selector: "+parseErr.Error(), http.StatusBadRequest)
+				return
 			}
+			clauses, args := services.BuildSelectorSQL(reqs)
+			results, total, err = tagSvc.SearchWithSelector(clauses, args, query, userID, limit, offset)
+		} else {
+			// Legacy: tag.key=value query params
+			tagFilters := make(map[string]string)
+			for k, vals := range r.URL.Query() {
+				if len(k) > 4 && k[:4] == "tag." {
+					tagFilters[k[4:]] = vals[0]
+				}
+			}
+			results, total, err = tagSvc.Search(tagFilters, query, userID, limit, offset)
 		}
 
-		results, total, err := tagSvc.Search(tagFilters, query, userID, limit, offset)
 		if err != nil {
 			jsonError(w, "search failed", http.StatusInternalServerError)
 			return

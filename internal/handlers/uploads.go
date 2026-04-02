@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"io"
 	"math/big"
 	"net/http"
@@ -115,6 +116,8 @@ func toUploadResponse(u *services.Upload) uploadResponse {
 // @Router       /uploads [post]
 func CreateUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	uploadSvc := services.NewUploadService(db)
+	tagSvc := services.NewTagService(db)
+	tagRuleSvc := services.NewTagRuleService(db)
 	quotaSvc := services.NewQuotaService(db)
 	webhookSvc := services.NewWebhookDeliveryService(db)
 	settingsSvc := services.NewSettingsService(db)
@@ -179,6 +182,15 @@ func CreateUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
+		// Parse tags from form data (JSON object or repeated key=value fields)
+		uploadTags := make(map[string]string)
+		if tagsJSON := r.FormValue("tags"); tagsJSON != "" {
+			if err := json.Unmarshal([]byte(tagsJSON), &uploadTags); err != nil {
+				jsonError(w, "tags must be a JSON object of key-value strings", http.StatusBadRequest)
+				return
+			}
+		}
+
 		// Sanitize filename: strip path components and null bytes
 		originalFilename := filepath.Base(header.Filename)
 		originalFilename = strings.ReplaceAll(originalFilename, "\x00", "")
@@ -238,6 +250,26 @@ func CreateUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			os.Remove(tempPath)
 			jsonError(w, "failed to queue upload", http.StatusInternalServerError)
 			return
+		}
+
+		// Apply auto-tag rules based on file attributes
+		autoTags, err := tagRuleSvc.EvaluateRules(originalFilename, contentType, written, visibility)
+		if err != nil {
+			slog.Warn("auto-tag rule evaluation failed", "error", err)
+		}
+
+		// Merge: user-supplied tags take precedence over auto-generated
+		for k, v := range autoTags {
+			if _, exists := uploadTags[k]; !exists {
+				uploadTags[k] = v
+			}
+		}
+
+		// Set tags on the upload (if any)
+		if len(uploadTags) > 0 {
+			if err := tagSvc.SetTags(upload.ID, uploadTags); err != nil {
+				slog.Warn("failed to set upload tags", "upload_id", upload.ID, "error", err)
+			}
 		}
 
 		webhookSvc.FireUploadEvent("queued", upload)

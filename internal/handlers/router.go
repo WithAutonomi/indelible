@@ -95,6 +95,8 @@ func NewRouter(cfg *config.Config, db *sql.DB) http.Handler {
 			r.Get("/tags/keys", ListTagKeys(db))
 			r.Get("/tags/values", ListTagValues(db))
 			r.Get("/tags/search", SearchByTags(db))
+			r.Post("/tags/bulk", BulkTagUploads(db))
+			r.Get("/tags/facets", TagFacets(db))
 
 			// Collections
 			r.Post("/collections", CreateCollection(db))
@@ -104,6 +106,8 @@ func NewRouter(cfg *config.Config, db *sql.DB) http.Handler {
 			r.Delete("/collections/{id}", DeleteCollection(db))
 			r.Post("/collections/{id}/files", AddToCollection(db))
 			r.Delete("/collections/{id}/files/{uploadId}", RemoveFromCollection(db))
+			r.Get("/collections/{id}/tags", GetCollectionTags(db))
+			r.Put("/collections/{id}/tags", UpdateCollectionTags(db))
 
 			// API tokens (own)
 			r.Post("/tokens", CreateToken(db, cfg))
@@ -119,6 +123,12 @@ func NewRouter(cfg *config.Config, db *sql.DB) http.Handler {
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.Authenticate(db, cfg))
 			r.Use(middleware.RequireAdmin(db))
+
+			// Tag rules (admin)
+			r.Get("/admin/tag-rules", ListTagRules(db))
+			r.Post("/admin/tag-rules", CreateTagRule(db))
+			r.Put("/admin/tag-rules/{id}", UpdateTagRule(db))
+			r.Delete("/admin/tag-rules/{id}", DeleteTagRule(db))
 
 			// User management
 			r.Post("/admin/users", AdminCreateUser(db))

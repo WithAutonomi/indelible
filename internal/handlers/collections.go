@@ -280,6 +280,7 @@ func DeleteCollection(db *sql.DB) http.HandlerFunc {
 // @Security BearerAuth
 func AddToCollection(db *sql.DB) http.HandlerFunc {
 	collSvc := services.NewCollectionService(db)
+	collTagSvc := services.NewCollectionTagService(db)
 	uploadSvc := services.NewUploadService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -318,6 +319,9 @@ func AddToCollection(db *sql.DB) http.HandlerFunc {
 			jsonError(w, "failed to add file", http.StatusInternalServerError)
 			return
 		}
+
+		// Inherit collection tags to the file (additive, won't overwrite existing)
+		collTagSvc.InheritToFile(collID, upload.ID)
 
 		jsonResponse(w, http.StatusOK, map[string]string{"message": "file added to collection"})
 	}

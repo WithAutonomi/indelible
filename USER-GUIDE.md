@@ -231,31 +231,86 @@ curl -X POST https://files.acme.com/api/v2/uploads/quote \
 
 ### Tags
 
-Add metadata to uploaded files using key-value tags:
+**Set tags at upload time** (recommended for programmatic workflows):
+
+```bash
+curl -X POST https://files.acme.com/api/v2/uploads \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -F "file=@document.pdf" \
+  -F 'visibility=private' \
+  -F 'tags={"department":"legal","project":"alpha","client":"acme"}'
+```
+
+**Set/update tags after upload** (replace-all semantics):
 
 ```bash
 curl -X PUT https://files.acme.com/api/v2/uploads/{uuid}/tags \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"department": "legal", "project": "alpha", "client": "acme"}'
+  -d '{"tags": {"department": "legal", "project": "alpha"}}'
 ```
 
-Tags are **replace-all** — each PUT replaces all existing tags on the file.
+**Auto-tag rules** — Admins can create rules that automatically apply tags at upload time (Admin > Tag Rules). Rules match on content type, filename regex, file size, or visibility.
 
 ### Searching by Tags
 
+**Label selector syntax** (recommended — supports equality, inequality, set membership, existence):
+
 ```bash
-# Search by tag
-curl "https://files.acme.com/api/v2/tags/search?tag.department=legal" \
+# Equality
+curl "https://files.acme.com/api/v2/tags/search?selector=department=legal" \
   -H "Authorization: Bearer YOUR_TOKEN"
 
-# Search by filename
-curl "https://files.acme.com/api/v2/tags/search?q=contract" \
+# Inequality
+curl "https://files.acme.com/api/v2/tags/search?selector=status!=archived" \
   -H "Authorization: Bearer YOUR_TOKEN"
 
-# Combined
+# Set membership
+curl "https://files.acme.com/api/v2/tags/search?selector=env in (prod,staging)" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+
+# Key exists / not exists
+curl "https://files.acme.com/api/v2/tags/search?selector=reviewed" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+
+# Combined with filename search
+curl "https://files.acme.com/api/v2/tags/search?selector=department=legal,status!=archived&q=contract" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+**Legacy syntax** (backward compatible):
+
+```bash
 curl "https://files.acme.com/api/v2/tags/search?tag.department=legal&q=contract" \
   -H "Authorization: Bearer YOUR_TOKEN"
+```
+
+### Bulk Tag Operations
+
+Apply or remove tags across multiple files at once:
+
+```bash
+# By UUID list
+curl -X POST https://files.acme.com/api/v2/tags/bulk \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"upload_uuids": ["uuid1", "uuid2"], "add_tags": {"archived": "true"}}'
+
+# By selector (tag all completed legal files as reviewed)
+curl -X POST https://files.acme.com/api/v2/tags/bulk \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"selector": "department=legal,status=completed", "add_tags": {"reviewed": "true"}}'
+```
+
+### Tag Facets
+
+Get aggregated tag counts for building filter UIs:
+
+```bash
+curl "https://files.acme.com/api/v2/tags/facets" \
+  -H "Authorization: Bearer YOUR_TOKEN"
+# Returns: {"facets": [{"key":"department","value":"legal","count":42}, ...]}
 ```
 
 ### Collections
@@ -915,14 +970,21 @@ All endpoints are under `/api/v2/`. Authentication is via Bearer token (JWT or A
 | POST | `/uploads/quote` | Estimate upload cost |
 | GET | `/uploads/{id}/download` | Download completed file |
 | PUT | `/uploads/{id}/tags` | Set tags on upload |
-| GET | `/tags/search` | Search by tags/filename |
+| GET | `/tags/keys` | List distinct tag keys |
+| GET | `/tags/values?key=X` | List distinct values for a key |
+| GET | `/tags/search` | Search by selector or tag.key=value |
+| POST | `/tags/bulk` | Bulk apply/remove tags |
+| GET | `/tags/facets` | Aggregated tag counts |
 | POST | `/collections` | Create collection |
 | GET | `/collections` | List collections |
 | GET | `/collections/{id}` | Get collection with files |
 | PUT | `/collections/{id}` | Update collection |
 | DELETE | `/collections/{id}` | Delete collection (cascades) |
-| POST | `/collections/{id}/files` | Add file to collection |
+| POST | `/collections/{id}/files` | Add file to collection (inherits collection tags) |
 | DELETE | `/collections/{id}/files/{uploadId}` | Remove file |
+| GET | `/collections/{id}/tags` | Get collection tags |
+| PUT | `/collections/{id}/tags` | Set collection tags |
+| GET | `/system/queue-status` | Upload queue depth and throughput |
 | POST | `/tokens` | Create API token |
 | GET | `/tokens` | List tokens |
 | DELETE | `/tokens/{id}` | Revoke token |
@@ -933,6 +995,10 @@ All endpoints are under `/api/v2/`. Authentication is via Bearer token (JWT or A
 
 | Method | Path | Description |
 |--------|------|-------------|
+| GET | `/admin/tag-rules` | List auto-tag rules |
+| POST | `/admin/tag-rules` | Create auto-tag rule |
+| PUT | `/admin/tag-rules/{id}` | Update auto-tag rule |
+| DELETE | `/admin/tag-rules/{id}` | Delete auto-tag rule |
 | GET | `/admin/users` | List all users |
 | GET | `/admin/users/{id}` | Get user |
 | PUT | `/admin/users/{id}` | Update user |
