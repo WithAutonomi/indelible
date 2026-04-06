@@ -272,30 +272,33 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		return fmt.Errorf("Failed to prepare upload: %w", err)
 	}
 
-	// Gas fee check — use the quoted total from PrepareUpload
-	if maxFeeStr, err := w.settingsSvc.Get("max_gas_fee"); err == nil {
-		if maxFee, err := strconv.ParseInt(maxFeeStr, 10, 64); err == nil && maxFee > 0 {
-			var costVal int64
-			fmt.Sscanf(prepared.TotalAmount, "%d", &costVal)
-			if costVal > maxFee {
-				attempt := upload.BackoffAttempt + 1
-				if attempt > maxGasBackoffAttempts {
-					return fmt.Errorf("Gas fees too high — try again later")
+	// Gas fee check — only applies to wave-batch where cost is known upfront.
+	// Merkle cost is determined on-chain so we skip the pre-check.
+	if prepared.PaymentType != "merkle" {
+		if maxFeeStr, err := w.settingsSvc.Get("max_gas_fee"); err == nil {
+			if maxFee, err := strconv.ParseInt(maxFeeStr, 10, 64); err == nil && maxFee > 0 {
+				var costVal int64
+				fmt.Sscanf(prepared.TotalAmount, "%d", &costVal)
+				if costVal > maxFee {
+					attempt := upload.BackoffAttempt + 1
+					if attempt > maxGasBackoffAttempts {
+						return fmt.Errorf("Gas fees too high — try again later")
+					}
+					backoffUntil := calcGasBackoff(attempt)
+					if err := w.uploadSvc.SetGasBackoff(upload.ID, backoffUntil, attempt, prepared.TotalAmount); err != nil {
+						return fmt.Errorf("Internal error scheduling retry")
+					}
+					slog.Info("gas fee too high, backing off",
+						"uuid", upload.UUID, "quoted", prepared.TotalAmount, "max", maxFeeStr,
+						"attempt", attempt, "retry_at", backoffUntil.Format(time.RFC3339))
+					return errGasBackoff
 				}
-				backoffUntil := calcGasBackoff(attempt)
-				if err := w.uploadSvc.SetGasBackoff(upload.ID, backoffUntil, attempt, prepared.TotalAmount); err != nil {
-					return fmt.Errorf("Internal error scheduling retry")
+				if upload.BackoffAttempt > 0 {
+					w.uploadSvc.ClearBackoff(upload.ID)
+					slog.Info("gas fee acceptable after backoff", "uuid", upload.UUID, "quoted", prepared.TotalAmount, "attempts", upload.BackoffAttempt)
 				}
-				slog.Info("gas fee too high, backing off",
-					"uuid", upload.UUID, "quoted", prepared.TotalAmount, "max", maxFeeStr,
-					"attempt", attempt, "retry_at", backoffUntil.Format(time.RFC3339))
-				return errGasBackoff
+				slog.Info("gas fee check passed", "uuid", upload.UUID, "quoted", prepared.TotalAmount, "max", maxFeeStr)
 			}
-			if upload.BackoffAttempt > 0 {
-				w.uploadSvc.ClearBackoff(upload.ID)
-				slog.Info("gas fee acceptable after backoff", "uuid", upload.UUID, "quoted", prepared.TotalAmount, "attempts", upload.BackoffAttempt)
-			}
-			slog.Info("gas fee check passed", "uuid", upload.UUID, "quoted", prepared.TotalAmount, "max", maxFeeStr)
 		}
 	}
 
@@ -305,7 +308,7 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		w.cfg.EvmTokenAddress = prepared.PaymentTokenAddress
 	}
 
-	// Phase 2: Sign and submit EVM payment locally
+	// Ensure EVM signer is connected
 	if w.evmSigner == nil || w.evmSigner.RPCUrl() != prepared.RPCUrl {
 		signer, err := evm.NewSigner(prepared.RPCUrl)
 		if err != nil {
@@ -314,41 +317,74 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		w.evmSigner = signer
 	}
 
-	txHashes, err := w.evmSigner.PayForQuotes(ctx, walletKey, prepared.Payments, prepared.PaymentTokenAddress, prepared.DataPaymentsAddress)
-	if err != nil {
-		return fmt.Errorf("EVM payment failed: %w", err)
-	}
+	// Phase 2 + 3: Payment and finalization — branches on payment type
+	var result *antd.FinalizeUploadResult
+	var paidAmount string
+	var txHash string
 
-	slog.Info("EVM payment submitted", "uuid", upload.UUID, "tx_count", len(txHashes), "total", prepared.TotalAmount)
+	switch prepared.PaymentType {
+	case "merkle":
+		// Phase 2: Sign merkle batch payment
+		winnerHash, totalPaid, err := w.evmSigner.PayForMerkleTree(
+			ctx, walletKey,
+			prepared.Depth,
+			prepared.PoolCommitments,
+			prepared.MerklePaymentTimestamp,
+			prepared.PaymentTokenAddress,
+			prepared.MerklePaymentsAddress,
+		)
+		if err != nil {
+			return fmt.Errorf("EVM merkle payment failed: %w", err)
+		}
 
-	// Phase 3: Finalize upload — builds proofs from tx hashes, stores chunks
-	result, err := w.antdClient.FinalizeUpload(ctx, prepared.UploadID, txHashes, false)
-	if err != nil {
-		return fmt.Errorf("Failed to finalize upload: %w", err)
+		slog.Info("EVM merkle payment submitted",
+			"uuid", upload.UUID, "winner_pool_hash", winnerHash, "total_paid", totalPaid)
+
+		// Phase 3: Finalize merkle upload
+		result, err = w.antdClient.FinalizeMerkleUpload(ctx, prepared.UploadID, winnerHash, false)
+		if err != nil {
+			return fmt.Errorf("Failed to finalize merkle upload: %w", err)
+		}
+		paidAmount = totalPaid
+		txHash = winnerHash
+
+	default: // "wave_batch" or empty (backward compat)
+		// Phase 2: Sign wave-batch payment
+		txHashes, err := w.evmSigner.PayForQuotes(ctx, walletKey, prepared.Payments, prepared.PaymentTokenAddress, prepared.DataPaymentsAddress)
+		if err != nil {
+			return fmt.Errorf("EVM payment failed: %w", err)
+		}
+
+		slog.Info("EVM payment submitted", "uuid", upload.UUID, "tx_count", len(txHashes), "total", prepared.TotalAmount)
+
+		// Phase 3: Finalize wave-batch upload
+		result, err = w.antdClient.FinalizeUpload(ctx, prepared.UploadID, txHashes, false)
+		if err != nil {
+			return fmt.Errorf("Failed to finalize upload: %w", err)
+		}
+		paidAmount = prepared.TotalAmount
+		for _, h := range txHashes {
+			txHash = h
+			break
+		}
 	}
 
 	// Mark upload completed — store the DataMap locally
-	if err := w.uploadSvc.MarkCompleted(upload.ID, result.DataMap, prepared.TotalAmount); err != nil {
+	if err := w.uploadSvc.MarkCompleted(upload.ID, result.DataMap, paidAmount); err != nil {
 		return fmt.Errorf("Failed to save upload record")
-	}
-
-	// Collect first tx hash for audit trail
-	var firstTxHash string
-	for _, h := range txHashes {
-		firstTxHash = h
-		break
 	}
 
 	// Update wallet balance from chain (best-effort)
 	if tokenBal, gasBal, err := w.evmSigner.GetBalances(ctx, wallet.Address, prepared.PaymentTokenAddress); err == nil {
 		w.walletSvc.UpdateBalance(wallet.ID, tokenBal, gasBal)
-		w.txnSvc.Record(wallet.ID, &upload.ID, "upload", prepared.TotalAmount, tokenBal, firstTxHash)
+		w.txnSvc.Record(wallet.ID, &upload.ID, "upload", paidAmount, tokenBal, txHash)
 	} else {
 		slog.Warn("failed to query post-payment balance", "error", err)
-		w.txnSvc.Record(wallet.ID, &upload.ID, "upload", prepared.TotalAmount, wallet.PaymentBalance, firstTxHash)
+		w.txnSvc.Record(wallet.ID, &upload.ID, "upload", paidAmount, wallet.PaymentBalance, txHash)
 	}
 
-	slog.Info("upload completed", "uuid", upload.UUID, "cost", prepared.TotalAmount, "chunks", result.ChunksStored)
+	slog.Info("upload completed", "uuid", upload.UUID, "payment_type", prepared.PaymentType,
+		"cost", paidAmount, "chunks", result.ChunksStored)
 	return nil
 }
 

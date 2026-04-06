@@ -69,7 +69,7 @@ func UpdateCollectionTags(db *sql.DB) http.HandlerFunc {
 		}
 
 		var req struct {
-			Tags map[string]string `json:"tags"`
+			Tags map[string][]string `json:"tags"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			jsonError(w, "invalid request body", http.StatusBadRequest)

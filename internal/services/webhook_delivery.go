@@ -25,8 +25,8 @@ type WebhookPayload struct {
 
 // WebhookTagData contains tag change details in webhook payloads.
 type WebhookTagData struct {
-	UploadUUID string            `json:"upload_uuid"`
-	Tags       map[string]string `json:"tags"`
+	UploadUUID string              `json:"upload_uuid"`
+	Tags       map[string][]string `json:"tags"`
 }
 
 // WebhookCollectionData contains collection membership change details in webhook payloads.
@@ -162,7 +162,7 @@ func (s *WebhookDeliveryService) FireSystemEvent(eventType string, data *Webhook
 }
 
 // FireTagEvent sends webhook notifications when tags change on an upload.
-func (s *WebhookDeliveryService) FireTagEvent(eventType string, uploadUUID string, tags map[string]string) {
+func (s *WebhookDeliveryService) FireTagEvent(eventType string, uploadUUID string, tags map[string][]string) {
 	webhooks, err := s.webhookSvc.GetEnabled()
 	if err != nil || len(webhooks) == 0 {
 		return

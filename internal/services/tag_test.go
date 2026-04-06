@@ -13,10 +13,10 @@ func TestTagSetAndGet(t *testing.T) {
 
 	svc := NewTagService(db)
 
-	tags := map[string]string{
-		"env":     "production",
-		"project": "alpha",
-		"version": "1.0",
+	tags := map[string][]string{
+		"env":     {"production"},
+		"project": {"alpha"},
+		"version": {"1.0"},
 	}
 	err := svc.SetTags(u.ID, tags)
 	if err != nil {
@@ -30,14 +30,14 @@ func TestTagSetAndGet(t *testing.T) {
 	if len(got) != 3 {
 		t.Errorf("expected 3 tags, got %d", len(got))
 	}
-	if got["env"] != "production" {
-		t.Errorf("expected env=production, got %s", got["env"])
+	if got["env"][0] != "production" {
+		t.Errorf("expected env=production, got %s", got["env"][0])
 	}
-	if got["project"] != "alpha" {
-		t.Errorf("expected project=alpha, got %s", got["project"])
+	if got["project"][0] != "alpha" {
+		t.Errorf("expected project=alpha, got %s", got["project"][0])
 	}
-	if got["version"] != "1.0" {
-		t.Errorf("expected version=1.0, got %s", got["version"])
+	if got["version"][0] != "1.0" {
+		t.Errorf("expected version=1.0, got %s", got["version"][0])
 	}
 }
 
@@ -51,17 +51,17 @@ func TestTagSetReplacesAll(t *testing.T) {
 	svc := NewTagService(db)
 
 	// Set initial tags
-	svc.SetTags(u.ID, map[string]string{
-		"env":     "staging",
-		"project": "beta",
-		"old_key": "old_value",
+	svc.SetTags(u.ID, map[string][]string{
+		"env":     {"staging"},
+		"project": {"beta"},
+		"old_key": {"old_value"},
 	})
 
 	// Replace with new set (old_key should be gone, env updated, new_key added)
-	newTags := map[string]string{
-		"env":     "production",
-		"project": "beta",
-		"new_key": "new_value",
+	newTags := map[string][]string{
+		"env":     {"production"},
+		"project": {"beta"},
+		"new_key": {"new_value"},
 	}
 	err := svc.SetTags(u.ID, newTags)
 	if err != nil {
@@ -72,14 +72,14 @@ func TestTagSetReplacesAll(t *testing.T) {
 	if len(got) != 3 {
 		t.Errorf("expected 3 tags after replace, got %d", len(got))
 	}
-	if got["env"] != "production" {
-		t.Errorf("expected env=production, got %s", got["env"])
+	if got["env"][0] != "production" {
+		t.Errorf("expected env=production, got %s", got["env"][0])
 	}
 	if _, exists := got["old_key"]; exists {
 		t.Error("expected old_key to be removed")
 	}
-	if got["new_key"] != "new_value" {
-		t.Errorf("expected new_key=new_value, got %s", got["new_key"])
+	if got["new_key"][0] != "new_value" {
+		t.Errorf("expected new_key=new_value, got %s", got["new_key"][0])
 	}
 }
 
@@ -93,8 +93,8 @@ func TestTagSetEmpty(t *testing.T) {
 	svc := NewTagService(db)
 
 	// Set some tags then clear them
-	svc.SetTags(u.ID, map[string]string{"k": "v"})
-	err := svc.SetTags(u.ID, map[string]string{})
+	svc.SetTags(u.ID, map[string][]string{"k": {"v"}})
+	err := svc.SetTags(u.ID, map[string][]string{})
 	if err != nil {
 		t.Fatalf("SetTags empty: %v", err)
 	}
@@ -133,8 +133,8 @@ func TestTagListKeys(t *testing.T) {
 	u2 := createTestUpload(t, uploadSvc, user.ID, "f2.bin", 200)
 
 	svc := NewTagService(db)
-	svc.SetTags(u1.ID, map[string]string{"env": "prod", "project": "alpha"})
-	svc.SetTags(u2.ID, map[string]string{"env": "staging", "team": "backend"})
+	svc.SetTags(u1.ID, map[string][]string{"env": {"prod"}, "project": {"alpha"}})
+	svc.SetTags(u2.ID, map[string][]string{"env": {"staging"}, "team": {"backend"}})
 
 	keys, err := svc.ListKeys(user.ID)
 	if err != nil {
@@ -165,8 +165,8 @@ func TestTagListKeysIsolatedByUser(t *testing.T) {
 	u2 := createTestUpload(t, uploadSvc, user2.ID, "f2.bin", 200)
 
 	svc := NewTagService(db)
-	svc.SetTags(u1.ID, map[string]string{"user1_key": "val"})
-	svc.SetTags(u2.ID, map[string]string{"user2_key": "val"})
+	svc.SetTags(u1.ID, map[string][]string{"user1_key": {"val"}})
+	svc.SetTags(u2.ID, map[string][]string{"user2_key": {"val"}})
 
 	keys1, _ := svc.ListKeys(user1.ID)
 	if len(keys1) != 1 || keys1[0] != "user1_key" {
@@ -190,9 +190,9 @@ func TestTagListValues(t *testing.T) {
 	u3 := createTestUpload(t, uploadSvc, user.ID, "f3.bin", 300)
 
 	svc := NewTagService(db)
-	svc.SetTags(u1.ID, map[string]string{"env": "prod"})
-	svc.SetTags(u2.ID, map[string]string{"env": "staging"})
-	svc.SetTags(u3.ID, map[string]string{"env": "prod"}) // duplicate value
+	svc.SetTags(u1.ID, map[string][]string{"env": {"prod"}})
+	svc.SetTags(u2.ID, map[string][]string{"env": {"staging"}})
+	svc.SetTags(u3.ID, map[string][]string{"env": {"prod"}}) // duplicate value
 
 	values, err := svc.ListValues(user.ID, "env")
 	if err != nil {
@@ -234,9 +234,9 @@ func TestTagSearchByTag(t *testing.T) {
 	u3 := createTestUpload(t, uploadSvc, user.ID, "staging.bin", 300)
 
 	svc := NewTagService(db)
-	svc.SetTags(u1.ID, map[string]string{"env": "prod", "team": "backend"})
-	svc.SetTags(u2.ID, map[string]string{"env": "prod", "team": "frontend"})
-	svc.SetTags(u3.ID, map[string]string{"env": "staging", "team": "backend"})
+	svc.SetTags(u1.ID, map[string][]string{"env": {"prod"}, "team": {"backend"}})
+	svc.SetTags(u2.ID, map[string][]string{"env": {"prod"}, "team": {"frontend"}})
+	svc.SetTags(u3.ID, map[string][]string{"env": {"staging"}, "team": {"backend"}})
 
 	// Search env=prod
 	results, total, err := svc.Search(
@@ -264,8 +264,8 @@ func TestTagSearchByMultipleTags(t *testing.T) {
 	u2 := createTestUpload(t, uploadSvc, user.ID, "partial.bin", 200)
 
 	svc := NewTagService(db)
-	svc.SetTags(u1.ID, map[string]string{"env": "prod", "team": "backend"})
-	svc.SetTags(u2.ID, map[string]string{"env": "prod", "team": "frontend"})
+	svc.SetTags(u1.ID, map[string][]string{"env": {"prod"}, "team": {"backend"}})
+	svc.SetTags(u2.ID, map[string][]string{"env": {"prod"}, "team": {"frontend"}})
 
 	// Search env=prod AND team=backend (only u1 matches)
 	results, total, err := svc.Search(
@@ -296,8 +296,8 @@ func TestTagSearchByFilename(t *testing.T) {
 	u2 := createTestUpload(t, uploadSvc, user.ID, "image.png", 200)
 
 	svc := NewTagService(db)
-	svc.SetTags(u1.ID, map[string]string{"type": "report"})
-	svc.SetTags(u2.ID, map[string]string{"type": "image"})
+	svc.SetTags(u1.ID, map[string][]string{"type": {"report"}})
+	svc.SetTags(u2.ID, map[string][]string{"type": {"image"}})
 
 	// Search by filename substring (no tag filter)
 	results, total, err := svc.Search(
@@ -329,9 +329,9 @@ func TestTagSearchCombinedTagAndFilename(t *testing.T) {
 	u3 := createTestUpload(t, uploadSvc, user.ID, "image_q1.png", 300)
 
 	svc := NewTagService(db)
-	svc.SetTags(u1.ID, map[string]string{"quarter": "q1"})
-	svc.SetTags(u2.ID, map[string]string{"quarter": "q2"})
-	svc.SetTags(u3.ID, map[string]string{"quarter": "q1"})
+	svc.SetTags(u1.ID, map[string][]string{"quarter": {"q1"}})
+	svc.SetTags(u2.ID, map[string][]string{"quarter": {"q2"}})
+	svc.SetTags(u3.ID, map[string][]string{"quarter": {"q1"}})
 
 	// Search quarter=q1 AND filename contains "report" -- only u1
 	results, total, err := svc.Search(
@@ -382,7 +382,7 @@ func TestTagSearchResultContainsUpload(t *testing.T) {
 	u := createTestUpload(t, uploadSvc, user.ID, "tagged.bin", 100)
 
 	svc := NewTagService(db)
-	svc.SetTags(u.ID, map[string]string{"env": "prod", "team": "ops"})
+	svc.SetTags(u.ID, map[string][]string{"env": {"prod"}, "team": {"ops"}})
 
 	// Search by filename only (no tag join) to avoid nested GetTags deadlock on SQLite :memory:
 	results, total, err := svc.Search(map[string]string{}, "tagged", user.ID, 10, 0)
@@ -408,11 +408,11 @@ func TestTagSearchResultContainsUpload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetTags: %v", err)
 	}
-	if tags["env"] != "prod" {
-		t.Errorf("expected tag env=prod, got %s", tags["env"])
+	if tags["env"][0] != "prod" {
+		t.Errorf("expected tag env=prod, got %s", tags["env"][0])
 	}
-	if tags["team"] != "ops" {
-		t.Errorf("expected tag team=ops, got %s", tags["team"])
+	if tags["team"][0] != "ops" {
+		t.Errorf("expected tag team=ops, got %s", tags["team"][0])
 	}
 }
 
@@ -425,7 +425,7 @@ func TestTagSearchPagination(t *testing.T) {
 	svc := NewTagService(db)
 	for i := 0; i < 5; i++ {
 		u := createTestUpload(t, uploadSvc, user.ID, "paginated.bin", int64(100*(i+1)))
-		svc.SetTags(u.ID, map[string]string{"batch": "test"})
+		svc.SetTags(u.ID, map[string][]string{"batch": {"test"}})
 	}
 
 	// Get first page
@@ -466,8 +466,8 @@ func TestTagSearchAllUsers(t *testing.T) {
 	u2 := createTestUpload(t, uploadSvc, user2.ID, "f2.bin", 200)
 
 	svc := NewTagService(db)
-	svc.SetTags(u1.ID, map[string]string{"shared": "yes"})
-	svc.SetTags(u2.ID, map[string]string{"shared": "yes"})
+	svc.SetTags(u1.ID, map[string][]string{"shared": {"yes"}})
+	svc.SetTags(u2.ID, map[string][]string{"shared": {"yes"}})
 
 	// userID=0 should search all users (admin mode)
 	results, total, err := svc.Search(map[string]string{"shared": "yes"}, "", 0, 10, 0)

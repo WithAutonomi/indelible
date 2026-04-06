@@ -4,11 +4,14 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	_ "github.com/lib/pq"
 	_ "modernc.org/sqlite"
 )
+
+var memDBCounter atomic.Int64
 
 // Open connects to the database specified by the URL.
 // Supports sqlite:// and postgres:// schemes.
@@ -55,7 +58,16 @@ func Open(dbURL string) (*sql.DB, error) {
 func parseURL(dbURL string) (driver, dsn string, err error) {
 	switch {
 	case strings.HasPrefix(dbURL, "sqlite://"):
-		return "sqlite", strings.TrimPrefix(dbURL, "sqlite://"), nil
+		dsn := strings.TrimPrefix(dbURL, "sqlite://")
+		// SQLite :memory: databases are per-connection by default. Use shared
+		// cache with a unique name so all connections from the same Open() call
+		// see the same database, while different Open() calls (e.g. separate
+		// tests) each get their own isolated database.
+		if dsn == ":memory:" {
+			id := memDBCounter.Add(1)
+			dsn = fmt.Sprintf("file:memdb%d?mode=memory&cache=shared", id)
+		}
+		return "sqlite", dsn, nil
 	case strings.HasPrefix(dbURL, "postgres://"), strings.HasPrefix(dbURL, "postgresql://"):
 		return "postgres", dbURL, nil
 	default:

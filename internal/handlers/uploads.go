@@ -182,12 +182,20 @@ func CreateUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		// Parse tags from form data (JSON object or repeated key=value fields)
-		uploadTags := make(map[string]string)
+		// Parse tags from form data (JSON object: key -> string or string[])
+		uploadTags := make(map[string][]string)
 		if tagsJSON := r.FormValue("tags"); tagsJSON != "" {
+			// Try multi-value format first: {"key": ["v1","v2"]}
 			if err := json.Unmarshal([]byte(tagsJSON), &uploadTags); err != nil {
-				jsonError(w, "tags must be a JSON object of key-value strings", http.StatusBadRequest)
-				return
+				// Fall back to single-value format: {"key": "value"}
+				var singleTags map[string]string
+				if err2 := json.Unmarshal([]byte(tagsJSON), &singleTags); err2 != nil {
+					jsonError(w, "tags must be a JSON object of key to string or string array", http.StatusBadRequest)
+					return
+				}
+				for k, v := range singleTags {
+					uploadTags[k] = []string{v}
+				}
 			}
 		}
 
