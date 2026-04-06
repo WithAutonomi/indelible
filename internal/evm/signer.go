@@ -211,46 +211,154 @@ func (s *Signer) sendTx(
 	to common.Address,
 	data []byte,
 ) (string, error) {
+	hash, _, err := s.sendTxWithReceipt(ctx, privateKey, from, to, data)
+	return hash, err
+}
+
+// PayForMerkleTree signs and submits the EVM merkle batch payment transaction.
+// Returns the winner pool hash (hex with 0x) and total amount paid (decimal string).
+//
+// The flow:
+// 1. Parse the private key
+// 2. Convert SDK PoolCommitmentEntry data into ABI-compatible structs
+// 3. Ensure token allowance for the merkle payments contract
+// 4. Call payForMerkleTree on the merkle payment vault
+// 5. Parse MerklePaymentMade event from receipt to extract winner pool hash
+func (s *Signer) PayForMerkleTree(
+	ctx context.Context,
+	privateKeyHex string,
+	depth int,
+	poolCommitments []antd.PoolCommitmentEntry,
+	merklePaymentTimestamp uint64,
+	tokenAddress string,
+	merklePaymentsAddress string,
+) (winnerPoolHash string, totalAmount string, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Parse private key
+	privateKeyHex = strings.TrimPrefix(privateKeyHex, "0x")
+	privateKey, err := crypto.HexToECDSA(privateKeyHex)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid private key: %w", err)
+	}
+
+	fromAddress := crypto.PubkeyToAddress(privateKey.PublicKey)
+	tokenAddr := common.HexToAddress(tokenAddress)
+	merkleAddr := common.HexToAddress(merklePaymentsAddress)
+
+	// Convert SDK types to ABI structs
+	commitments := make([]MerklePoolCommitment, len(poolCommitments))
+	for i, pc := range poolCommitments {
+		poolHash, err := hexTo32Bytes(pc.PoolHash)
+		if err != nil {
+			return "", "", fmt.Errorf("invalid pool_hash %s: %w", pc.PoolHash, err)
+		}
+		commitments[i].PoolHash = poolHash
+
+		if len(pc.Candidates) != 16 {
+			return "", "", fmt.Errorf("pool %d: expected 16 candidates, got %d", i, len(pc.Candidates))
+		}
+		for j, c := range pc.Candidates {
+			amt, ok := new(big.Int).SetString(c.Amount, 10)
+			if !ok {
+				return "", "", fmt.Errorf("invalid candidate amount: %s", c.Amount)
+			}
+			commitments[i].Candidates[j] = MerkleCandidateNode{
+				RewardsAddress: common.HexToAddress(c.RewardsAddress),
+				Amount:         amt,
+			}
+		}
+	}
+
+	// Ensure token allowance for merkle payments contract
+	// We don't know the exact cost upfront (contract determines it), so approve max
+	maxUint256 := new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 256), big.NewInt(1))
+	if err := s.ensureAllowance(ctx, privateKey, fromAddress, tokenAddr, merkleAddr, maxUint256); err != nil {
+		return "", "", fmt.Errorf("token approval: %w", err)
+	}
+
+	// ABI-encode payForMerkleTree(depth, commitments, timestamp)
+	calldata, err := packPayForMerkleTree(uint8(depth), commitments, merklePaymentTimestamp)
+	if err != nil {
+		return "", "", fmt.Errorf("encoding payForMerkleTree: %w", err)
+	}
+
+	// Send transaction and wait for receipt
+	txHashStr, receipt, err := s.sendTxWithReceipt(ctx, privateKey, fromAddress, merkleAddr, calldata)
+	if err != nil {
+		return "", "", fmt.Errorf("payForMerkleTree tx failed: %w", err)
+	}
+	_ = txHashStr
+
+	// Parse MerklePaymentMade event from receipt logs
+	// The winnerPoolHash is indexed (Topics[1])
+	eventSig := merklePaymentMadeEvent.ID
+	for _, log := range receipt.Logs {
+		if len(log.Topics) >= 2 && log.Topics[0] == eventSig {
+			winnerHash := log.Topics[1]
+			// Parse non-indexed fields for totalAmount
+			data, err := merklePaymentMadeEvent.Inputs.NonIndexed().Unpack(log.Data)
+			if err != nil {
+				return "", "", fmt.Errorf("parsing MerklePaymentMade event: %w", err)
+			}
+			// data[0] = depth (uint8), data[1] = totalAmount (uint256), data[2] = timestamp (uint64)
+			paid, ok := data[1].(*big.Int)
+			if !ok {
+				return "", "", fmt.Errorf("unexpected totalAmount type in event")
+			}
+			return winnerHash.Hex(), paid.String(), nil
+		}
+	}
+
+	return "", "", fmt.Errorf("MerklePaymentMade event not found in receipt")
+}
+
+// sendTxWithReceipt builds, signs, submits a transaction, and returns both the hash and receipt.
+func (s *Signer) sendTxWithReceipt(
+	ctx context.Context,
+	privateKey *ecdsa.PrivateKey,
+	from common.Address,
+	to common.Address,
+	data []byte,
+) (string, *types.Receipt, error) {
 	nonce, err := s.client.PendingNonceAt(ctx, from)
 	if err != nil {
-		return "", fmt.Errorf("getting nonce: %w", err)
+		return "", nil, fmt.Errorf("getting nonce: %w", err)
 	}
 
 	gasPrice, err := s.client.SuggestGasPrice(ctx)
 	if err != nil {
-		return "", fmt.Errorf("getting gas price: %w", err)
+		return "", nil, fmt.Errorf("getting gas price: %w", err)
 	}
 
 	msg := toCallMsg(from, to, data)
 	gasLimit, err := s.client.EstimateGas(ctx, msg)
 	if err != nil {
-		return "", fmt.Errorf("estimating gas: %w", err)
+		return "", nil, fmt.Errorf("estimating gas: %w", err)
 	}
-	// 20% buffer on gas estimate
 	gasLimit = gasLimit * 120 / 100
 
 	tx := types.NewTransaction(nonce, to, big.NewInt(0), gasLimit, gasPrice, data)
-
 	signedTx, err := types.SignTx(tx, types.NewEIP155Signer(s.chainID), privateKey)
 	if err != nil {
-		return "", fmt.Errorf("signing tx: %w", err)
+		return "", nil, fmt.Errorf("signing tx: %w", err)
 	}
 
 	if err := s.client.SendTransaction(ctx, signedTx); err != nil {
-		return "", fmt.Errorf("sending tx: %w", err)
+		return "", nil, fmt.Errorf("sending tx: %w", err)
 	}
 
-	// Wait for receipt
 	receipt, err := waitForReceipt(ctx, s.client, signedTx.Hash())
 	if err != nil {
-		return "", fmt.Errorf("waiting for receipt: %w", err)
+		return "", nil, fmt.Errorf("waiting for receipt: %w", err)
 	}
 
 	if receipt.Status != types.ReceiptStatusSuccessful {
-		return "", fmt.Errorf("transaction reverted: %s", signedTx.Hash().Hex())
+		return "", nil, fmt.Errorf("transaction reverted: %s", signedTx.Hash().Hex())
 	}
 
-	return signedTx.Hash().Hex(), nil
+	return signedTx.Hash().Hex(), receipt, nil
 }
 
 // waitForReceipt polls for a transaction receipt with a 2-second interval.

@@ -12,9 +12,11 @@ import (
 )
 
 // Contract ABIs for Autonomi storage payments.
-// Sourced from evmlib's IPaymentVaultV6.json.
+// Sourced from evmlib's IPaymentVault ABI.
 
 var payForQuotesABI abi.ABI
+var payForMerkleTreeABI abi.ABI
+var merklePaymentMadeEvent abi.Event
 var erc20ABI abi.ABI
 
 func init() {
@@ -39,6 +41,53 @@ func init() {
 	if err != nil {
 		panic("invalid payForQuotes ABI: " + err.Error())
 	}
+
+	// payForMerkleTree(uint8 depth, PoolCommitment[] poolCommitments, uint64 merklePaymentTimestamp)
+	// returns (bytes32 winnerPoolHash, uint256 totalAmount)
+	//
+	// PoolCommitment = (bytes32 poolHash, CandidateNode[16] candidates)
+	// CandidateNode  = (address rewardsAddress, uint256 amount)
+	merkleABI, err := abi.JSON(strings.NewReader(`[{
+		"name": "payForMerkleTree",
+		"type": "function",
+		"inputs": [
+			{"name": "depth", "type": "uint8"},
+			{
+				"name": "poolCommitments",
+				"type": "tuple[]",
+				"components": [
+					{"name": "poolHash", "type": "bytes32"},
+					{
+						"name": "candidates",
+						"type": "tuple[16]",
+						"components": [
+							{"name": "rewardsAddress", "type": "address"},
+							{"name": "amount", "type": "uint256"}
+						]
+					}
+				]
+			},
+			{"name": "merklePaymentTimestamp", "type": "uint64"}
+		],
+		"outputs": [
+			{"name": "winnerPoolHash", "type": "bytes32"},
+			{"name": "totalAmount", "type": "uint256"}
+		]
+	},{
+		"name": "MerklePaymentMade",
+		"type": "event",
+		"inputs": [
+			{"name": "winnerPoolHash", "type": "bytes32", "indexed": true},
+			{"name": "depth", "type": "uint8", "indexed": false},
+			{"name": "totalAmount", "type": "uint256", "indexed": false},
+			{"name": "merklePaymentTimestamp", "type": "uint64", "indexed": false}
+		]
+	}]`))
+	if err != nil {
+		panic("invalid payForMerkleTree ABI: " + err.Error())
+	}
+	payForMerkleTreeABI = merkleABI
+	merklePaymentMadeEvent = merkleABI.Events["MerklePaymentMade"]
 
 	// ERC-20 approve + allowance + balanceOf
 	erc20ABI, err = abi.JSON(strings.NewReader(`[{
@@ -77,9 +126,27 @@ type DataPayment struct {
 	QuoteHash      [32]byte
 }
 
+// MerkleCandidateNode matches the Solidity struct CandidateNode for merkle payments.
+type MerkleCandidateNode struct {
+	RewardsAddress common.Address
+	Amount         *big.Int
+}
+
+// MerklePoolCommitment matches the Solidity struct PoolCommitment for merkle payments.
+type MerklePoolCommitment struct {
+	PoolHash   [32]byte
+	Candidates [16]MerkleCandidateNode
+}
+
 // packPayForQuotes encodes the calldata for payForQuotes(DataPayment[]).
 func packPayForQuotes(payments []DataPayment) ([]byte, error) {
 	return payForQuotesABI.Pack("payForQuotes", payments)
+}
+
+// packPayForMerkleTree encodes the calldata for
+// payForMerkleTree(uint8, PoolCommitment[], uint64).
+func packPayForMerkleTree(depth uint8, commitments []MerklePoolCommitment, timestamp uint64) ([]byte, error) {
+	return payForMerkleTreeABI.Pack("payForMerkleTree", depth, commitments, timestamp)
 }
 
 // packApprove encodes the calldata for ERC-20 approve.
