@@ -212,16 +212,3 @@ func (s *QuotaService) calcUsage(entityType string, entityID sql.NullString) int
 	return used
 }
 
-func (s *QuotaService) calcUsageByUser(userID int64) int64 {
-	var used int64
-	s.db.QueryRow(
-		`SELECT COALESCE(SUM(file_size), 0) FROM uploads WHERE user_id = ? AND status = 'completed'`, userID,
-	).Scan(&used)
-	return used
-}
-
-func (s *QuotaService) calcUsageSystem() int64 {
-	var used int64
-	s.db.QueryRow(`SELECT COALESCE(SUM(file_size), 0) FROM uploads WHERE status = 'completed'`).Scan(&used)
-	return used
-}

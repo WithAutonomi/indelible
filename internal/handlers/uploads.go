@@ -211,10 +211,14 @@ func CreateUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		ext := filepath.Ext(originalFilename)
 		safeFilename := uuid.New().String() + ext
 
-		// Detect content type
+		// Detect and validate content type
 		contentType := header.Header.Get("Content-Type")
 		if contentType == "" {
 			contentType = "application/octet-stream"
+		}
+		if !isAllowedContentType(contentType, settingsSvc) {
+			jsonError(w, "file type not allowed: "+contentType, http.StatusBadRequest)
+			return
 		}
 
 		// Write to temp directory
@@ -639,7 +643,8 @@ func DownloadUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		tempPath := filepath.Join(tempDir, "dl-"+uuid.New().String())
 		defer os.Remove(tempPath)
 
-		if upload.DataMap.Valid {
+		switch {
+		case upload.DataMap.Valid:
 			// External signer flow: use local DataMap to download directly
 			data, err := client.DataGetPrivate(r.Context(), upload.DataMap.String)
 			if err != nil {
@@ -650,7 +655,7 @@ func DownloadUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 				jsonError(w, "failed to write download", http.StatusInternalServerError)
 				return
 			}
-		} else if upload.DatamapAddress.Valid {
+		case upload.DatamapAddress.Valid:
 			// Legacy flow: download via network address
 			if upload.Visibility == "public" {
 				if err := client.FileDownloadPublic(r.Context(), upload.DatamapAddress.String, tempPath); err != nil {
@@ -668,7 +673,7 @@ func DownloadUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 					return
 				}
 			}
-		} else {
+		default:
 			jsonError(w, "upload has no data map or network address", http.StatusInternalServerError)
 			return
 		}
@@ -867,4 +872,34 @@ func scaleCost(cost string, targetSize, sampleSize int64) string {
 	scaled := new(big.Int).Mul(costVal, big.NewInt(targetSize))
 	scaled.Div(scaled, big.NewInt(sampleSize))
 	return scaled.String()
+}
+
+// isAllowedContentType checks the content type against a configurable allowlist.
+// Supports wildcard patterns like "image/*". Returns true if no allowlist is configured.
+func isAllowedContentType(ct string, settingsSvc *services.SettingsService) bool {
+	allowlist := "image/*,application/pdf,text/*,application/json,application/zip,application/gzip,application/x-tar,video/*,audio/*,application/octet-stream"
+	if v, err := settingsSvc.Get("allowed_upload_content_types"); err == nil && v != "" {
+		allowlist = v
+	}
+
+	ct = strings.ToLower(strings.TrimSpace(ct))
+	// Strip parameters (e.g., "text/plain; charset=utf-8" → "text/plain")
+	if idx := strings.IndexByte(ct, ';'); idx != -1 {
+		ct = strings.TrimSpace(ct[:idx])
+	}
+
+	for _, pattern := range strings.Split(allowlist, ",") {
+		pattern = strings.ToLower(strings.TrimSpace(pattern))
+		if pattern == ct {
+			return true
+		}
+		// Wildcard: "image/*" matches "image/png"
+		if strings.HasSuffix(pattern, "/*") {
+			prefix := strings.TrimSuffix(pattern, "*")
+			if strings.HasPrefix(ct, prefix) {
+				return true
+			}
+		}
+	}
+	return false
 }

@@ -186,6 +186,10 @@ func AdminDeleteWallet(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 				jsonError(w, "wallet not found", http.StatusNotFound)
 				return
 			}
+			if errors.Is(err, services.ErrDeleteDefault) {
+				jsonError(w, err.Error(), http.StatusConflict)
+				return
+			}
 			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -242,7 +246,7 @@ func AdminRefreshWalletBalance(db *sql.DB, cfg *config.Config) http.HandlerFunc 
 			return
 		}
 
-		walletSvc.UpdateBalance(id, tokenBal, gasBal)
+		_ = walletSvc.UpdateBalance(id, tokenBal, gasBal)
 
 		jsonResponse(w, http.StatusOK, map[string]any{
 			"payment_balance": tokenBal,

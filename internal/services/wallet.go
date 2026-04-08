@@ -10,8 +10,9 @@ import (
 )
 
 var (
-	ErrWalletNotFound = errors.New("wallet not found")
+	ErrWalletNotFound  = errors.New("wallet not found")
 	ErrNoDefaultWallet = errors.New("no default wallet configured")
+	ErrDeleteDefault   = errors.New("cannot delete the default wallet")
 )
 
 // Wallet represents a wallet record.
@@ -155,7 +156,7 @@ func (s *WalletService) Delete(id int64) error {
 		return ErrWalletNotFound
 	}
 	if isDefault {
-		return errors.New("cannot delete the default wallet")
+		return ErrDeleteDefault
 	}
 	_, err = s.db.Exec(`DELETE FROM wallets WHERE id = ?`, id)
 	return err

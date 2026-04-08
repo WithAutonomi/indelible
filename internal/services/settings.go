@@ -216,7 +216,9 @@ func (s *SettingsService) ImportStructured(data *ExportData, userID int64, ipAdd
 				return err
 			}
 			if !w.IsEnabled {
-				whSvc.Update(wh.ID, wh.URL, wh.IntegrationType, wh.Events, false)
+				if _, err := whSvc.Update(wh.ID, wh.URL, wh.IntegrationType, wh.Events, false); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -225,7 +227,9 @@ func (s *SettingsService) ImportStructured(data *ExportData, userID int64, ipAdd
 	if len(data.Groups) > 0 {
 		grpSvc := NewGroupService(s.db)
 		for _, g := range data.Groups {
-			grpSvc.Create(g.Name, g.Description, g.PermissionLevel)
+			if _, err := grpSvc.Create(g.Name, g.Description, g.PermissionLevel); err != nil {
+				return err
+			}
 		}
 	}
 

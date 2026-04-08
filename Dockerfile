@@ -13,7 +13,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=frontend /app/web/dist ./web/dist
-RUN CGO_ENABLED=0 go build -ldflags "-X main.version=docker" -o /indelible ./cmd/indelible
+ARG VERSION=dev
+RUN CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=${VERSION}" -o /indelible ./cmd/indelible
 
 # Runtime
 FROM alpine:3.21

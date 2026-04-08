@@ -12,6 +12,9 @@ vendor/
 # Node
 web/node_modules/
 web/dist/
+e2e/node_modules/
+e2e/playwright-report/
+e2e/test-results/
 
 # IDE
 .idea/
@@ -36,6 +39,10 @@ data/
 
 # Air (hot reload)
 tmp/
+
+# Go workspaces (local multi-module dev)
+go.work
+go.work.sum
 
 # sqlc generated (optional — some teams commit these)
 # internal/database/sqlitedb/

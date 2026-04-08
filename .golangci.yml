@@ -1,0 +1,39 @@
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - gosimple
+    - ineffassign
+    - unused
+    - gocritic
+    - misspell
+
+linters-settings:
+  gocritic:
+    disabled-checks:
+      - exitAfterDefer  # false positive in main() — we explicitly clean up before os.Exit
+  errcheck:
+    exclude-functions:
+      # HTTP response writing — error not recoverable once response started
+      - (net/http.ResponseWriter).Write
+      - (*encoding/json.Encoder).Encode
+      - fmt.Fprintf
+      - fmt.Fprintln
+      # Transaction rollback in defer — error meaningless after commit
+      - (*database/sql.Tx).Rollback
+      # Row.Scan on aggregate queries — default zero is acceptable on error
+      - (*database/sql.Row).Scan
+      - (*database/sql.Rows).Scan
+      # Best-effort audit/system logging
+      - (*github.com/WithAutonomi/indelible/internal/services.LogService).WriteSystem
+      - (*github.com/WithAutonomi/indelible/internal/services.LogService).WriteAudit
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  exclude-rules:
+    # Test files: unchecked errors in setup/helper calls are standard Go practice
+    - path: _test\.go
+      linters:
+        - errcheck

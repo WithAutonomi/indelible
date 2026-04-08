@@ -38,6 +38,9 @@ func NewRouter(cfg *config.Config, db *sql.DB) http.Handler {
 		MaxAge:           300,
 	}))
 
+	r.Use(middleware.SecurityHeaders())
+	r.Use(middleware.MaxBodySize(1 << 20)) // 1MB limit for JSON endpoints
+
 	// Health check (no auth)
 	r.Get("/health", Health(db, cfg))
 
@@ -285,4 +288,10 @@ func (w *spaResponseWriter) reset() {
 	w.status = http.StatusOK
 	w.wroteHeader = false
 	w.wroteBody = false
+	// Clear headers from the failed 404 attempt — especially Content-Type,
+	// which http.ServeContent won't overwrite if already set.
+	h := w.ResponseWriter.Header()
+	for k := range h {
+		delete(h, k)
+	}
 }

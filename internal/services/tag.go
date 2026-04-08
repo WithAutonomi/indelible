@@ -171,7 +171,9 @@ func (s *TagService) Search(tagFilters map[string]string, query string, userID i
 		u.data_map, u.backoff_until, u.backoff_attempt, u.last_quoted_cost,
 		u.queued_at, u.processing_at, u.completed_at, u.failed_at, u.created_at ` +
 		baseQuery + where + ` ORDER BY u.created_at DESC LIMIT ? OFFSET ?`
-	queryArgs := append(args, limit, offset)
+	queryArgs := make([]any, len(args), len(args)+2)
+	copy(queryArgs, args)
+	queryArgs = append(queryArgs, limit, offset)
 
 	rows, err := s.db.Query(selectSQL, queryArgs...)
 	if err != nil {
@@ -269,7 +271,9 @@ func (s *TagService) SearchWithSelector(selectorClauses []string, selectorArgs [
 		u.data_map, u.backoff_until, u.backoff_attempt, u.last_quoted_cost,
 		u.queued_at, u.processing_at, u.completed_at, u.failed_at, u.created_at ` +
 		baseSQL + ` ORDER BY u.created_at DESC LIMIT ? OFFSET ?`
-	queryArgs := append(args, limit, offset)
+	queryArgs := make([]any, len(args), len(args)+2)
+	copy(queryArgs, args)
+	queryArgs = append(queryArgs, limit, offset)
 
 	rows, err := s.db.Query(selectSQL, queryArgs...)
 	if err != nil {

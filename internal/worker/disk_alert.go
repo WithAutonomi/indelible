@@ -81,7 +81,8 @@ func (w *DiskAlertWorker) check() {
 
 	pctStr := fmt.Sprintf("%.1f", usagePct)
 
-	if usagePct >= 95 {
+	switch {
+	case usagePct >= 95:
 		if !w.IsPaused {
 			w.IsPaused = true
 			w.logSvc.WriteSystem("error", "disk_alert",
@@ -96,7 +97,7 @@ func (w *DiskAlertWorker) check() {
 				Value:     usagePct,
 			})
 		}
-	} else if usagePct >= 80 {
+	case usagePct >= 80:
 		w.IsPaused = false
 		w.logSvc.WriteSystem("warn", "disk_alert",
 			"Warning: disk usage at "+pctStr+"%", "")
@@ -109,7 +110,7 @@ func (w *DiskAlertWorker) check() {
 				Value:     usagePct,
 			})
 		}
-	} else {
+	default:
 		if w.IsPaused {
 			w.IsPaused = false
 			w.logSvc.WriteSystem("info", "disk_alert",

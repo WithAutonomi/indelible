@@ -53,7 +53,6 @@ type UploadWorker struct {
 
 	// S9: Per-phase circuit breakers with exponential cooldown
 	prepareFailures  int
-	finalizeFailures int
 	circuitOpenUntil time.Time
 	circuitCooldown  time.Duration
 }
@@ -224,7 +223,7 @@ func (w *UploadWorker) processOne(ctx context.Context, upload *services.Upload) 
 			slog.Warn("circuit breaker opened — antd appears unreachable",
 				"failures", w.prepareFailures, "cooldown", w.circuitCooldown)
 			// Exponential cooldown: 30s → 60s → 120s → ... → 5min max
-			w.circuitCooldown = w.circuitCooldown * 2
+			w.circuitCooldown *= 2
 			if w.circuitCooldown > circuitBreakerMaxCooldown {
 				w.circuitCooldown = circuitBreakerMaxCooldown
 			}
@@ -232,7 +231,7 @@ func (w *UploadWorker) processOne(ctx context.Context, upload *services.Upload) 
 	}
 
 	slog.Error("upload failed", "uuid", upload.UUID, "error", lastErr)
-	w.uploadSvc.MarkFailed(upload.ID, lastErr.Error())
+	_ = w.uploadSvc.MarkFailed(upload.ID, lastErr.Error())
 	upload.Status = "failed"
 	w.webhookSvc.FireUploadEvent("failed", upload)
 	w.cleanupTempFile(upload)
@@ -278,7 +277,7 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		if maxFeeStr, err := w.settingsSvc.Get("max_gas_fee"); err == nil {
 			if maxFee, err := strconv.ParseInt(maxFeeStr, 10, 64); err == nil && maxFee > 0 {
 				var costVal int64
-				fmt.Sscanf(prepared.TotalAmount, "%d", &costVal)
+				_, _ = fmt.Sscanf(prepared.TotalAmount, "%d", &costVal)
 				if costVal > maxFee {
 					attempt := upload.BackoffAttempt + 1
 					if attempt > maxGasBackoffAttempts {
@@ -294,7 +293,7 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 					return errGasBackoff
 				}
 				if upload.BackoffAttempt > 0 {
-					w.uploadSvc.ClearBackoff(upload.ID)
+					_ = w.uploadSvc.ClearBackoff(upload.ID)
 					slog.Info("gas fee acceptable after backoff", "uuid", upload.UUID, "quoted", prepared.TotalAmount, "attempts", upload.BackoffAttempt)
 				}
 				slog.Info("gas fee check passed", "uuid", upload.UUID, "quoted", prepared.TotalAmount, "max", maxFeeStr)
@@ -376,11 +375,11 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 
 	// Update wallet balance from chain (best-effort)
 	if tokenBal, gasBal, err := w.evmSigner.GetBalances(ctx, wallet.Address, prepared.PaymentTokenAddress); err == nil {
-		w.walletSvc.UpdateBalance(wallet.ID, tokenBal, gasBal)
-		w.txnSvc.Record(wallet.ID, &upload.ID, "upload", paidAmount, tokenBal, txHash)
+		_ = w.walletSvc.UpdateBalance(wallet.ID, tokenBal, gasBal)
+		_, _ = w.txnSvc.Record(wallet.ID, &upload.ID, "upload", paidAmount, tokenBal, txHash)
 	} else {
 		slog.Warn("failed to query post-payment balance", "error", err)
-		w.txnSvc.Record(wallet.ID, &upload.ID, "upload", paidAmount, wallet.PaymentBalance, txHash)
+		_, _ = w.txnSvc.Record(wallet.ID, &upload.ID, "upload", paidAmount, wallet.PaymentBalance, txHash)
 	}
 
 	slog.Info("upload completed", "uuid", upload.UUID, "payment_type", prepared.PaymentType,
@@ -519,6 +518,8 @@ func (w *UploadWorker) cleanOrphanedTempFiles() {
 // TempUploadDir returns the path to the temp upload directory, creating it if needed.
 func TempUploadDir(cfg *config.Config) string {
 	dir := filepath.Join(cfg.DataDir, "uploads", "tmp")
-	os.MkdirAll(dir, 0750)
+	if err := os.MkdirAll(dir, 0750); err != nil {
+		slog.Warn("failed to create temp upload dir", "path", dir, "error", err)
+	}
 	return dir
 }

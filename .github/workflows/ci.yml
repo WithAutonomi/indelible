@@ -1,0 +1,211 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # web/embed.go declares //go:embed all:dist — Go won't compile without dist/
+      - name: Stub frontend dist
+        run: mkdir -p web/dist && echo '<!doctype html>' > web/dist/index.html
+
+      - name: Go vet
+        run: go vet ./...
+
+      - name: Verify module checksums
+        run: go mod verify
+
+      - name: Install golangci-lint
+        run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+
+      - name: golangci-lint
+        run: golangci-lint run ./...
+
+      - name: Install swag
+        run: go install github.com/swaggo/swag/cmd/swag@v1.16.6
+
+      - name: Check Swagger docs are up to date
+        run: |
+          swag init -g cmd/indelible/main.go -o docs/ --parseDependency
+          git diff --exit-code docs/ || (echo "Swagger docs are out of date — run 'swag init -g cmd/indelible/main.go -o docs/ --parseDependency' and commit" && exit 1)
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Stub frontend dist
+        run: mkdir -p web/dist && echo '<!doctype html>' > web/dist/index.html
+
+      - name: Run tests
+        run: go test -count=1 -timeout 5m ./...
+
+  race:
+    name: Race detection
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Stub frontend dist
+        run: mkdir -p web/dist && echo '<!doctype html>' > web/dist/index.html
+
+      - name: Run tests with race detector
+        run: go test -race -count=1 -timeout 10m ./...
+
+  security:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Stub frontend dist
+        run: mkdir -p web/dist && echo '<!doctype html>' > web/dist/index.html
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Go vulnerability scan
+        run: govulncheck ./...
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install frontend deps
+        run: cd web && npm ci
+
+      - name: NPM audit
+        run: cd web && npm audit --audit-level=high
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: cd web && npm ci
+
+      - name: Type check and build
+        run: cd web && npm run build
+
+      - name: Unit tests
+        run: cd web && npm run test:unit
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: web/dist/
+          retention-days: 1
+
+  e2e:
+    name: E2E
+    runs-on: ubuntu-latest
+    needs: [test, frontend]
+    steps:
+      - uses: actions/checkout@v4
+
+      # Download real frontend dist (not the stub — the binary embeds it via //go:embed)
+      - uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: web/dist/
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Verify frontend dist
+        run: |
+          echo "=== dist contents ==="
+          ls -la web/dist/
+          ls -la web/dist/assets/ || echo "no assets dir"
+          echo "=== index.html head ==="
+          head -5 web/dist/index.html
+
+      # Build binary here so it embeds the real frontend, not a stub
+      - name: Build server
+        run: go build -o bin/indelible-test ./cmd/indelible
+
+      - name: Smoke test server
+        run: |
+          export INDELIBLE_DB_URL="sqlite://:memory:"
+          export INDELIBLE_JWT_SECRET="e2e-ci-test-secret-minimum-32-characters"
+          export INDELIBLE_WALLET_ENCRYPTION_KEY="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab"
+          export INDELIBLE_DATA_DIR="/tmp/indelible-e2e"
+          bin/indelible-test &
+          SERVER_PID=$!
+          sleep 2
+          echo "=== health check ==="
+          curl -s http://localhost:8080/health || echo "health failed"
+          echo ""
+          echo "=== GET /register (first 20 lines) ==="
+          curl -s http://localhost:8080/register | head -20
+          echo ""
+          echo "=== GET / (first 20 lines) ==="
+          curl -s http://localhost:8080/ | head -20
+          kill $SERVER_PID 2>/dev/null || true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+
+      - name: Install Playwright
+        run: cd e2e && npm ci && npx playwright install --with-deps chromium
+
+      - name: Run E2E tests
+        run: cd e2e && npx playwright test
+        env:
+          INDELIBLE_DB_URL: "sqlite://:memory:"
+          INDELIBLE_JWT_SECRET: e2e-ci-test-secret-minimum-32-characters
+          INDELIBLE_WALLET_ENCRYPTION_KEY: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+          INDELIBLE_DATA_DIR: /tmp/indelible-e2e
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: e2e/playwright-report/
+          retention-days: 7

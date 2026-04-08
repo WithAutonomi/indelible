@@ -1,0 +1,171 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      antd_version:
+        description: "ant-sdk release tag to bundle (e.g. v0.2.0). Leave empty to read .antd-version file."
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  release-meta:
+    name: Release metadata
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+    steps:
+      - name: Parse tag
+        id: meta
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          version="${tag#v}"
+          echo "version=${version}" >> $GITHUB_OUTPUT
+          if [[ "$version" == *-* ]]; then
+            echo "prerelease=true" >> $GITHUB_OUTPUT
+          else
+            echo "prerelease=false" >> $GITHUB_OUTPUT
+          fi
+          echo "Tag: $tag, Version: $version, Prerelease: $(grep prerelease $GITHUB_OUTPUT | tail -1 | cut -d= -f2)"
+
+  resolve-antd-version:
+    name: Resolve antd version
+    runs-on: ubuntu-latest
+    outputs:
+      antd_tag: ${{ steps.resolve.outputs.antd_tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Priority: workflow_dispatch input > .antd-version file > latest
+          INPUT="${{ github.event.inputs.antd_version }}"
+
+          if [ -n "$INPUT" ]; then
+            TAG="$INPUT"
+            echo "Source: workflow_dispatch input"
+          elif [ -f .antd-version ]; then
+            TAG=$(cat .antd-version | tr -d '[:space:]')
+            echo "Source: .antd-version file"
+          else
+            TAG="latest"
+            echo "Source: default (latest)"
+          fi
+
+          if [ "$TAG" = "latest" ]; then
+            TAG=$(gh release list --repo WithAutonomi/ant-sdk --limit 1 --json tagName --jq '.[0].tagName')
+            echo "Resolved 'latest' to: $TAG"
+          fi
+
+          echo "antd_tag=$TAG" >> $GITHUB_OUTPUT
+          echo "Bundling antd daemon: $TAG"
+
+  build:
+    name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ${{ matrix.os }}
+    needs: [release-meta, resolve-antd-version]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            os: ubuntu-latest
+            indelible_artifact: indelible-linux-amd64
+            antd_artifact: antd-linux-amd64
+          - goos: linux
+            goarch: arm64
+            os: ubuntu-latest
+            indelible_artifact: indelible-linux-arm64
+            antd_artifact: ""
+          - goos: darwin
+            goarch: arm64
+            os: macos-latest
+            indelible_artifact: indelible-darwin-arm64
+            antd_artifact: antd-darwin-arm64
+          - goos: windows
+            goarch: amd64
+            os: windows-latest
+            indelible_artifact: indelible-windows-amd64.exe
+            antd_artifact: antd-windows-amd64.exe
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build frontend
+        run: cd web && npm ci && npm run build
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build indelible
+        shell: bash
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          VERSION="${{ needs.release-meta.outputs.version }}"
+          go build -ldflags "-s -w -X main.version=${VERSION}" \
+            -o "${{ matrix.indelible_artifact }}" ./cmd/indelible
+
+      - name: Download antd daemon
+        if: matrix.antd_artifact != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ANTD_TAG="${{ needs.resolve-antd-version.outputs.antd_tag }}"
+          echo "Downloading ${{ matrix.antd_artifact }} from ant-sdk release ${ANTD_TAG}"
+          gh release download "${ANTD_TAG}" \
+            --repo WithAutonomi/ant-sdk \
+            --pattern "${{ matrix.antd_artifact }}" \
+            --dir . || echo "::warning::No antd binary found for ${{ matrix.antd_artifact }} — skipping bundle"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.indelible_artifact }}
+          path: |
+            ${{ matrix.indelible_artifact }}
+            ${{ matrix.antd_artifact }}
+          if-no-files-found: error
+
+  release:
+    name: Create Release
+    needs: [build, release-meta, resolve-antd-version]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum * > SHA256SUMS
+          echo "Release artifacts:"
+          cat SHA256SUMS
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
+          prerelease: ${{ needs.release-meta.outputs.prerelease == 'true' }}
+          body: |
+            Bundled antd daemon: `${{ needs.resolve-antd-version.outputs.antd_tag }}`

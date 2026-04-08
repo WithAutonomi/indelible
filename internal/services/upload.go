@@ -468,8 +468,12 @@ func (s *UploadService) ForceRetry(id int64) error {
 // Delete permanently removes an upload record. Only allowed for failed or completed uploads.
 func (s *UploadService) Delete(id int64) error {
 	// Clean up related data first
-	s.db.Exec(`DELETE FROM file_tags WHERE upload_id = ?`, id)
-	s.db.Exec(`DELETE FROM collection_files WHERE upload_id = ?`, id)
+	if _, err := s.db.Exec(`DELETE FROM file_tags WHERE upload_id = ?`, id); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`DELETE FROM collection_files WHERE upload_id = ?`, id); err != nil {
+		return err
+	}
 
 	result, err := s.db.Exec(
 		`DELETE FROM uploads WHERE id = ? AND status IN ('failed', 'completed')`,

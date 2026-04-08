@@ -321,7 +321,7 @@ func AddToCollection(db *sql.DB) http.HandlerFunc {
 		}
 
 		// Inherit collection tags to the file (additive, won't overwrite existing)
-		collTagSvc.InheritToFile(collID, upload.ID)
+		_, _ = collTagSvc.InheritToFile(collID, upload.ID)
 
 		webhookSvc := services.NewWebhookDeliveryService(db)
 		go webhookSvc.FireCollectionEvent("collection_file_added", upload.UUID, collID, coll.Name)

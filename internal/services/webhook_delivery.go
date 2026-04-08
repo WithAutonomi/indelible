@@ -375,7 +375,8 @@ func (s *WebhookDeliveryService) formatPayload(integrationType string, payload W
 func (s *WebhookDeliveryService) formatSlack(payload WebhookPayload) ([]byte, error) {
 	var text string
 
-	if payload.Upload != nil {
+	switch {
+	case payload.Upload != nil:
 		text = fmt.Sprintf("*%s*: `%s` — %s (%d bytes)",
 			payload.EventType, payload.Upload.Filename, payload.Upload.Status, payload.Upload.FileSize)
 		if payload.Upload.ActualCost != nil {
@@ -384,13 +385,13 @@ func (s *WebhookDeliveryService) formatSlack(payload WebhookPayload) ([]byte, er
 		if payload.Upload.ErrorMessage != nil {
 			text += fmt.Sprintf("\nError: %s", *payload.Upload.ErrorMessage)
 		}
-	} else if payload.Tags != nil {
+	case payload.Tags != nil:
 		text = fmt.Sprintf("*%s*: `%s` — %d tags", payload.EventType, payload.Tags.UploadUUID, len(payload.Tags.Tags))
-	} else if payload.Collection != nil {
+	case payload.Collection != nil:
 		text = fmt.Sprintf("*%s*: `%s` — collection `%s`", payload.EventType, payload.Collection.UploadUUID, payload.Collection.CollectionName)
-	} else if payload.System != nil {
+	case payload.System != nil:
 		text = fmt.Sprintf("*%s*: %s (%.1f%%)", payload.EventType, payload.System.Message, payload.System.Value)
-	} else {
+	default:
 		text = fmt.Sprintf("*%s* — Indelible test ping at %s", payload.EventType, payload.Timestamp)
 	}
 
