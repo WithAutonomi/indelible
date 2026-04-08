@@ -52,20 +52,9 @@ jobs:
       - name: Run tests
         run: go test -count=1 -timeout 5m ./...
 
-      # Build the binary here so E2E can reuse it via artifacts
-      - name: Build server binary
-        run: go build -o bin/indelible-test ./cmd/indelible
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: server-binary
-          path: bin/indelible-test
-          retention-days: 1
-
   race:
     name: Race detection
     runs-on: ubuntu-latest
-    # Non-blocking — runs in parallel, doesn't gate other jobs
     steps:
       - uses: actions/checkout@v4
 
@@ -100,7 +89,6 @@ jobs:
       - name: Unit tests
         run: cd web && npm run test:unit
 
-      # Upload dist so E2E can reuse it
       - uses: actions/upload-artifact@v4
         with:
           name: frontend-dist
@@ -114,19 +102,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Download pre-built artifacts instead of rebuilding
-      - uses: actions/download-artifact@v4
-        with:
-          name: server-binary
-          path: bin/
-
-      - name: Make binary executable
-        run: chmod +x bin/indelible-test
-
+      # Download real frontend dist (not the stub — the binary embeds it via //go:embed)
       - uses: actions/download-artifact@v4
         with:
           name: frontend-dist
           path: web/dist/
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # Build binary here so it embeds the real frontend, not a stub
+      - name: Build server
+        run: go build -o bin/indelible-test ./cmd/indelible
 
       - uses: actions/setup-node@v4
         with:
