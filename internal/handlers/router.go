@@ -288,4 +288,10 @@ func (w *spaResponseWriter) reset() {
 	w.status = http.StatusOK
 	w.wroteHeader = false
 	w.wroteBody = false
+	// Clear headers from the failed 404 attempt — especially Content-Type,
+	// which http.ServeContent won't overwrite if already set.
+	h := w.ResponseWriter.Header()
+	for k := range h {
+		delete(h, k)
+	}
 }
