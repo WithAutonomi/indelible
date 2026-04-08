@@ -177,6 +177,7 @@ definitions:
   internal_handlers.createWalletRequest:
     properties:
       address:
+        description: optional — derived from private_key if omitted
         type: string
       name:
         type: string
@@ -306,6 +307,23 @@ definitions:
       new_password:
         type: string
       token:
+        type: string
+    type: object
+  internal_handlers.scimTokenResponse:
+    properties:
+      created_at:
+        type: string
+      created_by:
+        type: integer
+      id:
+        type: integer
+      is_active:
+        type: boolean
+      last_used_at:
+        type: string
+      name:
+        type: string
+      revoked_at:
         type: string
     type: object
   internal_handlers.setPermissionsRequest:
@@ -1273,6 +1291,111 @@ paths:
       summary: Update a quota
       tags:
       - 'Admin: Quotas'
+  /admin/scim/tokens:
+    get:
+      description: Return all SCIM tokens (no secrets shown)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              items:
+                $ref: '#/definitions/internal_handlers.scimTokenResponse'
+              type: array
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List SCIM tokens
+      tags:
+      - 'Admin: SCIM'
+    post:
+      consumes:
+      - application/json
+      description: Generate a new SCIM bearer token for identity provider integration
+      parameters:
+      - description: Token name
+        in: body
+        name: body
+        required: true
+        schema:
+          properties:
+            name:
+              type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Create a SCIM token
+      tags:
+      - 'Admin: SCIM'
+  /admin/scim/tokens/{id}:
+    delete:
+      description: Revoke a SCIM token by ID
+      parameters:
+      - description: Token ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Revoke a SCIM token
+      tags:
+      - 'Admin: SCIM'
   /admin/settings:
     get:
       description: Return all system configuration settings
@@ -1803,6 +1926,69 @@ paths:
       summary: Create a wallet
       tags:
       - 'Admin: Wallets'
+  /admin/wallets/{id}:
+    delete:
+      description: Remove a wallet (cannot delete the default wallet)
+      parameters:
+      - description: Wallet ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete a wallet
+      tags:
+      - 'Admin: Wallets'
+  /admin/wallets/{id}/balance:
+    post:
+      description: Query the EVM chain for the current token and gas balance
+      parameters:
+      - description: Wallet ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Refresh wallet balance
+      tags:
+      - 'Admin: Wallets'
   /admin/wallets/{id}/default:
     put:
       description: Make a wallet the default for upload payments
@@ -2031,6 +2217,46 @@ paths:
       security:
       - BearerAuth: []
       summary: List webhook deliveries
+      tags:
+      - 'Admin: Webhooks'
+  /admin/webhooks/{id}/rotate-secret:
+    post:
+      description: Generate a new signing secret for a webhook endpoint
+      parameters:
+      - description: Webhook ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Rotate webhook secret
       tags:
       - 'Admin: Webhooks'
   /admin/webhooks/{id}/test:
@@ -2438,7 +2664,7 @@ paths:
       - Collections
   /health:
     get:
-      description: Returns system health status including database connectivity
+      description: Returns system health status including database, antd, and queue
       produces:
       - application/json
       responses:
@@ -2934,6 +3160,27 @@ paths:
       summary: Cancel queued upload
       tags:
       - Uploads
+  /uploads/{id}/collections:
+    get:
+      parameters:
+      - description: Upload UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get collections containing an upload
+      tags:
+      - Collections
   /uploads/{id}/download:
     get:
       description: Download a completed upload's file data from the Autonomi network
@@ -3062,6 +3309,34 @@ paths:
       tags:
       - Uploads
   /uploads/{id}/tags:
+    get:
+      description: Returns all tags on an upload as a key-value map
+      parameters:
+      - description: Upload UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get tags for an upload
+      tags:
+      - Tags
     put:
       consumes:
       - application/json
