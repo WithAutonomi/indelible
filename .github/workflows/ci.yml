@@ -50,6 +50,33 @@ jobs:
         run: mkdir -p web/dist && echo '<!doctype html>' > web/dist/index.html
 
       - name: Run tests
+        run: go test -count=1 -timeout 5m ./...
+
+      # Build the binary here so E2E can reuse it via artifacts
+      - name: Build server binary
+        run: go build -o bin/indelible-test ./cmd/indelible
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-binary
+          path: bin/indelible-test
+          retention-days: 1
+
+  race:
+    name: Race detection
+    runs-on: ubuntu-latest
+    # Non-blocking — runs in parallel, doesn't gate other jobs
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Stub frontend dist
+        run: mkdir -p web/dist && echo '<!doctype html>' > web/dist/index.html
+
+      - name: Run tests with race detector
         run: go test -race -count=1 -timeout 10m ./...
 
   frontend:
@@ -73,6 +100,13 @@ jobs:
       - name: Unit tests
         run: cd web && npm run test:unit
 
+      # Upload dist so E2E can reuse it
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: web/dist/
+          retention-days: 1
+
   e2e:
     name: E2E
     runs-on: ubuntu-latest
@@ -80,27 +114,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v5
+      # Download pre-built artifacts instead of rebuilding
+      - uses: actions/download-artifact@v4
         with:
-          go-version-file: go.mod
+          name: server-binary
+          path: bin/
+
+      - name: Make binary executable
+        run: chmod +x bin/indelible-test
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: web/dist/
 
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: web/package-lock.json
-
-      - name: Build frontend
-        run: cd web && npm ci && npm run build
-
-      - name: Build server
-        run: go build -o bin/indelible-test ./cmd/indelible
+          cache-dependency-path: e2e/package-lock.json
 
       - name: Install Playwright
         run: cd e2e && npm ci && npx playwright install --with-deps chromium
 
       - name: Run E2E tests
         run: cd e2e && npx playwright test
+        env:
+          INDELIBLE_DB_URL: "sqlite://:memory:"
+          INDELIBLE_JWT_SECRET: e2e-ci-test-secret-minimum-32-characters
+          INDELIBLE_WALLET_ENCRYPTION_KEY: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab
+          INDELIBLE_DATA_DIR: /tmp/indelible-e2e
 
       - name: Upload Playwright report
         uses: actions/upload-artifact@v4
