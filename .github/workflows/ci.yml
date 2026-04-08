@@ -112,9 +112,36 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Verify frontend dist
+        run: |
+          echo "=== dist contents ==="
+          ls -la web/dist/
+          ls -la web/dist/assets/ || echo "no assets dir"
+          echo "=== index.html head ==="
+          head -5 web/dist/index.html
+
       # Build binary here so it embeds the real frontend, not a stub
       - name: Build server
         run: go build -o bin/indelible-test ./cmd/indelible
+
+      - name: Smoke test server
+        run: |
+          export INDELIBLE_DB_URL="sqlite://:memory:"
+          export INDELIBLE_JWT_SECRET="e2e-ci-test-secret-minimum-32-characters"
+          export INDELIBLE_WALLET_ENCRYPTION_KEY="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab"
+          export INDELIBLE_DATA_DIR="/tmp/indelible-e2e"
+          bin/indelible-test &
+          SERVER_PID=$!
+          sleep 2
+          echo "=== health check ==="
+          curl -s http://localhost:8080/health || echo "health failed"
+          echo ""
+          echo "=== GET /register (first 20 lines) ==="
+          curl -s http://localhost:8080/register | head -20
+          echo ""
+          echo "=== GET / (first 20 lines) ==="
+          curl -s http://localhost:8080/ | head -20
+          kill $SERVER_PID 2>/dev/null || true
 
       - uses: actions/setup-node@v4
         with:
