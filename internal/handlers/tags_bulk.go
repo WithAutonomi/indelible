@@ -39,7 +39,8 @@ func BulkTagUploads(db *sql.DB) http.HandlerFunc {
 		// Resolve target uploads
 		var targets []*services.Upload
 
-		if len(req.UploadUUIDs) > 0 {
+		switch {
+		case len(req.UploadUUIDs) > 0:
 			// Resolve UUIDs to uploads, verifying ownership
 			for _, uid := range req.UploadUUIDs {
 				upload, err := uploadSvc.GetByUUID(uid)
@@ -48,7 +49,7 @@ func BulkTagUploads(db *sql.DB) http.HandlerFunc {
 				}
 				targets = append(targets, upload)
 			}
-		} else if req.Selector != "" {
+		case req.Selector != "":
 			// Parse selector and find matching uploads
 			reqs, err := services.ParseSelector(req.Selector)
 			if err != nil {
@@ -62,7 +63,7 @@ func BulkTagUploads(db *sql.DB) http.HandlerFunc {
 				return
 			}
 			targets = uploads
-		} else {
+		default:
 			jsonError(w, "upload_uuids or selector required", http.StatusBadRequest)
 			return
 		}

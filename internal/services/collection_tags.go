@@ -20,7 +20,9 @@ func (s *CollectionTagService) SetTags(collectionID int64, tags map[string][]str
 	}
 	defer tx.Rollback()
 
-	tx.Exec(`DELETE FROM collection_tags WHERE collection_id = ?`, collectionID)
+	if _, err := tx.Exec(`DELETE FROM collection_tags WHERE collection_id = ?`, collectionID); err != nil {
+		return err
+	}
 	for k, vals := range tags {
 		for _, v := range vals {
 			_, err := tx.Exec(

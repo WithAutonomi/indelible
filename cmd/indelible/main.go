@@ -74,7 +74,7 @@ func main() {
 			slog.Error("failed to start antd", "error", err)
 			os.Exit(1)
 		}
-		defer antdMgr.Stop()
+		defer func() { _ = antdMgr.Stop() }()
 		cfg.AntdURL = antdMgr.URL()
 		slog.Info("antd managed", "url", cfg.AntdURL, "pid", antdMgr.PID())
 	} else if cfg.AntdURL == "" || cfg.AntdURL == "http://localhost:8082" {
@@ -89,6 +89,9 @@ func main() {
 	db, err := database.Open(cfg.DBURL)
 	if err != nil {
 		slog.Error("failed to open database", "error", err)
+		if antdMgr != nil {
+			_ = antdMgr.Stop()
+		}
 		os.Exit(1)
 	}
 	defer db.Close()
@@ -96,6 +99,9 @@ func main() {
 	// Run migrations
 	if err := database.Migrate(db, cfg.DBDriver()); err != nil {
 		slog.Error("failed to run migrations", "error", err)
+		if antdMgr != nil {
+			_ = antdMgr.Stop()
+		}
 		os.Exit(1)
 	}
 

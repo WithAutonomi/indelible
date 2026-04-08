@@ -232,7 +232,7 @@ func (s *AnalyticsService) CostAnalytics(since time.Time) (*CostStats, error) {
 
 	if stats.TotalUploads > 0 {
 		totalCostInt := int64(0)
-		fmt.Sscanf(stats.TotalCost, "%d", &totalCostInt)
+		_, _ = fmt.Sscanf(stats.TotalCost, "%d", &totalCostInt)
 		stats.AvgCostPerUpload = fmt.Sprintf("%d", totalCostInt/stats.TotalUploads)
 	} else {
 		stats.AvgCostPerUpload = "0"

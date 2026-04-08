@@ -130,7 +130,9 @@ func (s *OIDCProviderService) Delete(id int64) error {
 	}
 	defer tx.Rollback()
 
-	tx.Exec(`DELETE FROM oidc_identities WHERE provider_id = ?`, id)
+	if _, err := tx.Exec(`DELETE FROM oidc_identities WHERE provider_id = ?`, id); err != nil {
+		return err
+	}
 
 	result, err := tx.Exec(`DELETE FROM oidc_providers WHERE id = ?`, id)
 	if err != nil {

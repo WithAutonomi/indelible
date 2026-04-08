@@ -37,6 +37,10 @@ data/
 # Air (hot reload)
 tmp/
 
+# Go workspaces (local multi-module dev)
+go.work
+go.work.sum
+
 # sqlc generated (optional — some teams commit these)
 # internal/database/sqlitedb/
 # internal/database/pgdb/

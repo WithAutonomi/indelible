@@ -639,7 +639,8 @@ func DownloadUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		tempPath := filepath.Join(tempDir, "dl-"+uuid.New().String())
 		defer os.Remove(tempPath)
 
-		if upload.DataMap.Valid {
+		switch {
+		case upload.DataMap.Valid:
 			// External signer flow: use local DataMap to download directly
 			data, err := client.DataGetPrivate(r.Context(), upload.DataMap.String)
 			if err != nil {
@@ -650,7 +651,7 @@ func DownloadUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 				jsonError(w, "failed to write download", http.StatusInternalServerError)
 				return
 			}
-		} else if upload.DatamapAddress.Valid {
+		case upload.DatamapAddress.Valid:
 			// Legacy flow: download via network address
 			if upload.Visibility == "public" {
 				if err := client.FileDownloadPublic(r.Context(), upload.DatamapAddress.String, tempPath); err != nil {
@@ -668,7 +669,7 @@ func DownloadUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 					return
 				}
 			}
-		} else {
+		default:
 			jsonError(w, "upload has no data map or network address", http.StatusInternalServerError)
 			return
 		}
