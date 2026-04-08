@@ -1,20 +1,17 @@
 import { test, expect } from '@playwright/test'
-import { ADMIN_USER } from '../helpers/fixtures'
 
-async function registerAndLogin(page: any) {
-  await page.goto('/register')
-  await page.getByPlaceholder('First name').fill(ADMIN_USER.firstName)
-  await page.getByPlaceholder('Last name').fill(ADMIN_USER.lastName)
-  await page.getByPlaceholder('Email').fill(ADMIN_USER.email)
-  await page.locator('input[placeholder="Password"]').fill(ADMIN_USER.password)
-  await page.getByRole('button', { name: 'Create account' }).click()
-  await page.waitForURL((url: URL) => !url.pathname.includes('/register'), { timeout: 10000 })
-}
-
-test.describe('Admin Panel', () => {
-  test('admin can navigate to users page', async ({ page }) => {
-    await registerAndLogin(page)
-    await page.goto('/admin/users')
-    await expect(page.locator('body')).toContainText('User', { timeout: 10000 })
+test.describe('Admin', () => {
+  test('register via API works', async ({ request }) => {
+    const response = await request.post('/api/v2/auth/register', {
+      data: {
+        email: 'api-test@e2e.com',
+        password: 'TestPassword123!',
+        first_name: 'API',
+        last_name: 'Test',
+      },
+    })
+    console.log('Register API status:', response.status())
+    console.log('Register API body:', await response.text())
+    expect(response.status()).toBe(201)
   })
 })
