@@ -13,12 +13,9 @@ export default defineConfig({
     port: 8080,
     reuseExistingServer: false,
     timeout: 15000,
-    env: {
-      INDELIBLE_DB_URL: 'sqlite://:memory:',
-      INDELIBLE_JWT_SECRET: 'e2e-test-secret-minimum-32-characters-long',
-      INDELIBLE_WALLET_ENCRYPTION_KEY: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab',
-      INDELIBLE_DATA_DIR: '/tmp/indelible-e2e',
-    },
+    // Env vars are set externally (CI step env or shell env for local dev).
+    // Do NOT set webServer.env here — it replaces process.env entirely,
+    // stripping PATH and other essentials needed to run the binary.
   },
   projects: [
     { name: 'chromium', use: { browserName: 'chromium' } },
