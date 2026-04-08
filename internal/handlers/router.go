@@ -38,6 +38,9 @@ func NewRouter(cfg *config.Config, db *sql.DB) http.Handler {
 		MaxAge:           300,
 	}))
 
+	r.Use(middleware.SecurityHeaders())
+	r.Use(middleware.MaxBodySize(1 << 20)) // 1MB limit for JSON endpoints
+
 	// Health check (no auth)
 	r.Get("/health", Health(db, cfg))
 

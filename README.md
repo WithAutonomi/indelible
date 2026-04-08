@@ -188,6 +188,43 @@ web/src/               Vue 3 + TypeScript frontend
 docs/                  Generated Swagger/OpenAPI specs
 ```
 
+## Security
+
+Indelible includes several layers of security hardening:
+
+- **Wallet encryption** — private keys encrypted at rest with AES-256-GCM
+- **JWT security** — HMAC-only algorithm enforcement, expiry validation, password-change invalidation
+- **HTTP security headers** — CSP, X-Content-Type-Options, X-Frame-Options, Referrer-Policy, Permissions-Policy
+- **Request body limits** — 1MB limit on JSON endpoints (uploads have separate configurable limit)
+- **Rate limiting** — login (5/60s), uploads (60/min), password reset (3/60s)
+- **Upload validation** — path traversal prevention, configurable content-type allowlist, file size limits
+- **Input sanitization** — parameterized SQL queries throughout, validated tag selectors
+
+## Development
+
+```bash
+make dev          # Run Go + Vue dev servers in parallel
+make test         # Run Go tests
+make build        # Build frontend + backend
+make check        # Run lint + test + security scan
+make security     # Run govulncheck + npm audit
+make fuzz         # Run fuzz tests (30s each)
+make bench        # Run benchmark tests
+```
+
+## CI pipeline
+
+The CI runs on every PR and push to `master`:
+
+| Job | What it checks | Blocks merge |
+|-----|----------------|--------------|
+| **Lint** | go vet, golangci-lint (8 linters), swagger drift | Yes |
+| **Test** | `go test` — 50+ test files including workflow integration tests | Yes |
+| **Frontend** | vue-tsc type check, vite build, vitest unit tests (35 tests) | Yes |
+| **Race detection** | `go test -race` — detects data races | No (informational) |
+| **Security** | gitleaks (secret scanning), govulncheck (Go vulns), npm audit | No (informational) |
+| **E2E** | Playwright browser tests against full stack | Yes |
+
 ## Documentation
 
 - **[User Guide](USER-GUIDE.md)** — setup, configuration, all features, API consumer guide, deployment
