@@ -330,7 +330,7 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 			prepared.PoolCommitments,
 			prepared.MerklePaymentTimestamp,
 			prepared.PaymentTokenAddress,
-			prepared.MerklePaymentsAddress,
+			prepared.PaymentVaultAddress,
 		)
 		if err != nil {
 			return fmt.Errorf("EVM merkle payment failed: %w", err)
@@ -349,7 +349,7 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 
 	default: // "wave_batch" or empty (backward compat)
 		// Phase 2: Sign wave-batch payment
-		txHashes, err := w.evmSigner.PayForQuotes(ctx, walletKey, prepared.Payments, prepared.PaymentTokenAddress, prepared.DataPaymentsAddress)
+		txHashes, err := w.evmSigner.PayForQuotes(ctx, walletKey, prepared.Payments, prepared.PaymentTokenAddress, prepared.PaymentVaultAddress)
 		if err != nil {
 			return fmt.Errorf("EVM payment failed: %w", err)
 		}
