@@ -22,6 +22,9 @@ e2e/test-results/
 *.swp
 *.swo
 
+# Claude Code
+.claude/
+
 # OS
 .DS_Store
 Thumbs.db

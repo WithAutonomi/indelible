@@ -212,6 +212,30 @@ make fuzz         # Run fuzz tests (30s each)
 make bench        # Run benchmark tests
 ```
 
+### Bumping ant-sdk
+
+indelible pins ant-sdk in two independent places:
+
+- `.antd-version` — the daemon binary release tag (used by `release.yml` to download the `antd-*` artifact).
+- `go.mod` — the `antd-go` Go module for the daemon call surface (`PrepareUpload`, `FinalizeUpload`, etc.).
+
+Before bumping either, grep the actual symbols indelible consumes so you know what a breaking change in ant-sdk would touch:
+
+```bash
+grep -rn "antd\." internal/
+```
+
+That's the complete call surface — anything not listed there is a break you don't need to worry about. Then bump:
+
+```bash
+echo v0.3.0 > .antd-version                                              # daemon binary
+go get github.com/WithAutonomi/ant-sdk/antd-go@$(cat .antd-version) \    # keep Go SDK in lockstep
+  && go mod tidy
+make test
+```
+
+Commit both files together so the daemon binary and the SDK never drift.
+
 ## CI pipeline
 
 The CI runs on every PR and push to `master`:
