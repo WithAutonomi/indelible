@@ -101,8 +101,7 @@ func (m *Manager) spawn(ctx context.Context, binPath string) error {
 	defer m.mu.Unlock()
 
 	args := []string{
-		"--port", "0",
-		"--data-dir", m.cfg.AntdDataDir,
+		"--rest-port", "0",
 	}
 
 	m.cmd = exec.CommandContext(ctx, binPath, args...)
