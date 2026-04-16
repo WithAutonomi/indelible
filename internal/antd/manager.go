@@ -62,11 +62,6 @@ func (m *Manager) Start(ctx context.Context) error {
 		return fmt.Errorf("antd binary not found; install antd or set INDELIBLE_ANTD_BIN: %w", err)
 	}
 
-	// Ensure data dir exists
-	if err := os.MkdirAll(m.cfg.AntdDataDir, 0o755); err != nil {
-		return fmt.Errorf("creating antd data dir: %w", err)
-	}
-
 	mctx, cancel := context.WithCancel(ctx)
 	m.cancel = cancel
 
@@ -102,10 +97,10 @@ func (m *Manager) spawn(ctx context.Context, binPath string) error {
 
 	args := []string{
 		"--rest-port", "0",
+		"--grpc-port", "0",
 	}
 
 	m.cmd = exec.CommandContext(ctx, binPath, args...)
-	m.cmd.Dir = m.cfg.AntdDataDir
 
 	// Pipe stdout/stderr through slog
 	stdout, err := m.cmd.StdoutPipe()

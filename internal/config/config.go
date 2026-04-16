@@ -25,9 +25,8 @@ type Config struct {
 	WalletEncryptionKey string   `toml:"wallet_encryption_key"` // Hex-encoded 32-byte AES key for wallet private keys
 
 	// Managed antd — spawn and monitor antd as a child process
-	AntdManaged bool   `toml:"antd_managed"`   // Spawn and manage antd (default: false)
-	AntdBin     string `toml:"antd_bin"`        // Path to antd binary (default: "antd" — searches PATH)
-	AntdDataDir string `toml:"antd_data_dir"`   // antd data directory (default: cfg.DataDir + "/antd")
+	AntdManaged bool   `toml:"antd_managed"` // Spawn and manage antd (default: false)
+	AntdBin     string `toml:"antd_bin"`     // Path to antd binary (default: "antd" — searches PATH)
 
 	// EVM configuration — populated automatically from first PrepareUpload, or set manually
 	EvmRPCURL      string `toml:"evm_rpc_url"`       // EVM RPC endpoint
@@ -136,9 +135,6 @@ func Load(path string) (*Config, error) {
 	if v := os.Getenv("INDELIBLE_ANTD_BIN"); v != "" {
 		cfg.AntdBin = v
 	}
-	if v := os.Getenv("INDELIBLE_ANTD_DATA_DIR"); v != "" {
-		cfg.AntdDataDir = v
-	}
 
 	if v := os.Getenv("INDELIBLE_EVM_RPC_URL"); v != "" {
 		cfg.EvmRPCURL = v
@@ -147,12 +143,9 @@ func Load(path string) (*Config, error) {
 		cfg.EvmTokenAddress = v
 	}
 
-	// Default antd binary and data dir
+	// Default antd binary
 	if cfg.AntdBin == "" {
 		cfg.AntdBin = "antd"
-	}
-	if cfg.AntdDataDir == "" {
-		cfg.AntdDataDir = cfg.DataDir + "/antd"
 	}
 
 	// Default SMTP port
