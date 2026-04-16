@@ -64,7 +64,6 @@ antd_url = "http://localhost:8082"
 data_dir = "/var/lib/indelible"
 antd_managed = false        # set true to spawn antd automatically
 antd_bin = "antd"           # path to antd binary (searches PATH)
-antd_data_dir = ""          # antd data dir (default: data_dir + "/antd")
 jwt_secret = "your-secret-key-at-least-32-chars"
 debug = false
 cors_allowed_origins = ["https://files.acme.com"]
@@ -103,7 +102,6 @@ use_tls = true
 | `INDELIBLE_SMTP_USE_TLS` | Use STARTTLS | `false` |
 | `INDELIBLE_ANTD_MANAGED` | Spawn and manage antd as child process | `false` |
 | `INDELIBLE_ANTD_BIN` | Path to antd binary | `antd` (searches PATH) |
-| `INDELIBLE_ANTD_DATA_DIR` | antd data directory | `$DATA_DIR/antd` |
 
 ### Managed antd
 

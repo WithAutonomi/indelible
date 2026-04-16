@@ -48,7 +48,7 @@ This requires the `antd` binary in your PATH. Indelible will:
 For production, run antd separately:
 
 ```bash
-antd --port 8082 &
+antd &   # binds to 0.0.0.0:8082 by default; override with --rest-port if needed
 export INDELIBLE_ANTD_URL=http://localhost:8082
 ./indelible
 ```
@@ -159,7 +159,6 @@ curl -X POST /api/v2/tokens \
 | `INDELIBLE_ANTD_URL` | antd daemon URL | `http://localhost:8082` |
 | `INDELIBLE_ANTD_MANAGED` | Spawn and manage antd as child process | `false` |
 | `INDELIBLE_ANTD_BIN` | Path to antd binary | `antd` (searches PATH) |
-| `INDELIBLE_ANTD_DATA_DIR` | antd data directory | `$DATA_DIR/antd` |
 | `INDELIBLE_PORT` | HTTP listen port | `8080` |
 | `INDELIBLE_DB_URL` | Database connection string | `sqlite://data.db` |
 | `INDELIBLE_DATA_DIR` | Directory for temp files | `./data` |
