@@ -28,8 +28,11 @@ type Config struct {
 	AntdManaged bool   `toml:"antd_managed"` // Spawn and manage antd (default: false)
 	AntdBin     string `toml:"antd_bin"`     // Path to antd binary (default: "antd" — searches PATH)
 
-	// EVM configuration — populated automatically from first PrepareUpload, or set manually
-	EvmRPCURL      string `toml:"evm_rpc_url"`       // EVM RPC endpoint
+	// EVM configuration — populated automatically from first PrepareUpload,
+	// from the Network preset (see ApplyNetworkPreset), or set manually.
+	// Explicit values always win over the preset.
+	Network         string `toml:"network"`           // "arbitrum-one" (default), "arbitrum-sepolia", or "custom"
+	EvmRPCURL       string `toml:"evm_rpc_url"`       // EVM RPC endpoint
 	EvmTokenAddress string `toml:"evm_token_address"` // Payment token contract address
 
 	// SMTP configuration for transactional emails (password reset, email verification)
@@ -48,6 +51,54 @@ type SMTPConfig struct {
 // SMTPConfigured returns true if SMTP is configured enough to send mail.
 func (c *Config) SMTPConfigured() bool {
 	return c.SMTP.Host != "" && c.SMTP.From != ""
+}
+
+// Network identifiers for ApplyNetworkPreset.
+const (
+	NetworkArbitrumOne     = "arbitrum-one"
+	NetworkArbitrumSepolia = "arbitrum-sepolia"
+	NetworkCustom          = "custom"
+)
+
+// Preset values mirror the canonical constants in autonomi/evmlib/src/lib.rs
+// so Indelible reads/writes the same on-chain state as every other Autonomi
+// component pointed at the same network.
+const (
+	arbitrumOneRPCURL       = "https://arb1.arbitrum.io/rpc"
+	arbitrumOneTokenAddress = "0xa78d8321B20c4Ef90eCd72f2588AA985A4BDb684"
+
+	arbitrumSepoliaRPCURL       = "https://sepolia-rollup.arbitrum.io/rpc"
+	arbitrumSepoliaTokenAddress = "0x4bc1aCE0E66170375462cB4E6Af42Ad4D5EC689C"
+)
+
+// ApplyNetworkPreset fills EvmRPCURL and EvmTokenAddress from the named
+// Network when they were not set explicitly. Explicit values (TOML, env, or
+// previously assigned) always win. An empty Network defaults to mainnet
+// ("arbitrum-one"); "custom" leaves the EVM fields untouched so the
+// upload-time auto-population path can fill them later.
+func (c *Config) ApplyNetworkPreset() error {
+	if c.Network == "" {
+		c.Network = NetworkArbitrumOne
+	}
+	var rpc, token string
+	switch c.Network {
+	case NetworkArbitrumOne:
+		rpc, token = arbitrumOneRPCURL, arbitrumOneTokenAddress
+	case NetworkArbitrumSepolia:
+		rpc, token = arbitrumSepoliaRPCURL, arbitrumSepoliaTokenAddress
+	case NetworkCustom:
+		return nil
+	default:
+		return fmt.Errorf("unknown network %q (expected %q, %q, or %q)",
+			c.Network, NetworkArbitrumOne, NetworkArbitrumSepolia, NetworkCustom)
+	}
+	if c.EvmRPCURL == "" {
+		c.EvmRPCURL = rpc
+	}
+	if c.EvmTokenAddress == "" {
+		c.EvmTokenAddress = token
+	}
+	return nil
 }
 
 // DBDriver returns "sqlite" or "postgres" based on the DB URL.
@@ -136,6 +187,9 @@ func Load(path string) (*Config, error) {
 		cfg.AntdBin = v
 	}
 
+	if v := os.Getenv("INDELIBLE_NETWORK"); v != "" {
+		cfg.Network = v
+	}
 	if v := os.Getenv("INDELIBLE_EVM_RPC_URL"); v != "" {
 		cfg.EvmRPCURL = v
 	}

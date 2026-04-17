@@ -229,7 +229,7 @@ func AdminRefreshWalletBalance(db *sql.DB, cfg *config.Config) http.HandlerFunc 
 		}
 
 		if cfg.EvmRPCURL == "" || cfg.EvmTokenAddress == "" {
-			jsonError(w, "EVM not configured (set INDELIBLE_EVM_RPC_URL and INDELIBLE_EVM_TOKEN_ADDRESS)", http.StatusServiceUnavailable)
+			jsonError(w, "EVM not configured — start indelible with --network arbitrum-one (mainnet) or --network arbitrum-sepolia (testnet), or set INDELIBLE_EVM_RPC_URL and INDELIBLE_EVM_TOKEN_ADDRESS explicitly", http.StatusServiceUnavailable)
 			return
 		}
 

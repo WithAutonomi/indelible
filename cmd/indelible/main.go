@@ -37,11 +37,13 @@ var version = "dev"
 
 func main() {
 	var (
-		configPath string
-		showVer    bool
+		configPath  string
+		showVer     bool
+		networkFlag string
 	)
 	flag.StringVar(&configPath, "config", "", "path to indelible.toml config file")
 	flag.BoolVar(&showVer, "version", false, "print version and exit")
+	flag.StringVar(&networkFlag, "network", "", `EVM network preset: "arbitrum-one" (default), "arbitrum-sepolia", or "custom" — overrides config file and INDELIBLE_NETWORK`)
 	flag.Parse()
 
 	if showVer {
@@ -53,6 +55,16 @@ func main() {
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		slog.Error("failed to load configuration", "error", err)
+		os.Exit(1)
+	}
+
+	// CLI --network beats env/file. Then fill EVM defaults from the preset
+	// for any value not already set explicitly.
+	if networkFlag != "" {
+		cfg.Network = networkFlag
+	}
+	if err := cfg.ApplyNetworkPreset(); err != nil {
+		slog.Error("invalid network configuration", "error", err)
 		os.Exit(1)
 	}
 
