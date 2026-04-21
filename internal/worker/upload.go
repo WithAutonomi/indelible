@@ -515,9 +515,15 @@ func (w *UploadWorker) cleanOrphanedTempFiles() {
 	}
 }
 
-// TempUploadDir returns the path to the temp upload directory, creating it if needed.
+// TempUploadDir returns the absolute path to the temp upload directory,
+// creating it if needed. The absolute form is important: antd opens upload
+// files by the path we hand it via PrepareUpload, so a path that's relative
+// to indelible's cwd will 400 if antd is running with a different cwd.
 func TempUploadDir(cfg *config.Config) string {
 	dir := filepath.Join(cfg.DataDir, "uploads", "tmp")
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
 	if err := os.MkdirAll(dir, 0750); err != nil {
 		slog.Warn("failed to create temp upload dir", "path", dir, "error", err)
 	}
