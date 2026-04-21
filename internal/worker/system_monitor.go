@@ -140,8 +140,9 @@ func (m *SystemMonitor) checkAntdHealth() {
 	// antd is reachable AND has overlay connectivity. A failed probe could be
 	// either antd process-down OR network-partitioned — both mean uploads and
 	// downloads will fail, so we surface them under the same alert.
+	// Payload must be >= 3 bytes: antd's self-encryption rejects smaller.
 	probe := antd.NewClient(m.cfg.AntdURL, antd.WithTimeout(15*time.Second))
-	if _, err := probe.DataCost(ctx, []byte{0}); err != nil {
+	if _, err := probe.DataCost(ctx, []byte{0, 0, 0}); err != nil {
 		m.fireAlert("antd_health", "critical", "antd_unreachable",
 			"antd cannot reach the Autonomi network at "+m.cfg.AntdURL, 0)
 	} else {

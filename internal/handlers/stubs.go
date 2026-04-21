@@ -36,12 +36,13 @@ func Health(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		// Success means antd is reachable AND has peers to quote from;
 		// any error (transport, 502 NetworkError, 503 ServiceUnavailable)
 		// means antd is not usable for real uploads/downloads.
+		// Payload must be >= 3 bytes: antd's self-encryption rejects smaller.
 		antdOK := false
 		if cfg.AntdURL != "" {
 			ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 			defer cancel()
 			probe := antd.NewClient(cfg.AntdURL, antd.WithTimeout(15*time.Second))
-			if _, err := probe.DataCost(ctx, []byte{0}); err == nil {
+			if _, err := probe.DataCost(ctx, []byte{0, 0, 0}); err == nil {
 				antdOK = true
 			}
 		}
