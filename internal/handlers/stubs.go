@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"time"
 
+	antd "github.com/WithAutonomi/ant-sdk/antd-go"
+
 	"github.com/WithAutonomi/indelible/internal/config"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
@@ -30,18 +32,17 @@ func Health(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		// Check DB connectivity
 		dbOK := db.Ping() == nil
 
-		// Check antd reachability (2s timeout)
+		// Probe antd overlay connectivity with a tiny DataCost call.
+		// Success means antd is reachable AND has peers to quote from;
+		// any error (transport, 502 NetworkError, 503 ServiceUnavailable)
+		// means antd is not usable for real uploads/downloads.
 		antdOK := false
 		if cfg.AntdURL != "" {
-			ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+			ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 			defer cancel()
-			req, err := http.NewRequestWithContext(ctx, "GET", cfg.AntdURL+"/v1/node/version", nil)
-			if err == nil {
-				resp, err := http.DefaultClient.Do(req)
-				if err == nil {
-					antdOK = resp.StatusCode < 500
-					resp.Body.Close()
-				}
+			probe := antd.NewClient(cfg.AntdURL, antd.WithTimeout(15*time.Second))
+			if _, err := probe.DataCost(ctx, []byte{0}); err == nil {
+				antdOK = true
 			}
 		}
 

@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	antd "github.com/WithAutonomi/ant-sdk/antd-go"
+
 	"github.com/WithAutonomi/indelible/internal/config"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
@@ -131,22 +133,20 @@ func (m *SystemMonitor) checkAntdHealth() {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, "GET", m.cfg.AntdURL+"/v1/node/version", nil)
-	if err != nil {
-		return
-	}
-	resp, err := http.DefaultClient.Do(req)
-
-	if err != nil || resp.StatusCode >= 500 {
+	// DataCost forces antd to query peers for chunk pricing, so success means
+	// antd is reachable AND has overlay connectivity. A failed probe could be
+	// either antd process-down OR network-partitioned — both mean uploads and
+	// downloads will fail, so we surface them under the same alert.
+	probe := antd.NewClient(m.cfg.AntdURL, antd.WithTimeout(15*time.Second))
+	if _, err := probe.DataCost(ctx, []byte{0}); err != nil {
 		m.fireAlert("antd_health", "critical", "antd_unreachable",
-			"antd daemon is unreachable at "+m.cfg.AntdURL, 0)
+			"antd cannot reach the Autonomi network at "+m.cfg.AntdURL, 0)
 	} else {
-		resp.Body.Close()
 		m.clearAlert("antd_health", "antd_recovered",
-			"antd daemon is reachable again", 0)
+			"antd is connected to the Autonomi network again", 0)
 	}
 }
 
