@@ -150,8 +150,8 @@ func main() {
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Port),
 		Handler:      router,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 300 * time.Second, // long for file uploads
+		ReadTimeout:  120 * time.Second,
+		WriteTimeout: 1 * time.Hour, // long-running downloads stream antd responses through the response writer
 		IdleTimeout:  120 * time.Second,
 	}
 

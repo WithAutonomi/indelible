@@ -611,7 +611,7 @@ func QuoteUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 // @Router       /uploads/{id}/download [get]
 func DownloadUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	uploadSvc := services.NewUploadService(db)
-	client := antd.NewClient(cfg.AntdURL)
+	client := antd.NewClient(cfg.AntdURL, antd.WithTimeout(0))
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID := middleware.GetUserID(r.Context())

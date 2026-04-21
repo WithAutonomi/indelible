@@ -70,7 +70,7 @@ func NewUploadWorker(db *sql.DB, cfg *config.Config) *UploadWorker {
 		walletSvc:       services.NewWalletService(db, cfg.WalletEncryptionKey),
 		webhookSvc:      services.NewWebhookDeliveryService(db),
 		settingsSvc:     services.NewCachedSettingsService(services.NewSettingsService(db)),
-		antdClient:      antd.NewClient(cfg.AntdURL),
+		antdClient:      antd.NewClient(cfg.AntdURL, antd.WithTimeout(0)),
 		cfg:             cfg,
 		circuitCooldown: circuitBreakerBaseCooldown,
 	}
@@ -405,7 +405,7 @@ func (w *UploadWorker) reconcileLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			requeued, err := w.uploadSvc.RequeueStuck(1) // stuck > 1 minute
+			requeued, err := w.uploadSvc.RequeueStuck(30) // stuck > 30 minutes; must exceed longest realistic upload to avoid racing a live goroutine
 			if err != nil {
 				slog.Error("reconciliation requeue failed", "error", err)
 			} else if requeued > 0 {
