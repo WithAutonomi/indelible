@@ -25,6 +25,9 @@ e2e/test-results/
 # Claude Code
 .claude/
 
+# GSD planning (local todo/state tracking)
+.planning/
+
 # OS
 .DS_Store
 Thumbs.db
