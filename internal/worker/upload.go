@@ -405,7 +405,7 @@ func (w *UploadWorker) reconcileLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			requeued, err := w.uploadSvc.RequeueStuck(30) // stuck > 30 minutes; must exceed longest realistic upload to avoid racing a live goroutine
+			requeued, err := w.uploadSvc.RequeueStuck(60) // 60 min — must exceed longest realistic upload to avoid racing a live goroutine; 30 min was empirically insufficient on mainnet bootstrap
 			if err != nil {
 				slog.Error("reconciliation requeue failed", "error", err)
 			} else if requeued > 0 {
