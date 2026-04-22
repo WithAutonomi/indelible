@@ -211,17 +211,37 @@ curl -O -J https://files.acme.com/api/v2/uploads/{uuid}/download \
 Get a cost estimate before uploading:
 
 ```bash
-# By file size (rough estimate)
+# By file size (rough estimate, scaled from a 1KB sample)
 curl -X POST https://files.acme.com/api/v2/uploads/quote \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"file_size": 1048576, "visibility": "private"}'
 
-# By actual file (exact cost)
+# By actual file (exact quote)
 curl -X POST https://files.acme.com/api/v2/uploads/quote \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -F "file=@document.pdf"
 ```
+
+The response includes a structured `estimated_cost` breakdown:
+
+```json
+{
+  "estimated_cost": {
+    "cost": "123456789",
+    "file_size": 1048576,
+    "chunk_count": 4,
+    "estimated_gas_cost_wei": "45000000000",
+    "payment_mode": "auto"
+  },
+  "file_size": 1048576,
+  "visibility": "private"
+}
+```
+
+- `cost` — storage cost in atto tokens
+- `estimated_gas_cost_wei` — advisory gas heuristic, not a live gas-oracle quote
+- `payment_mode` — `auto`, `merkle`, or `single`; for the JSON-body path this reflects the sample and may differ for the actual upload
 
 ---
 

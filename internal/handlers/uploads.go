@@ -482,8 +482,11 @@ func GetUpload(db *sql.DB) http.HandlerFunc {
 // QuoteUpload estimates the cost of uploading a file.
 // Accepts multipart with a "file" field -- saves to temp, gets cost from antd, cleans up.
 //
+// Response shape: {"estimated_cost": {cost, file_size, chunk_count, estimated_gas_cost_wei, payment_mode}, ...}
+// The JSON-body path scales a 1KB sample linearly; multipart returns the exact quote.
+//
 // @Summary      Estimate upload cost
-// @Description  Estimate the cost of uploading a file. Accepts JSON with file_size or multipart with a file.
+// @Description  Estimate the cost of uploading a file. Accepts JSON with file_size (rough, scaled from a 1KB sample) or multipart with a file (exact quote). Returns a structured estimated_cost object with cost, chunk_count, gas, and payment_mode.
 // @Tags         Uploads
 // @Accept       json,multipart/form-data
 // @Produce      json
@@ -494,7 +497,9 @@ func GetUpload(db *sql.DB) http.HandlerFunc {
 // @Security     BearerAuth
 // @Router       /uploads/quote [post]
 func QuoteUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
-	client := antd.NewClient(cfg.AntdURL, antd.WithTimeout(30*time.Second))
+	// antd's sampling-based estimator returns in single-digit seconds once warm,
+	// but cold quotes during peer bootstrap can take 2-3 minutes on mainnet.
+	client := antd.NewClient(cfg.AntdURL, antd.WithTimeout(300*time.Second))
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		contentType := r.Header.Get("Content-Type")
@@ -517,27 +522,26 @@ func QuoteUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 				req.Visibility = "private"
 			}
 
-			// Use DataCost with a representative 1KB sample, then scale
+			// Use DataCost with a representative 1KB sample, then scale.
+			// payment_mode returned here reflects the sample; a larger file may
+			// hit a different mode (e.g. "merkle") — use the multipart path for an exact quote.
 			sampleSize := int64(1024)
 			if req.FileSize < sampleSize {
 				sampleSize = req.FileSize
 			}
 			sample := make([]byte, sampleSize)
 
-			cost, err := client.DataCost(r.Context(), sample)
+			est, err := client.DataCost(r.Context(), sample)
 			if err != nil {
 				jsonAntdError(w, "cost estimation failed", err)
 				return
 			}
 
-			// Scale the cost estimate proportionally
-			estimatedCost := scaleCost(cost, req.FileSize, sampleSize)
-
 			jsonResponse(w, http.StatusOK, map[string]any{
-				"estimated_cost": estimatedCost,
+				"estimated_cost": scaleEstimate(est, req.FileSize, sampleSize),
 				"file_size":      req.FileSize,
 				"visibility":     req.Visibility,
-				"note":           "estimate based on current network pricing; actual cost may vary",
+				"note":           "rough estimate scaled from a 1KB sample; use multipart form for an exact quote",
 			})
 			return
 		}
@@ -580,14 +584,14 @@ func QuoteUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 
 		// Get cost from antd
 		isPublic := visibility == "public"
-		cost, err := client.FileCost(r.Context(), tempPath, isPublic)
+		est, err := client.FileCost(r.Context(), tempPath, isPublic)
 		if err != nil {
 			jsonAntdError(w, "cost estimation failed", err)
 			return
 		}
 
 		jsonResponse(w, http.StatusOK, map[string]any{
-			"estimated_cost":    cost,
+			"estimated_cost":    est,
 			"file_size":         written,
 			"original_filename": filepath.Base(header.Filename),
 			"visibility":        visibility,
@@ -857,21 +861,46 @@ func DeleteUpload(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-// scaleCost provides a rough linear cost estimate.
-// cost is the atto-token cost string for sampleSize bytes; we scale to targetSize.
+// scaleEstimate scales a cost estimate from a sample-sized call up to a target
+// file size. Cost, EstimatedGasCostWei, and ChunkCount are scaled linearly;
+// FileSize is set to the target; PaymentMode is passed through from antd.
 // Uses math/big to avoid int64 overflow on large files.
-func scaleCost(cost string, targetSize, sampleSize int64) string {
-	if sampleSize <= 0 || targetSize <= 0 {
-		return cost
+func scaleEstimate(est *antd.UploadCostEstimate, targetSize, sampleSize int64) *antd.UploadCostEstimate {
+	if est == nil || sampleSize <= 0 || targetSize <= 0 {
+		return est
 	}
-	costVal, ok := new(big.Int).SetString(cost, 10)
-	if !ok || costVal.Sign() == 0 {
-		return cost
+	target := big.NewInt(targetSize)
+	sample := big.NewInt(sampleSize)
+
+	scaleStr := func(s string) string {
+		v, ok := new(big.Int).SetString(s, 10)
+		if !ok || v.Sign() == 0 {
+			return s
+		}
+		scaled := new(big.Int).Mul(v, target)
+		scaled.Div(scaled, sample)
+		return scaled.String()
 	}
-	// scaled = costVal * targetSize / sampleSize
-	scaled := new(big.Int).Mul(costVal, big.NewInt(targetSize))
-	scaled.Div(scaled, big.NewInt(sampleSize))
-	return scaled.String()
+
+	var chunks uint32
+	if est.ChunkCount > 0 {
+		c := new(big.Int).SetUint64(uint64(est.ChunkCount))
+		c.Mul(c, target)
+		c.Div(c, sample)
+		if c.BitLen() > 32 {
+			chunks = ^uint32(0)
+		} else {
+			chunks = uint32(c.Uint64())
+		}
+	}
+
+	return &antd.UploadCostEstimate{
+		Cost:                scaleStr(est.Cost),
+		FileSize:            uint64(targetSize),
+		ChunkCount:          chunks,
+		EstimatedGasCostWei: scaleStr(est.EstimatedGasCostWei),
+		PaymentMode:         est.PaymentMode,
+	}
 }
 
 // isAllowedContentType checks the content type against a configurable allowlist.
