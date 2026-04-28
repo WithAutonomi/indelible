@@ -301,15 +301,37 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		}
 	}
 
-	// Cache EVM config for balance queries and other uses
+	// Resolve effective RPC URL and token address. We prefer indelible's own
+	// config when it's set (populated by --network or INDELIBLE_EVM_* env vars)
+	// and only fall back to antd's PrepareUpload response when we have nothing
+	// else. Without this, a misconfigured antd (e.g. one that defaults
+	// EVM_RPC_URL to http://127.0.0.1:8545 when env isn't set) silently
+	// redirects payment traffic to a dead/wrong endpoint even though we know
+	// the right one locally.
+	rpcURL := w.cfg.EvmRPCURL
+	if rpcURL == "" {
+		rpcURL = prepared.RPCUrl
+	}
+	tokenAddr := w.cfg.EvmTokenAddress
+	if tokenAddr == "" {
+		tokenAddr = prepared.PaymentTokenAddress
+	}
+	if w.cfg.EvmRPCURL != "" && prepared.RPCUrl != "" && prepared.RPCUrl != w.cfg.EvmRPCURL {
+		slog.Warn("antd returned a different EVM RPC URL than configured — using config",
+			"configured", w.cfg.EvmRPCURL, "antd_returned", prepared.RPCUrl)
+	}
+
+	// Cache antd's response only when our config is empty — preserves the
+	// original "first PrepareUpload populates cfg" behaviour for installs
+	// that rely on antd as authority.
 	if w.cfg.EvmRPCURL == "" && prepared.RPCUrl != "" {
 		w.cfg.EvmRPCURL = prepared.RPCUrl
 		w.cfg.EvmTokenAddress = prepared.PaymentTokenAddress
 	}
 
-	// Ensure EVM signer is connected
-	if w.evmSigner == nil || w.evmSigner.RPCUrl() != prepared.RPCUrl {
-		signer, err := evm.NewSigner(prepared.RPCUrl)
+	// Ensure EVM signer is connected to the resolved URL.
+	if w.evmSigner == nil || w.evmSigner.RPCUrl() != rpcURL {
+		signer, err := evm.NewSigner(rpcURL)
 		if err != nil {
 			return fmt.Errorf("Failed to connect to EVM RPC: %w", err)
 		}
@@ -329,7 +351,7 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 			prepared.Depth,
 			prepared.PoolCommitments,
 			prepared.MerklePaymentTimestamp,
-			prepared.PaymentTokenAddress,
+			tokenAddr,
 			prepared.PaymentVaultAddress,
 		)
 		if err != nil {
@@ -349,7 +371,7 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 
 	default: // "wave_batch" or empty (backward compat)
 		// Phase 2: Sign wave-batch payment
-		txHashes, err := w.evmSigner.PayForQuotes(ctx, walletKey, prepared.Payments, prepared.PaymentTokenAddress, prepared.PaymentVaultAddress)
+		txHashes, err := w.evmSigner.PayForQuotes(ctx, walletKey, prepared.Payments, tokenAddr, prepared.PaymentVaultAddress)
 		if err != nil {
 			return fmt.Errorf("EVM payment failed: %w", err)
 		}
@@ -374,7 +396,7 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 	}
 
 	// Update wallet balance from chain (best-effort)
-	if tokenBal, gasBal, err := w.evmSigner.GetBalances(ctx, wallet.Address, prepared.PaymentTokenAddress); err == nil {
+	if tokenBal, gasBal, err := w.evmSigner.GetBalances(ctx, wallet.Address, tokenAddr); err == nil {
 		_ = w.walletSvc.UpdateBalance(wallet.ID, tokenBal, gasBal)
 		_, _ = w.txnSvc.Record(wallet.ID, &upload.ID, "upload", paidAmount, tokenBal, txHash)
 	} else {
@@ -515,9 +537,15 @@ func (w *UploadWorker) cleanOrphanedTempFiles() {
 	}
 }
 
-// TempUploadDir returns the path to the temp upload directory, creating it if needed.
+// TempUploadDir returns the absolute path to the temp upload directory,
+// creating it if needed. The absolute form is important: antd opens upload
+// files by the path we hand it via PrepareUpload, so a path that's relative
+// to indelible's cwd will 400 if antd is running with a different cwd.
 func TempUploadDir(cfg *config.Config) string {
 	dir := filepath.Join(cfg.DataDir, "uploads", "tmp")
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
 	if err := os.MkdirAll(dir, 0750); err != nil {
 		slog.Warn("failed to create temp upload dir", "path", dir, "error", err)
 	}
