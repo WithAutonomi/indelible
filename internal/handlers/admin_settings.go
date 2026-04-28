@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/WithAutonomi/indelible/internal/middleware"
@@ -63,6 +64,11 @@ func AdminUpdateSettings(db *sql.DB) http.HandlerFunc {
 		userAgent := r.Header.Get("User-Agent")
 
 		if err := settingsSvc.Update(changes, userID, ipAddress, userAgent); err != nil {
+			var verr *services.ValidationError
+			if errors.As(err, &verr) {
+				jsonError(w, err.Error(), http.StatusBadRequest)
+				return
+			}
 			jsonError(w, "failed to update settings", http.StatusInternalServerError)
 			return
 		}

@@ -174,3 +174,64 @@ func TestCachedSettingsInvalidateAll(t *testing.T) {
 	// Suppress unused variable warning for time import used in TTL-related tests
 	_ = time.Second
 }
+
+func TestGetIntWithBounds(t *testing.T) {
+	db := setupTestDB(t)
+	innerSvc := NewSettingsService(db)
+	userSvc := NewUserService(db)
+	user := createTestUser(t, userSvc, "bounds@example.com", "Bounds", "User")
+	cached := NewCachedSettingsService(innerSvc)
+
+	// Migration 002 seeds antd_quote_timeout_secs=300 — verify the in-range path.
+	if got := cached.GetIntWithBounds("antd_quote_timeout_secs", 999, 1, 3600); got != 300 {
+		t.Errorf("seeded value: got %d, want 300", got)
+	}
+
+	// Missing key → fallback.
+	if got := cached.GetIntWithBounds("nonexistent_key", 42, 1, 100); got != 42 {
+		t.Errorf("missing key: got %d, want 42", got)
+	}
+
+	// Set values that exercise the rejection branches. Use untyped keys so
+	// SettingsService.Update doesn't refuse them at write time — we want to
+	// observe what GetIntWithBounds does when bad data is already in the DB
+	// (predates the validator, or was set out-of-band).
+	bad := map[string]string{
+		"untyped_garbage": "abc",
+		"untyped_low":     "0",
+		"untyped_high":    "1000",
+		"untyped_empty":   "",
+	}
+	if err := innerSvc.Update(bad, user.ID, "127.0.0.1", "TestAgent"); err != nil {
+		t.Fatalf("seed bad values: %v", err)
+	}
+
+	cases := []struct {
+		key      string
+		fallback int
+		min, max int
+		want     int
+		desc     string
+	}{
+		{"untyped_garbage", 7, 1, 100, 7, "non-numeric"},
+		{"untyped_low", 7, 1, 100, 7, "below min"},
+		{"untyped_high", 7, 1, 100, 7, "above max"},
+		{"untyped_empty", 7, 1, 100, 7, "empty string"},
+	}
+	for _, c := range cases {
+		// Fresh cache per case so the previous Get doesn't mask issues.
+		cached.InvalidateAll()
+		if got := cached.GetIntWithBounds(c.key, c.fallback, c.min, c.max); got != c.want {
+			t.Errorf("%s: got %d, want %d", c.desc, got, c.want)
+		}
+	}
+
+	// In-range value persisted via Update should be returned verbatim.
+	if err := innerSvc.Update(map[string]string{"antd_quote_timeout_secs": "120"}, user.ID, "127.0.0.1", "TestAgent"); err != nil {
+		t.Fatalf("update valid: %v", err)
+	}
+	cached.InvalidateAll()
+	if got := cached.GetIntWithBounds("antd_quote_timeout_secs", 300, 1, 3600); got != 120 {
+		t.Errorf("updated value: got %d, want 120", got)
+	}
+}

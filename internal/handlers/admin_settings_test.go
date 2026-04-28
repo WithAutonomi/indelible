@@ -68,6 +68,69 @@ func TestAdminUpdateSettings(t *testing.T) {
 	}
 }
 
+func TestAdminUpdateSettingsRejectsInvalidTimeout(t *testing.T) {
+	router := setupTestRouter(t)
+	adminToken := registerAndGetToken(t, router, "admin@test.com", "password123", "Admin", "User")
+
+	cases := []struct {
+		key, value, desc string
+	}{
+		{"antd_quote_timeout_secs", "-1", "negative quote timeout"},
+		{"antd_quote_timeout_secs", "3601", "above max quote timeout"},
+		{"antd_quote_timeout_secs", "abc", "non-numeric quote timeout"},
+		{"antd_health_probe_timeout_secs", "0", "zero probe timeout"},
+		{"antd_health_probe_timeout_secs", "121", "above max probe timeout"},
+	}
+
+	for _, c := range cases {
+		body, _ := json.Marshal(map[string]string{c.key: c.value})
+		req := httptest.NewRequest("PATCH", "/api/v2/admin/settings", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+adminToken)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%s: got %d, want 400, body: %s", c.desc, w.Code, w.Body.String())
+		}
+	}
+}
+
+func TestAdminUpdateSettingsAcceptsValidTimeout(t *testing.T) {
+	router := setupTestRouter(t)
+	adminToken := registerAndGetToken(t, router, "admin@test.com", "password123", "Admin", "User")
+
+	body, _ := json.Marshal(map[string]string{
+		"antd_quote_timeout_secs":        "600",
+		"antd_health_probe_timeout_secs": "30",
+	})
+	req := httptest.NewRequest("PATCH", "/api/v2/admin/settings", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("update: got %d, body: %s", w.Code, w.Body.String())
+	}
+
+	// Verify both keys persisted with the new values.
+	req = httptest.NewRequest("GET", "/api/v2/admin/settings", nil)
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	var resp map[string]any
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	settings := resp["settings"].(map[string]any)
+	if settings["antd_quote_timeout_secs"] != "600" {
+		t.Errorf("antd_quote_timeout_secs = %v, want 600", settings["antd_quote_timeout_secs"])
+	}
+	if settings["antd_health_probe_timeout_secs"] != "30" {
+		t.Errorf("antd_health_probe_timeout_secs = %v, want 30", settings["antd_health_probe_timeout_secs"])
+	}
+}
+
 func TestAdminExportImportSettings(t *testing.T) {
 	router := setupTestRouter(t)
 	adminToken := registerAndGetToken(t, router, "admin@test.com", "password123", "Admin", "User")
