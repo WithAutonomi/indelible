@@ -331,6 +331,16 @@ func (s *Signer) sendTxWithReceipt(
 	if err != nil {
 		return "", nil, fmt.Errorf("getting gas price: %w", err)
 	}
+	// Arbitrum One's base fee fluctuates between SuggestGasPrice and the
+	// time the tx hits the mempool. Using the raw suggestion routinely loses
+	// races: the node returns "max fee per gas less than block base fee"
+	// when our tx arrives a few hundred ms later. For legacy txs the
+	// gasPrice field is interpreted as both maxFeePerGas and the tip, so
+	// doubling the cap costs nothing on average (the protocol still pays
+	// min(cap, baseFee + tip)) but gives ample headroom against base-fee
+	// drift. Reproduced 2026-04-28 against arbitrum-one mainnet:
+	// maxFeePerGas 20168000 vs baseFee 20220000.
+	gasPrice = new(big.Int).Mul(gasPrice, big.NewInt(2))
 
 	msg := toCallMsg(from, to, data)
 	gasLimit, err := s.client.EstimateGas(ctx, msg)
