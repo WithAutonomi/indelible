@@ -1,6 +1,9 @@
 package database
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestMigrationRoundTrip(t *testing.T) {
 	db, err := Open("sqlite://:memory:")
@@ -25,9 +28,18 @@ func TestMigrationRoundTrip(t *testing.T) {
 	}
 	t.Logf("tables after up: %d", count)
 
-	// Migrate down
-	if err := MigrateDown(db, "sqlite"); err != nil {
-		t.Fatalf("migrate down: %v", err)
+	// MigrateDown rolls back a single migration; loop until goose reports
+	// "no current version found" so the round-trip works regardless of how
+	// many migrations exist.
+	for i := range 100 {
+		err := MigrateDown(db, "sqlite")
+		if err == nil {
+			continue
+		}
+		if strings.Contains(err.Error(), "no current version found") {
+			break
+		}
+		t.Fatalf("migrate down (step %d): %v", i, err)
 	}
 
 	// Verify tables dropped

@@ -487,6 +487,19 @@ Runtime settings are stored in the database and take effect immediately without 
 | `max_concurrent_uploads` | `1` | Background upload concurrency |
 | `log_retention_enabled` | `false` | Enable automatic log cleanup |
 | `log_retention_days` | `30` | Days to keep non-audit logs |
+| `antd_quote_timeout_secs` | `300` | Per-request timeout (seconds) for `POST /uploads/quote` calling antd. Bounds: **1–3600**. |
+| `antd_health_probe_timeout_secs` | `15` | Per-call timeout (seconds) for the antd-connectivity probe used by `GET /health` and the system-monitor alert loop. Bounds: **1–120**. |
+
+### Tuning antd timeouts
+
+The two `antd_*_timeout_secs` settings bound how long indelible waits on the antd daemon before giving up. They take effect within the 30s settings cache TTL — no restart required.
+
+- **`antd_quote_timeout_secs`** — defaults to 300 because antd's first quote after startup waits for peer-bootstrap on the Autonomi DHT, which can take 2–3 minutes on mainnet. Once antd is warm, real quotes return in single-digit seconds. Lower this if you'd rather have quotes fail fast (502) than block the request; raise it only if you see legitimate timeouts after the warm-up window.
+- **`antd_health_probe_timeout_secs`** — defaults to 15 and bounds the `DataCost([0,0,0])` probe both `GET /health` and the system-monitor alert loop use to declare antd "down". Tightening it makes recovery alerts fire faster but flaps more on transient slow networks; loosening it hides genuine degradation for longer.
+
+These are independent of antd's own `--quote-timeout-secs` / `--store-timeout-secs` flags (defaults 10s each), which bound *per-chunk* network calls inside the antd daemon. Indelible's settings here bound the *whole HTTP request* it makes to antd — so they need to be larger than the daemon's per-chunk timeout × expected number of parallel batches × any cold-bootstrap window.
+
+Invalid values (negative, non-numeric, out of bounds) are rejected by `PATCH /api/v2/admin/settings` with HTTP 400. If a bad value somehow lands in the DB out-of-band, the read sites clamp to the default and emit a `WARN` log.
 
 ### Export / Import
 

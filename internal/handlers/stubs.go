@@ -25,6 +25,7 @@ import (
 // @Router /health [get]
 func Health(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	uploadSvc := services.NewUploadService(db)
+	settingsSvc := services.NewCachedSettingsService(services.NewSettingsService(db))
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -37,11 +38,16 @@ func Health(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 		// any error (transport, 502 NetworkError, 503 ServiceUnavailable)
 		// means antd is not usable for real uploads/downloads.
 		// Payload must be >= 3 bytes: antd's self-encryption rejects smaller.
+		// Timeout is read from antd_health_probe_timeout_secs (default 15,
+		// bounds 1-120) so operators can tighten or loosen the alert SLA.
 		antdOK := false
 		if cfg.AntdURL != "" {
-			ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+			probeTimeout := time.Duration(settingsSvc.GetIntWithBounds(
+				"antd_health_probe_timeout_secs", 15, 1, 120,
+			)) * time.Second
+			ctx, cancel := context.WithTimeout(r.Context(), probeTimeout)
 			defer cancel()
-			probe := antd.NewClient(cfg.AntdURL, antd.WithTimeout(15*time.Second))
+			probe := antd.NewClient(cfg.AntdURL, antd.WithTimeout(probeTimeout))
 			if _, err := probe.DataCost(ctx, []byte{0, 0, 0}); err == nil {
 				antdOK = true
 			}

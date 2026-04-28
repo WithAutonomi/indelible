@@ -27,7 +27,7 @@ type SystemMonitor struct {
 	db         *sql.DB
 	uploadSvc  *services.UploadService
 	walletSvc  *services.WalletService
-	settingsSvc *services.SettingsService
+	settingsSvc *services.CachedSettingsService
 	logSvc     *services.LogService
 	webhookSvc *services.WebhookDeliveryService
 
@@ -49,7 +49,7 @@ func NewSystemMonitor(db *sql.DB, cfg *config.Config) *SystemMonitor {
 		db:          db,
 		uploadSvc:   services.NewUploadService(db),
 		walletSvc:   services.NewWalletService(db, cfg.WalletEncryptionKey),
-		settingsSvc: services.NewSettingsService(db),
+		settingsSvc: services.NewCachedSettingsService(services.NewSettingsService(db)),
 		logSvc:      services.NewLogService(db),
 		webhookSvc:  services.NewWebhookDeliveryService(db),
 		lastAlerts:  make(map[string]string),
@@ -133,7 +133,12 @@ func (m *SystemMonitor) checkAntdHealth() {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	// Timeout is read from antd_health_probe_timeout_secs (default 15,
+	// bounds 1-120) so the alerting SLA can be tuned without a rebuild.
+	probeTimeout := time.Duration(m.settingsSvc.GetIntWithBounds(
+		"antd_health_probe_timeout_secs", 15, 1, 120,
+	)) * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
 	defer cancel()
 
 	// DataCost forces antd to query peers for chunk pricing, so success means
@@ -141,7 +146,7 @@ func (m *SystemMonitor) checkAntdHealth() {
 	// either antd process-down OR network-partitioned — both mean uploads and
 	// downloads will fail, so we surface them under the same alert.
 	// Payload must be >= 3 bytes: antd's self-encryption rejects smaller.
-	probe := antd.NewClient(m.cfg.AntdURL, antd.WithTimeout(15*time.Second))
+	probe := antd.NewClient(m.cfg.AntdURL, antd.WithTimeout(probeTimeout))
 	if _, err := probe.DataCost(ctx, []byte{0, 0, 0}); err != nil {
 		m.fireAlert("antd_health", "critical", "antd_unreachable",
 			"antd cannot reach the Autonomi network at "+m.cfg.AntdURL, 0)

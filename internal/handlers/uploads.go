@@ -497,10 +497,18 @@ func GetUpload(db *sql.DB) http.HandlerFunc {
 // @Router       /uploads/quote [post]
 func QuoteUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 	// antd's quote returns in single-digit seconds once warm, but a cold
-	// quote during peer bootstrap can take 2-3 minutes on mainnet.
-	client := antd.NewClient(cfg.AntdURL, antd.WithTimeout(300*time.Second))
+	// quote during peer bootstrap can take 2-3 minutes on mainnet. The
+	// effective ceiling is read per-request from the antd_quote_timeout_secs
+	// setting (default 300, bounds 1-3600) so operators can tune without a
+	// rebuild — the cached settings service absorbs the DB hit.
+	settingsSvc := services.NewCachedSettingsService(services.NewSettingsService(db))
 
 	return func(w http.ResponseWriter, r *http.Request) {
+		timeout := time.Duration(settingsSvc.GetIntWithBounds(
+			"antd_quote_timeout_secs", 300, 1, 3600,
+		)) * time.Second
+		client := antd.NewClient(cfg.AntdURL, antd.WithTimeout(timeout))
+
 		// Save the uploaded file to temp, get the exact cost from antd, clean up.
 		r.Body = http.MaxBytesReader(w, r.Body, 10<<30)
 		if err := r.ParseMultipartForm(32 << 20); err != nil {

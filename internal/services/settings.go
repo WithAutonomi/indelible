@@ -63,7 +63,19 @@ func (s *SettingsService) Get(key string) (string, error) {
 }
 
 // Update sets one or more settings, logging each change to config_audit.
+//
+// Keys registered in typedValidators are validated up front; the entire PATCH
+// is rejected with *ValidationError if any value fails. Untyped keys pass
+// through unchanged for backward compatibility.
 func (s *SettingsService) Update(changes map[string]string, userID int64, ipAddress, userAgent string) error {
+	for key, newValue := range changes {
+		if validator, ok := typedValidators[key]; ok {
+			if err := validator(newValue); err != nil {
+				return &ValidationError{Key: key, Reason: err.Error()}
+			}
+		}
+	}
+
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err

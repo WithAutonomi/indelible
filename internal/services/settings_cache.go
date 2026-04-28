@@ -1,6 +1,8 @@
 package services
 
 import (
+	"log/slog"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -60,4 +62,26 @@ func (c *CachedSettingsService) InvalidateAll() {
 	c.mu.Lock()
 	c.cache = make(map[string]cachedValue)
 	c.mu.Unlock()
+}
+
+// GetIntWithBounds returns the setting parsed as an int, clamped to [min,max].
+// Returns fallback if the setting is missing, empty, unparseable, or out of bounds.
+// Logs WARN when a stored value is rejected so operators see config drift.
+func (c *CachedSettingsService) GetIntWithBounds(key string, fallback, min, max int) int {
+	v, err := c.Get(key)
+	if err != nil || v == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		slog.Warn("rejected setting value, using default",
+			"key", key, "stored", v, "default", fallback, "reason", "not an integer")
+		return fallback
+	}
+	if n < min || n > max {
+		slog.Warn("rejected setting value, using default",
+			"key", key, "stored", v, "default", fallback, "min", min, "max", max)
+		return fallback
+	}
+	return n
 }
