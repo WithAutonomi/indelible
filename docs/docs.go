@@ -3952,9 +3952,8 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Estimate the cost of uploading a file. Accepts JSON with file_size (rough, scaled from a 1KB sample) or multipart with a file (exact quote). Returns a structured estimated_cost object with cost, chunk_count, gas, and payment_mode.",
+                "description": "Get an exact cost quote by sending the file bytes. antd runs self-encryption and queries the live network for chunk pricing — no estimation, no scaling. Returns a structured estimated_cost object with cost, chunk_count, gas, and payment_mode.",
                 "consumes": [
-                    "application/json",
                     "multipart/form-data"
                 ],
                 "produces": [
@@ -3963,7 +3962,22 @@ const docTemplate = `{
                 "tags": [
                     "Uploads"
                 ],
-                "summary": "Estimate upload cost",
+                "summary": "Quote upload cost",
+                "parameters": [
+                    {
+                        "type": "file",
+                        "description": "File to quote",
+                        "name": "file",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "public | private (default private)",
+                        "name": "visibility",
+                        "in": "formData"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "OK",
