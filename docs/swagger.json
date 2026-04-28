@@ -3946,7 +3946,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Estimate the cost of uploading a file. Accepts JSON with file_size or multipart with a file.",
+                "description": "Estimate the cost of uploading a file. Accepts JSON with file_size (rough, scaled from a 1KB sample) or multipart with a file (exact quote). Returns a structured estimated_cost object with cost, chunk_count, gas, and payment_mode.",
                 "consumes": [
                     "application/json",
                     "multipart/form-data"
