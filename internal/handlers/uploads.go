@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"io"
-	"math/big"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -479,17 +478,17 @@ func GetUpload(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-// QuoteUpload estimates the cost of uploading a file.
-// Accepts multipart with a "file" field -- saves to temp, gets cost from antd, cleans up.
+// QuoteUpload returns an exact cost quote for a file by routing it to antd.
+// The caller must send the actual bytes (multipart with a "file" field) — antd
+// runs self-encryption + a real quote round-trip with the live network's pricer.
 //
-// Response shape: {"estimated_cost": {cost, file_size, chunk_count, estimated_gas_cost_wei, payment_mode}, ...}
-// The JSON-body path scales a 1KB sample linearly; multipart returns the exact quote.
-//
-// @Summary      Estimate upload cost
-// @Description  Estimate the cost of uploading a file. Accepts JSON with file_size (rough, scaled from a 1KB sample) or multipart with a file (exact quote). Returns a structured estimated_cost object with cost, chunk_count, gas, and payment_mode.
+// @Summary      Quote upload cost
+// @Description  Get an exact cost quote by sending the file bytes. antd runs self-encryption and queries the live network for chunk pricing — no estimation, no scaling. Returns a structured estimated_cost object with cost, chunk_count, gas, and payment_mode.
 // @Tags         Uploads
-// @Accept       json,multipart/form-data
+// @Accept       multipart/form-data
 // @Produce      json
+// @Param        file        formData  file    true   "File to quote"
+// @Param        visibility  formData  string  false  "public | private (default private)"
 // @Success      200  {object}  map[string]any
 // @Failure      400  {object}  map[string]string
 // @Failure      500  {object}  map[string]string
@@ -497,56 +496,12 @@ func GetUpload(db *sql.DB) http.HandlerFunc {
 // @Security     BearerAuth
 // @Router       /uploads/quote [post]
 func QuoteUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
-	// antd's sampling-based estimator returns in single-digit seconds once warm,
-	// but cold quotes during peer bootstrap can take 2-3 minutes on mainnet.
+	// antd's quote returns in single-digit seconds once warm, but a cold
+	// quote during peer bootstrap can take 2-3 minutes on mainnet.
 	client := antd.NewClient(cfg.AntdURL, antd.WithTimeout(300*time.Second))
 
 	return func(w http.ResponseWriter, r *http.Request) {
-		contentType := r.Header.Get("Content-Type")
-
-		// JSON body path: estimate from file_size
-		if strings.HasPrefix(contentType, "application/json") {
-			var req struct {
-				FileSize   int64  `json:"file_size"`
-				Visibility string `json:"visibility"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				jsonError(w, "invalid request body", http.StatusBadRequest)
-				return
-			}
-			if req.FileSize <= 0 {
-				jsonError(w, "file_size must be positive", http.StatusBadRequest)
-				return
-			}
-			if req.Visibility == "" {
-				req.Visibility = "private"
-			}
-
-			// Use DataCost with a representative 1KB sample, then scale.
-			// payment_mode returned here reflects the sample; a larger file may
-			// hit a different mode (e.g. "merkle") — use the multipart path for an exact quote.
-			sampleSize := int64(1024)
-			if req.FileSize < sampleSize {
-				sampleSize = req.FileSize
-			}
-			sample := make([]byte, sampleSize)
-
-			est, err := client.DataCost(r.Context(), sample)
-			if err != nil {
-				jsonAntdError(w, "cost estimation failed", err)
-				return
-			}
-
-			jsonResponse(w, http.StatusOK, map[string]any{
-				"estimated_cost": scaleEstimate(est, req.FileSize, sampleSize),
-				"file_size":      req.FileSize,
-				"visibility":     req.Visibility,
-				"note":           "rough estimate scaled from a 1KB sample; use multipart form for an exact quote",
-			})
-			return
-		}
-
-		// Multipart path: save file, get exact cost, clean up
+		// Save the uploaded file to temp, get the exact cost from antd, clean up.
 		r.Body = http.MaxBytesReader(w, r.Body, 10<<30)
 		if err := r.ParseMultipartForm(32 << 20); err != nil {
 			jsonError(w, "file too large or invalid form", http.StatusBadRequest)
@@ -555,7 +510,7 @@ func QuoteUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 
 		file, header, err := r.FormFile("file")
 		if err != nil {
-			jsonError(w, "file field required (or send JSON with file_size)", http.StatusBadRequest)
+			jsonError(w, "file field required", http.StatusBadRequest)
 			return
 		}
 		defer file.Close()
@@ -858,48 +813,6 @@ func DeleteUpload(db *sql.DB) http.HandlerFunc {
 		}
 
 		jsonResponse(w, http.StatusOK, map[string]string{"message": "upload deleted"})
-	}
-}
-
-// scaleEstimate scales a cost estimate from a sample-sized call up to a target
-// file size. Cost, EstimatedGasCostWei, and ChunkCount are scaled linearly;
-// FileSize is set to the target; PaymentMode is passed through from antd.
-// Uses math/big to avoid int64 overflow on large files.
-func scaleEstimate(est *antd.UploadCostEstimate, targetSize, sampleSize int64) *antd.UploadCostEstimate {
-	if est == nil || sampleSize <= 0 || targetSize <= 0 {
-		return est
-	}
-	target := big.NewInt(targetSize)
-	sample := big.NewInt(sampleSize)
-
-	scaleStr := func(s string) string {
-		v, ok := new(big.Int).SetString(s, 10)
-		if !ok || v.Sign() == 0 {
-			return s
-		}
-		scaled := new(big.Int).Mul(v, target)
-		scaled.Div(scaled, sample)
-		return scaled.String()
-	}
-
-	var chunks uint32
-	if est.ChunkCount > 0 {
-		c := new(big.Int).SetUint64(uint64(est.ChunkCount))
-		c.Mul(c, target)
-		c.Div(c, sample)
-		if c.BitLen() > 32 {
-			chunks = ^uint32(0)
-		} else {
-			chunks = uint32(c.Uint64())
-		}
-	}
-
-	return &antd.UploadCostEstimate{
-		Cost:                scaleStr(est.Cost),
-		FileSize:            uint64(targetSize),
-		ChunkCount:          chunks,
-		EstimatedGasCostWei: scaleStr(est.EstimatedGasCostWei),
-		PaymentMode:         est.PaymentMode,
 	}
 }
 

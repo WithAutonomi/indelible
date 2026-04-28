@@ -206,21 +206,15 @@ curl -O -J https://files.acme.com/api/v2/uploads/{uuid}/download \
 - **Private** (default): only the uploader can access the file
 - **Public**: stored as public data on the Autonomi network
 
-### Cost Estimation
+### Cost Quote
 
-Get a cost estimate before uploading:
+Get an exact cost quote before uploading by sending the actual file. antd runs self-encryption on the bytes and queries the live network for chunk pricing — no estimation, no scaling.
 
 ```bash
-# By file size (rough estimate, scaled from a 1KB sample)
 curl -X POST https://files.acme.com/api/v2/uploads/quote \
   -H "Authorization: Bearer YOUR_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"file_size": 1048576, "visibility": "private"}'
-
-# By actual file (exact quote)
-curl -X POST https://files.acme.com/api/v2/uploads/quote \
-  -H "Authorization: Bearer YOUR_TOKEN" \
-  -F "file=@document.pdf"
+  -F "file=@document.pdf" \
+  -F "visibility=private"
 ```
 
 The response includes a structured `estimated_cost` breakdown:
@@ -235,13 +229,14 @@ The response includes a structured `estimated_cost` breakdown:
     "payment_mode": "auto"
   },
   "file_size": 1048576,
+  "original_filename": "document.pdf",
   "visibility": "private"
 }
 ```
 
 - `cost` — storage cost in atto tokens
 - `estimated_gas_cost_wei` — advisory gas heuristic, not a live gas-oracle quote
-- `payment_mode` — `auto`, `merkle`, or `single`; for the JSON-body path this reflects the sample and may differ for the actual upload
+- `payment_mode` — `auto`, `merkle`, or `single`
 
 ---
 

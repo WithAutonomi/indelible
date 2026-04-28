@@ -3370,12 +3370,21 @@ paths:
   /uploads/quote:
     post:
       consumes:
-      - application/json
       - multipart/form-data
-      description: Estimate the cost of uploading a file. Accepts JSON with file_size
-        (rough, scaled from a 1KB sample) or multipart with a file (exact quote).
+      description: Get an exact cost quote by sending the file bytes. antd runs self-encryption
+        and queries the live network for chunk pricing — no estimation, no scaling.
         Returns a structured estimated_cost object with cost, chunk_count, gas, and
         payment_mode.
+      parameters:
+      - description: File to quote
+        in: formData
+        name: file
+        required: true
+        type: file
+      - description: public | private (default private)
+        in: formData
+        name: visibility
+        type: string
       produces:
       - application/json
       responses:
@@ -3404,7 +3413,7 @@ paths:
             type: object
       security:
       - BearerAuth: []
-      summary: Estimate upload cost
+      summary: Quote upload cost
       tags:
       - Uploads
 securityDefinitions:
