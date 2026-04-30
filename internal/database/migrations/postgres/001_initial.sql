@@ -1,5 +1,9 @@
 -- +goose Up
 
+-- Required for trigram GIN index on file_tags.tag_value (line ~181).
+-- Bundled with stock Postgres and available on DigitalOcean Managed Postgres.
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
 -- Users (including service accounts)
 CREATE TABLE users (
     id BIGSERIAL PRIMARY KEY,
@@ -172,7 +176,7 @@ CREATE TABLE file_tags (
     upload_id BIGINT NOT NULL REFERENCES uploads(id),
     tag_key TEXT NOT NULL,
     tag_value TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_file_tags_upload_key ON file_tags(upload_id, tag_key);
@@ -225,7 +229,7 @@ CREATE TABLE collection_tags (
     collection_id BIGINT NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
     tag_key TEXT NOT NULL,
     tag_value TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_collection_tags_coll_key ON collection_tags(collection_id, tag_key);
