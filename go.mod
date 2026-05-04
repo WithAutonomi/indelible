@@ -2,14 +2,9 @@ module github.com/WithAutonomi/indelible
 
 go 1.25.9
 
-// Local override: ant-sdk wave 1 of the /health enrichment work is committed
-// locally but not yet tagged. Drop this replace and bump antd-go to the
-// published tag (v0.5.0) once the daemon-side commit lands and is tagged.
-replace github.com/WithAutonomi/ant-sdk/antd-go => ../ant-sdk/antd-go
-
 require (
 	github.com/BurntSushi/toml v1.6.0
-	github.com/WithAutonomi/ant-sdk/antd-go v0.4.0
+	github.com/WithAutonomi/ant-sdk/antd-go v0.5.0
 	github.com/elimity-com/scim v0.0.0-20240320110924-172bf2aee9c8
 	github.com/ethereum/go-ethereum v1.17.2
 	github.com/go-chi/chi/v5 v5.2.5
