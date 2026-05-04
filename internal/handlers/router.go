@@ -17,7 +17,11 @@ import (
 )
 
 // NewRouter builds the application router with all routes registered.
-func NewRouter(cfg *config.Config, db *sql.DB) http.Handler {
+//
+// antdInfo carries the last-known antd /health snapshot so /health can surface
+// daemon version, EVM network, and payment contract addresses. Pass nil when
+// antd is unmanaged or in tests that don't need the diagnostic fields.
+func NewRouter(cfg *config.Config, db *sql.DB, antdInfo AntdInfoProvider) http.Handler {
 	r := chi.NewRouter()
 
 	// Global middleware
@@ -42,7 +46,7 @@ func NewRouter(cfg *config.Config, db *sql.DB) http.Handler {
 	r.Use(middleware.MaxBodySize(1 << 20)) // 1MB limit for JSON endpoints
 
 	// Health check (no auth)
-	r.Get("/health", Health(db, cfg))
+	r.Get("/health", Health(db, cfg, antdInfo))
 
 	// Swagger API docs
 	r.Get("/api/docs/*", httpSwagger.WrapHandler)

@@ -9,9 +9,17 @@ import (
 
 	antd "github.com/WithAutonomi/ant-sdk/antd-go"
 
+	"github.com/WithAutonomi/indelible/internal/buildinfo"
 	"github.com/WithAutonomi/indelible/internal/config"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
+
+// AntdInfoProvider exposes the last-known antd /health snapshot. The
+// production implementation is *internal/antd.Manager; tests pass a fake or
+// nil when antd is unmanaged.
+type AntdInfoProvider interface {
+	AntdInfo() *antd.HealthStatus
+}
 
 // --- Health ---
 
@@ -23,7 +31,7 @@ import (
 // @Success 200 {object} map[string]interface{}
 // @Failure 503 {object} map[string]interface{}
 // @Router /health [get]
-func Health(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func Health(db *sql.DB, cfg *config.Config, antdInfo AntdInfoProvider) http.HandlerFunc {
 	uploadSvc := services.NewUploadService(db)
 	settingsSvc := services.NewCachedSettingsService(services.NewSettingsService(db))
 
@@ -68,15 +76,33 @@ func Health(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			statusText = "degraded"
 		}
 
-		w.WriteHeader(status)
-		json.NewEncoder(w).Encode(map[string]any{
+		body := map[string]any{
 			"status":     statusText,
+			"version":    buildinfo.Version,
 			"database":   dbOK,
 			"antd":       antdOK,
 			"antd_url":   cfg.AntdURL,
 			"queued":     queued,
 			"processing": processing,
-		})
+		}
+
+		// Surface the antd /health snapshot when the daemon is managed and has
+		// reported at least once. Unmanaged setups, pre-bootstrap probes, and
+		// older antd builds (no diagnostic fields) all leave the antd_*
+		// namespace unset rather than emitting zero values.
+		if antdInfo != nil {
+			if h := antdInfo.AntdInfo(); h != nil {
+				body["antd_version"] = h.Version
+				body["antd_evm_network"] = h.EvmNetwork
+				body["antd_uptime_seconds"] = h.UptimeSeconds
+				body["antd_build_commit"] = h.BuildCommit
+				body["antd_payment_token_address"] = h.PaymentTokenAddress
+				body["antd_payment_vault_address"] = h.PaymentVaultAddress
+			}
+		}
+
+		w.WriteHeader(status)
+		json.NewEncoder(w).Encode(body)
 	}
 }
 

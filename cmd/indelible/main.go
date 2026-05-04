@@ -12,6 +12,7 @@ import (
 	"time"
 
 	managedantd "github.com/WithAutonomi/indelible/internal/antd"
+	"github.com/WithAutonomi/indelible/internal/buildinfo"
 	"github.com/WithAutonomi/indelible/internal/config"
 	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/handlers"
@@ -33,8 +34,6 @@ import (
 // @name Authorization
 // @description Enter your JWT or API token as: Bearer <token>
 
-var version = "dev"
-
 func main() {
 	var (
 		configPath  string
@@ -47,7 +46,7 @@ func main() {
 	flag.Parse()
 
 	if showVer {
-		fmt.Printf("indelible %s\n", version)
+		fmt.Printf("indelible %s\n", buildinfo.Version)
 		os.Exit(0)
 	}
 
@@ -76,7 +75,7 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel}))
 	slog.SetDefault(logger)
 
-	slog.Info("starting indelible", "version", version, "port", cfg.Port, "db_driver", cfg.DBDriver())
+	slog.Info("starting indelible", "version", buildinfo.Version, "port", cfg.Port, "db_driver", cfg.DBDriver())
 
 	// Managed antd
 	var antdMgr *managedantd.Manager
@@ -117,8 +116,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Build router
-	router := handlers.NewRouter(cfg, db)
+	// Build router. The manager doubles as the AntdInfoProvider; pass nil
+	// when antd is unmanaged so /health reports the basic fields only.
+	var antdInfo handlers.AntdInfoProvider
+	if antdMgr != nil {
+		antdInfo = antdMgr
+	}
+	router := handlers.NewRouter(cfg, db, antdInfo)
 
 	// Start background workers
 	uploadWorker := worker.NewUploadWorker(db, cfg)

@@ -30,7 +30,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 
 func setupTestRouterWithDB(t *testing.T, db *sql.DB, cfg *config.Config) http.Handler {
 	t.Helper()
-	return handlers.NewRouter(cfg, db)
+	return handlers.NewRouter(cfg, db, nil)
 }
 
 func TestForgotPassword_ConstantTimeResponse(t *testing.T) {
