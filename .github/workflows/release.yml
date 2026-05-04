@@ -121,7 +121,7 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: |
           VERSION="${{ needs.release-meta.outputs.version }}"
-          go build -ldflags "-s -w -X main.version=${VERSION}" \
+          go build -ldflags "-s -w -X github.com/WithAutonomi/indelible/internal/buildinfo.Version=${VERSION}" \
             -o "${{ matrix.indelible_artifact }}" ./cmd/indelible
 
       - name: Download antd daemon

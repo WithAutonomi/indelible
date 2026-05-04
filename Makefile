@@ -10,7 +10,7 @@ frontend:
 
 # Build Go binary (requires frontend built first)
 backend:
-	go build -ldflags "-X main.version=$(VERSION)" -o bin/indelible ./cmd/indelible
+	go build -ldflags "-X github.com/WithAutonomi/indelible/internal/buildinfo.Version=$(VERSION)" -o bin/indelible ./cmd/indelible
 
 # Build everything
 build: frontend backend
@@ -42,7 +42,7 @@ migrate:
 # Cross-compile for Linux
 build-linux:
 	cd web && npm install && npm run build
-	GOOS=linux GOARCH=amd64 go build -ldflags "-X main.version=$(VERSION)" -o bin/indelible-linux-amd64 ./cmd/indelible
+	GOOS=linux GOARCH=amd64 go build -ldflags "-X github.com/WithAutonomi/indelible/internal/buildinfo.Version=$(VERSION)" -o bin/indelible-linux-amd64 ./cmd/indelible
 
 # Security scanning (govulncheck + npm audit)
 security:

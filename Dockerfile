@@ -14,7 +14,7 @@ RUN go mod download
 COPY . .
 COPY --from=frontend /app/web/dist ./web/dist
 ARG VERSION=dev
-RUN CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=${VERSION}" -o /indelible ./cmd/indelible
+RUN CGO_ENABLED=0 go build -ldflags "-s -w -X github.com/WithAutonomi/indelible/internal/buildinfo.Version=${VERSION}" -o /indelible ./cmd/indelible
 
 # Runtime
 FROM alpine:3.21

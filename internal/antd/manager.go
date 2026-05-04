@@ -28,13 +28,14 @@ const (
 
 // Manager spawns, monitors, and stops an antd child process.
 type Manager struct {
-	cfg    *config.Config
-	cmd    *exec.Cmd
-	url    string
-	pid    int
-	cancel context.CancelFunc
-	done   chan struct{} // closed when process finally exits
-	mu     sync.Mutex
+	cfg        *config.Config
+	cmd        *exec.Cmd
+	url        string
+	pid        int
+	cancel     context.CancelFunc
+	done       chan struct{} // closed when process finally exits
+	mu         sync.Mutex
+	lastHealth *antdsdk.HealthStatus // last successful /health snapshot, nil before first probe
 }
 
 // NewManager creates a new antd process manager.
@@ -52,6 +53,13 @@ func (m *Manager) Start(ctx context.Context) error {
 		if healthCheck(url) {
 			m.url = url
 			slog.Info("using existing antd", "url", url)
+			// Stash the SDK-typed snapshot so /health surfaces antd
+			// diagnostics even when we attach to an already-running daemon.
+			if h, ok := m.probeHealth(3 * time.Second); ok {
+				m.mu.Lock()
+				m.lastHealth = h
+				m.mu.Unlock()
+			}
 			return nil
 		}
 	}
@@ -147,16 +155,37 @@ func (m *Manager) waitForDiscovery() error {
 	return fmt.Errorf("antd did not write port file within %s", discoverTimeout)
 }
 
-// waitForHealth retries GET /health on the discovered URL.
+// waitForHealth retries GET /health on the discovered URL and stashes the
+// typed HealthStatus on success so handlers can surface antd diagnostics
+// without re-probing.
 func (m *Manager) waitForHealth() error {
 	for i := range healthRetries {
-		if healthCheck(m.url) {
+		if h, ok := m.probeHealth(3 * time.Second); ok {
+			m.mu.Lock()
+			m.lastHealth = h
+			m.mu.Unlock()
 			return nil
 		}
 		slog.Debug("antd health check failed, retrying", "attempt", i+1)
 		time.Sleep(healthRetryDelay)
 	}
 	return fmt.Errorf("antd at %s failed health check after %d retries", m.url, healthRetries)
+}
+
+// probeHealth fetches /health via the antd-go SDK with a per-call timeout.
+// Returns the parsed status and ok=true on success.
+func (m *Manager) probeHealth(timeout time.Duration) (*antdsdk.HealthStatus, bool) {
+	if m.url == "" {
+		return nil, false
+	}
+	client := antdsdk.NewClient(m.url, antdsdk.WithTimeout(timeout))
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	h, err := client.Health(ctx)
+	if err != nil || h == nil || !h.OK {
+		return nil, false
+	}
+	return h, true
 }
 
 // healthCheck does a single GET /health and returns true on 2xx.
@@ -168,6 +197,19 @@ func healthCheck(baseURL string) bool {
 	}
 	resp.Body.Close()
 	return resp.StatusCode >= 200 && resp.StatusCode < 300
+}
+
+// AntdInfo returns a snapshot of the last successful /health response, or nil
+// if antd has not yet reported a healthy status. The returned pointer is a
+// copy — callers may read freely without holding the manager lock.
+func (m *Manager) AntdInfo() *antdsdk.HealthStatus {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.lastHealth == nil {
+		return nil
+	}
+	snap := *m.lastHealth
+	return &snap
 }
 
 // monitor watches the process and restarts on unexpected exit.
@@ -202,6 +244,17 @@ func (m *Manager) monitor(ctx context.Context, binPath string) {
 			slog.Error("antd restart: port discovery failed", "error", discErr)
 			m.kill()
 			return
+		}
+
+		// Refresh the cached HealthStatus snapshot — version, uptime, and EVM
+		// addresses can all shift across a restart (e.g. binary upgraded
+		// in-place), so the old snapshot would mislead /health consumers.
+		if h, ok := m.probeHealth(3 * time.Second); ok {
+			m.mu.Lock()
+			m.lastHealth = h
+			m.mu.Unlock()
+		} else {
+			slog.Warn("antd restart: failed to refresh health snapshot")
 		}
 	}
 }

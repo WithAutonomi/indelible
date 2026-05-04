@@ -7,10 +7,16 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	antd "github.com/WithAutonomi/ant-sdk/antd-go"
+
 	"github.com/WithAutonomi/indelible/internal/config"
 	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/handlers"
 )
+
+type fakeAntdInfo struct{ h *antd.HealthStatus }
+
+func (f fakeAntdInfo) AntdInfo() *antd.HealthStatus { return f.h }
 
 func setupTestRouter(t *testing.T) http.Handler {
 	t.Helper()
@@ -32,7 +38,7 @@ func setupTestRouter(t *testing.T) http.Handler {
 		t.Fatalf("migrate: %v", err)
 	}
 
-	return handlers.NewRouter(cfg, db)
+	return handlers.NewRouter(cfg, db, nil)
 }
 
 func TestRegisterAndLogin(t *testing.T) {
@@ -203,5 +209,78 @@ func TestHealthEndpoint(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Errorf("health: got %d, want 200", w.Code)
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	// Indelible's own version is always reported, even without a managed antd.
+	if _, ok := resp["version"]; !ok {
+		t.Errorf("expected version field in /health response, got %v", resp)
+	}
+	// With nil AntdInfoProvider, antd_* diagnostic fields stay unset rather
+	// than emitting confusing zero values.
+	for _, k := range []string{"antd_version", "antd_evm_network", "antd_uptime_seconds"} {
+		if _, ok := resp[k]; ok {
+			t.Errorf("unmanaged antd should leave %q unset, got %v", k, resp[k])
+		}
+	}
+}
+
+func TestHealthEndpointSurfacesAntdInfo(t *testing.T) {
+	cfg := &config.Config{
+		Port:                8080,
+		DBURL:               "sqlite://:memory:",
+		AntdURL:             "http://localhost:8082",
+		JWTSecret:           "test-secret-for-jwt-signing-1234567890",
+		WalletEncryptionKey: "0000000000000000000000000000000000000000000000000000000000000000",
+	}
+	db, err := database.Open(cfg.DBURL)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if err := database.Migrate(db, "sqlite"); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	provider := fakeAntdInfo{h: &antd.HealthStatus{
+		OK:                  true,
+		Network:             "default",
+		Version:             "0.4.0",
+		EvmNetwork:          "arbitrum-one",
+		UptimeSeconds:       99,
+		BuildCommit:         "deadbeef1234",
+		PaymentTokenAddress: "0xtoken",
+		PaymentVaultAddress: "0xvault",
+	}}
+	router := handlers.NewRouter(cfg, db, provider)
+
+	req := httptest.NewRequest("GET", "/health", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("health: got %d, want 200", w.Code)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if resp["antd_version"] != "0.4.0" {
+		t.Errorf("antd_version = %v, want 0.4.0", resp["antd_version"])
+	}
+	if resp["antd_evm_network"] != "arbitrum-one" {
+		t.Errorf("antd_evm_network = %v, want arbitrum-one", resp["antd_evm_network"])
+	}
+	if v, _ := resp["antd_uptime_seconds"].(float64); v != 99 {
+		t.Errorf("antd_uptime_seconds = %v, want 99", resp["antd_uptime_seconds"])
+	}
+	if resp["antd_build_commit"] != "deadbeef1234" {
+		t.Errorf("antd_build_commit = %v, want deadbeef1234", resp["antd_build_commit"])
+	}
+	if resp["antd_payment_token_address"] != "0xtoken" || resp["antd_payment_vault_address"] != "0xvault" {
+		t.Errorf("antd_payment_*_address mismatch: %v", resp)
 	}
 }
