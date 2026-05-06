@@ -265,8 +265,17 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		return fmt.Errorf("Failed to decrypt wallet key")
 	}
 
-	// Phase 1: Prepare upload — encrypts file, collects network quotes
-	prepared, err := w.antdClient.PrepareUpload(ctx, tempPath)
+	// Phase 1: Prepare upload — encrypts file, collects network quotes.
+	// Public visibility: daemon bundles the serialized DataMap chunk into the
+	// same payment batch so the external signer pays for chunks + DataMap in
+	// one EVM tx, and finalize returns a network address for the DataMap.
+	// Private visibility: DataMap stays in-memory and is stored locally.
+	var prepared *antd.PrepareUploadResult
+	if upload.Visibility == "public" {
+		prepared, err = w.antdClient.PrepareUploadPublic(ctx, tempPath)
+	} else {
+		prepared, err = w.antdClient.PrepareUpload(ctx, tempPath)
+	}
 	if err != nil {
 		return fmt.Errorf("Failed to prepare upload: %w", err)
 	}
@@ -390,9 +399,20 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		}
 	}
 
-	// Mark upload completed — store the DataMap locally
-	if err := w.uploadSvc.MarkCompleted(upload.ID, result.DataMap, paidAmount); err != nil {
-		return fmt.Errorf("Failed to save upload record")
+	// Mark upload completed. Public uploads have a published DataMap address
+	// (the bundled DataMap chunk's on-network address); private uploads carry
+	// the raw hex-encoded DataMap stored locally.
+	if upload.Visibility == "public" {
+		if result.DataMapAddress == "" {
+			return fmt.Errorf("Daemon did not return data_map_address for public upload — antd >= 0.6.1 required")
+		}
+		if err := w.uploadSvc.MarkCompletedPublic(upload.ID, result.DataMapAddress, paidAmount); err != nil {
+			return fmt.Errorf("Failed to save upload record")
+		}
+	} else {
+		if err := w.uploadSvc.MarkCompleted(upload.ID, result.DataMap, paidAmount); err != nil {
+			return fmt.Errorf("Failed to save upload record")
+		}
 	}
 
 	// Update wallet balance from chain (best-effort)
