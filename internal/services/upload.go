@@ -335,12 +335,25 @@ func (s *UploadService) DequeueNext() (*Upload, error) {
 	return s.GetByID(id)
 }
 
-// MarkCompleted transitions an upload to "completed" with the DataMap and cost.
+// MarkCompleted transitions a private upload to "completed" with the DataMap and cost.
 // The dataMap is the hex-encoded serialized DataMap returned by antd's finalize endpoint.
 func (s *UploadService) MarkCompleted(id int64, dataMap, actualCost string) error {
 	_, err := s.db.Exec(
 		`UPDATE uploads SET status = 'completed', data_map = ?, actual_cost = ?, completed_at = datetime('now'), temp_path = NULL WHERE id = ?`,
 		dataMap, actualCost, id,
+	)
+	return err
+}
+
+// MarkCompletedPublic transitions a public upload to "completed" with the on-network
+// DataMap address and cost. datamapAddress is the hex-encoded network address returned
+// in antd's finalize response when prepare was called with visibility:"public".
+// The DataMap chunk itself was already published as part of the same external-signer
+// payment batch — no separate daemon-wallet payment.
+func (s *UploadService) MarkCompletedPublic(id int64, datamapAddress, actualCost string) error {
+	_, err := s.db.Exec(
+		`UPDATE uploads SET status = 'completed', datamap_address = ?, actual_cost = ?, completed_at = datetime('now'), temp_path = NULL WHERE id = ?`,
+		datamapAddress, actualCost, id,
 	)
 	return err
 }

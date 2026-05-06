@@ -4,7 +4,7 @@ go 1.25.9
 
 require (
 	github.com/BurntSushi/toml v1.6.0
-	github.com/WithAutonomi/ant-sdk/antd-go v0.5.0
+	github.com/WithAutonomi/ant-sdk/antd-go v0.6.1
 	github.com/elimity-com/scim v0.0.0-20240320110924-172bf2aee9c8
 	github.com/ethereum/go-ethereum v1.17.2
 	github.com/go-chi/chi/v5 v5.2.5
