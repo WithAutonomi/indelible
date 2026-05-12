@@ -44,6 +44,13 @@ build-linux:
 	cd web && npm install && npm run build
 	GOOS=linux GOARCH=amd64 go build -ldflags "-X github.com/WithAutonomi/indelible/internal/buildinfo.Version=$(VERSION)" -o bin/indelible-linux-amd64 ./cmd/indelible
 
+# One-shot ops tools (see cmd/migrate-publish-datamaps/main.go for the runbook).
+migrate-publish-datamaps:
+	go build -o bin/migrate-publish-datamaps ./cmd/migrate-publish-datamaps
+
+migrate-publish-datamaps-linux:
+	GOOS=linux GOARCH=amd64 go build -o bin/migrate-publish-datamaps-linux-amd64 ./cmd/migrate-publish-datamaps
+
 # Security scanning (govulncheck + npm audit)
 security:
 	govulncheck ./...

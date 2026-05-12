@@ -358,6 +358,49 @@ func (s *UploadService) MarkCompletedPublic(id int64, datamapAddress, actualCost
 	return err
 }
 
+// MarkPublished flips a previously-private completed upload to visibility='public'
+// with its now-published DataMap address. The existing data_map column is preserved
+// for idempotency and as a belt-and-suspenders fallback — both forms address the
+// same content. Used by cmd/migrate-publish-datamaps for back-publishing DataMaps
+// of uploads created before public visibility shipped.
+func (s *UploadService) MarkPublished(id int64, datamapAddress string) error {
+	_, err := s.db.Exec(
+		`UPDATE uploads SET visibility = 'public', datamap_address = ? WHERE id = ?`,
+		datamapAddress, id,
+	)
+	return err
+}
+
+// ListPrivatePublishCandidates returns completed private uploads that have a
+// locally stored DataMap but no published datamap_address. limit <= 0 means
+// no limit. Ordered by ID for deterministic batching.
+func (s *UploadService) ListPrivatePublishCandidates(limit int) ([]*Upload, error) {
+	q := `SELECT ` + uploadColumns + ` FROM uploads
+	      WHERE status = 'completed' AND visibility = 'private'
+	        AND datamap_address IS NULL
+	        AND data_map IS NOT NULL AND data_map != ''
+	      ORDER BY id`
+	args := []any{}
+	if limit > 0 {
+		q += ` LIMIT ?`
+		args = append(args, limit)
+	}
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Upload
+	for rows.Next() {
+		u, err := scanUpload(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
 // MarkFailed transitions an upload to "failed" with an error message.
 func (s *UploadService) MarkFailed(id int64, errMsg string) error {
 	_, err := s.db.Exec(
