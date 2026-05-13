@@ -20,13 +20,12 @@ import (
 // fakePublisher implements ChunkPublisher with deterministic content-addressing.
 // Tracks how many times each method was called.
 type fakePublisher struct {
-	mu                sync.Mutex
-	stored            map[string][]byte // address → bytes
-	prepareCalls      int
-	finalizeCalls     int
-	getCalls          int
-	alreadyStoredOn   map[string]bool        // hex address → return AlreadyStored=true on prepare
-	failPrepareOnUUID map[string]error       // (test-only) keyed by content prefix — fake error path
+	mu              sync.Mutex
+	stored          map[string][]byte // address → bytes
+	prepareCalls    int
+	finalizeCalls   int
+	getCalls        int
+	alreadyStoredOn map[string]bool // hex address → return AlreadyStored=true on prepare
 }
 
 func newFake() *fakePublisher {
