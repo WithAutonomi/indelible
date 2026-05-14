@@ -104,7 +104,7 @@ func (s *OIDCProviderService) Update(id int64, name, displayName, issuerURL, cli
 			return nil, err
 		}
 		_, err = s.db.Exec(
-			`UPDATE oidc_providers SET name = ?, display_name = ?, issuer_url = ?, client_id = ?, client_secret = ?, scopes = ?, is_enabled = ?, updated_at = datetime('now') WHERE id = ?`,
+			`UPDATE oidc_providers SET name = ?, display_name = ?, issuer_url = ?, client_id = ?, client_secret = ?, scopes = ?, is_enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 			name, displayName, issuerURL, clientID, encrypted, scopes, isEnabled, id,
 		)
 		if err != nil {
@@ -112,7 +112,7 @@ func (s *OIDCProviderService) Update(id int64, name, displayName, issuerURL, cli
 		}
 	} else {
 		_, err := s.db.Exec(
-			`UPDATE oidc_providers SET name = ?, display_name = ?, issuer_url = ?, client_id = ?, scopes = ?, is_enabled = ?, updated_at = datetime('now') WHERE id = ?`,
+			`UPDATE oidc_providers SET name = ?, display_name = ?, issuer_url = ?, client_id = ?, scopes = ?, is_enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 			name, displayName, issuerURL, clientID, scopes, isEnabled, id,
 		)
 		if err != nil {

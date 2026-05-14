@@ -30,7 +30,7 @@ func setMaintenanceMode(t *testing.T, db *sql.DB, enabled bool, message string) 
 		val = "true"
 	}
 	_, err := db.Exec(
-		`INSERT INTO settings (key, value, updated_at) VALUES ('maintenance_mode', ?, datetime('now'))
+		`INSERT INTO settings (key, value, updated_at) VALUES ('maintenance_mode', ?, CURRENT_TIMESTAMP)
 		 ON CONFLICT(key) DO UPDATE SET value = ?`,
 		val, val,
 	)
@@ -40,7 +40,7 @@ func setMaintenanceMode(t *testing.T, db *sql.DB, enabled bool, message string) 
 
 	if message != "" {
 		_, err = db.Exec(
-			`INSERT INTO settings (key, value, updated_at) VALUES ('maintenance_message', ?, datetime('now'))
+			`INSERT INTO settings (key, value, updated_at) VALUES ('maintenance_message', ?, CURRENT_TIMESTAMP)
 			 ON CONFLICT(key) DO UPDATE SET value = ?`,
 			message, message,
 		)

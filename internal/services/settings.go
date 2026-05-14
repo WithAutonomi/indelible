@@ -89,8 +89,8 @@ func (s *SettingsService) Update(changes map[string]string, userID int64, ipAddr
 
 		// Upsert setting
 		_, err := tx.Exec(
-			`INSERT INTO settings (key, value, updated_at, updated_by) VALUES (?, ?, datetime('now'), ?)
-			 ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = datetime('now'), updated_by = ?`,
+			`INSERT INTO settings (key, value, updated_at, updated_by) VALUES (?, ?, CURRENT_TIMESTAMP, ?)
+			 ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = CURRENT_TIMESTAMP, updated_by = ?`,
 			key, newValue, userID, newValue, userID,
 		)
 		if err != nil {

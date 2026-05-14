@@ -152,9 +152,10 @@ func (s *LogService) QueryUserActivity(userID *int64, since, until *time.Time, l
 // CleanupOldLogs deletes system log entries older than the given number of days.
 // Audit logs are never deleted.
 func (s *LogService) CleanupOldLogs(retentionDays int) (int64, error) {
+	cutoff := time.Now().UTC().AddDate(0, 0, -retentionDays).Format("2006-01-02 15:04:05")
 	result, err := s.db.Exec(
-		`DELETE FROM system_log WHERE created_at < datetime('now', ? || ' days')`,
-		-retentionDays,
+		`DELETE FROM system_log WHERE created_at < ?`,
+		cutoff,
 	)
 	if err != nil {
 		return 0, err

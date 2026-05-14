@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"net/http"
 	"strconv"
+	"time"
 )
 
 // responseRecorder captures the status code and body written by downstream handlers.
@@ -78,7 +79,8 @@ func Idempotency(db *sql.DB) func(http.Handler) http.Handler {
 
 // CleanupIdempotencyKeys removes expired idempotency keys (older than 24 hours).
 func CleanupIdempotencyKeys(db *sql.DB) {
-	_, _ = db.Exec(`DELETE FROM idempotency_keys WHERE created_at < datetime('now', '-1 day')`)
+	cutoff := time.Now().UTC().Add(-24 * time.Hour).Format("2006-01-02 15:04:05")
+	_, _ = db.Exec(`DELETE FROM idempotency_keys WHERE created_at < ?`, cutoff)
 }
 
 // IdempotencyCleanupInterval returns the recommended cleanup interval as a string.

@@ -62,7 +62,7 @@ func (s *NotificationPrefService) Update(userID int64, webhookURL *string, event
 
 	_, err := s.db.Exec(
 		`INSERT INTO user_notification_prefs (user_id, webhook_url, events, digest_mode) VALUES (?, ?, ?, ?)
-		 ON CONFLICT(user_id) DO UPDATE SET webhook_url = ?, events = ?, digest_mode = ?, updated_at = datetime('now')`,
+		 ON CONFLICT(user_id) DO UPDATE SET webhook_url = ?, events = ?, digest_mode = ?, updated_at = CURRENT_TIMESTAMP`,
 		userID, url, events, digestMode, url, events, digestMode,
 	)
 	if err != nil {

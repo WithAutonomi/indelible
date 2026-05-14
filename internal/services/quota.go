@@ -98,7 +98,7 @@ func (s *QuotaService) List() ([]*Quota, error) {
 // Update modifies a quota.
 func (s *QuotaService) Update(id int64, maxBytes int64, isEnabled bool) (*Quota, error) {
 	_, err := s.db.Exec(
-		`UPDATE quotas SET max_bytes = ?, is_enabled = ?, updated_at = datetime('now') WHERE id = ?`,
+		`UPDATE quotas SET max_bytes = ?, is_enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 		maxBytes, isEnabled, id,
 	)
 	if err != nil {
