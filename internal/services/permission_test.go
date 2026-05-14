@@ -243,7 +243,7 @@ func TestPermissionGetEffective_InactiveGroupIgnored(t *testing.T) {
 	// Create inactive group with "admin"
 	var groupID int64
 	err := db.QueryRow(
-		`INSERT INTO groups (name, description, permission_level, is_active) VALUES (?, ?, ?, 0) RETURNING id`,
+		`INSERT INTO groups (name, description, permission_level, is_active) VALUES (?, ?, ?, FALSE) RETURNING id`,
 		"inactive-admins", "Inactive admin group", "admin",
 	).Scan(&groupID)
 	if err != nil {

@@ -13,6 +13,7 @@ import (
 	sdk "github.com/WithAutonomi/ant-sdk/antd-go"
 
 	"github.com/WithAutonomi/indelible/internal/database"
+	"github.com/WithAutonomi/indelible/internal/dbtest"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
 
@@ -147,16 +148,7 @@ func (p *fakePayer) PayForQuotes(_ context.Context, _ string, payments []sdk.Pay
 }
 
 func setupDB(t *testing.T) *database.DB {
-	t.Helper()
-	db, err := database.Open("sqlite://:memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
-	if err := database.Migrate(db, "sqlite"); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	return db
+	return dbtest.OpenDB(t)
 }
 
 func newUser(t *testing.T, db *database.DB, email string) int64 {

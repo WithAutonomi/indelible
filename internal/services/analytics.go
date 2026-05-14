@@ -146,12 +146,13 @@ func (s *AnalyticsService) UploadAnalytics(since time.Time) (*UploadStats, error
 		stats.AvgProcessingMs = totalMs / procCount
 	}
 
-	// Top uploaders
+	// Top uploaders. usr.email is in GROUP BY for Postgres SQL-standard
+	// compliance; functionally redundant since u.user_id determines it.
 	uploaderRows, err := s.db.Query(
 		`SELECT u.user_id, COALESCE(usr.email, ''), COUNT(*), COALESCE(SUM(u.file_size), 0)
 		 FROM uploads u LEFT JOIN users usr ON u.user_id = usr.id AND usr.deleted_at IS NULL
 		 WHERE u.created_at >= ?
-		 GROUP BY u.user_id ORDER BY COUNT(*) DESC LIMIT 10`, sinceStr,
+		 GROUP BY u.user_id, usr.email ORDER BY COUNT(*) DESC LIMIT 10`, sinceStr,
 	)
 	if err != nil {
 		return nil, err
@@ -212,13 +213,14 @@ func (s *AnalyticsService) TokenAnalytics(since time.Time) (*TokenStats, error) 
 		`SELECT COUNT(DISTINCT token_id) FROM token_usage_log WHERE created_at >= ?`, sinceStr,
 	).Scan(&stats.ActiveTokens)
 
-	// Top tokens by request count
+	// Top tokens by request count. t.uuid and t.name added to GROUP BY for
+	// Postgres SQL-standard compliance; both are functionally determined by t.id.
 	rows, err := s.db.Query(
 		`SELECT t.uuid, t.name, COUNT(l.id) as reqs, MAX(l.created_at) as last_used
 		 FROM token_usage_log l
 		 JOIN api_tokens t ON l.token_id = t.id
 		 WHERE l.created_at >= ?
-		 GROUP BY t.id ORDER BY reqs DESC LIMIT 10`, sinceStr,
+		 GROUP BY t.id, t.uuid, t.name ORDER BY reqs DESC LIMIT 10`, sinceStr,
 	)
 	if err != nil {
 		return nil, err
@@ -283,13 +285,13 @@ func (s *AnalyticsService) CostAnalytics(since time.Time) (*CostStats, error) {
 		stats.ByDepartment = append(stats.ByDepartment, dc)
 	}
 
-	// By token
+	// By token. t.uuid and t.name added to GROUP BY for Postgres compliance.
 	tokenRows, err := s.db.Query(
 		`SELECT COALESCE(t.uuid, ''), COALESCE(t.name, 'direct'), COUNT(u.id), COALESCE(SUM(CAST(u.actual_cost AS INTEGER)), 0), COALESCE(SUM(u.file_size), 0)
 		 FROM uploads u
 		 LEFT JOIN api_tokens t ON u.token_id = t.id
 		 WHERE u.status = 'completed' AND u.actual_cost IS NOT NULL AND u.actual_cost != '0' AND u.created_at >= ?
-		 GROUP BY u.token_id
+		 GROUP BY u.token_id, t.uuid, t.name
 		 ORDER BY SUM(CAST(u.actual_cost AS INTEGER)) DESC LIMIT 20`, sinceStr,
 	)
 	if err != nil {

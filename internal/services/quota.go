@@ -134,7 +134,7 @@ func (s *QuotaService) CheckUserQuota(userID int64, fileSize int64) error {
 	// Check user-level quota
 	var q Quota
 	err = tx.QueryRow(
-		`SELECT id, entity_type, entity_id, max_bytes, is_enabled FROM quotas WHERE entity_type = 'user' AND entity_id = ? AND is_enabled = 1`,
+		`SELECT id, entity_type, entity_id, max_bytes, is_enabled FROM quotas WHERE entity_type = 'user' AND entity_id = ? AND is_enabled = TRUE`,
 		userID,
 	).Scan(&q.ID, &q.EntityType, &q.EntityID, &q.MaxBytes, &q.IsEnabled)
 	if err == nil {
@@ -147,7 +147,7 @@ func (s *QuotaService) CheckUserQuota(userID int64, fileSize int64) error {
 
 	// Check system-level quota
 	err = tx.QueryRow(
-		`SELECT id, entity_type, entity_id, max_bytes, is_enabled FROM quotas WHERE entity_type = 'system' AND is_enabled = 1`,
+		`SELECT id, entity_type, entity_id, max_bytes, is_enabled FROM quotas WHERE entity_type = 'system' AND is_enabled = TRUE`,
 	).Scan(&q.ID, &q.EntityType, &q.EntityID, &q.MaxBytes, &q.IsEnabled)
 	if err == nil {
 		var used int64
@@ -172,7 +172,7 @@ func (s *QuotaService) CheckUserQuotaInFlight(userID int64, fileSize int64) erro
 	// Check user-level quota
 	var q Quota
 	err = tx.QueryRow(
-		`SELECT id, entity_type, entity_id, max_bytes, is_enabled FROM quotas WHERE entity_type = 'user' AND entity_id = ? AND is_enabled = 1`,
+		`SELECT id, entity_type, entity_id, max_bytes, is_enabled FROM quotas WHERE entity_type = 'user' AND entity_id = ? AND is_enabled = TRUE`,
 		userID,
 	).Scan(&q.ID, &q.EntityType, &q.EntityID, &q.MaxBytes, &q.IsEnabled)
 	if err == nil {
@@ -185,7 +185,7 @@ func (s *QuotaService) CheckUserQuotaInFlight(userID int64, fileSize int64) erro
 
 	// Check system-level quota
 	err = tx.QueryRow(
-		`SELECT id, entity_type, entity_id, max_bytes, is_enabled FROM quotas WHERE entity_type = 'system' AND is_enabled = 1`,
+		`SELECT id, entity_type, entity_id, max_bytes, is_enabled FROM quotas WHERE entity_type = 'system' AND is_enabled = TRUE`,
 	).Scan(&q.ID, &q.EntityType, &q.EntityID, &q.MaxBytes, &q.IsEnabled)
 	if err == nil {
 		var used int64

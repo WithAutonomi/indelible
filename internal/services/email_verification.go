@@ -71,7 +71,7 @@ func (s *EmailVerificationService) Validate(token string) (int64, error) {
 
 	// Set email_verified on the user
 	_, err = s.db.Exec(
-		`UPDATE users SET email_verified = 1 WHERE id = ? AND deleted_at IS NULL`,
+		`UPDATE users SET email_verified = TRUE WHERE id = ? AND deleted_at IS NULL`,
 		userID,
 	)
 

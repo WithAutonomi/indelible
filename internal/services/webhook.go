@@ -149,7 +149,7 @@ func (s *WebhookService) RotateSecret(id int64) (string, error) {
 // GetEnabled returns all enabled webhooks (for delivery).
 func (s *WebhookService) GetEnabled() ([]*Webhook, error) {
 	rows, err := s.db.Query(
-		`SELECT id, url, integration_type, is_enabled, events, secret, created_at, updated_at FROM webhook_config WHERE is_enabled = 1`,
+		`SELECT id, url, integration_type, is_enabled, events, secret, created_at, updated_at FROM webhook_config WHERE is_enabled = TRUE`,
 	)
 	if err != nil {
 		return nil, err

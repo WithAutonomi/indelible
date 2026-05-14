@@ -69,7 +69,7 @@ func (s *UserService) CreateServiceAccount(email, firstName, lastName string) (*
 	var id int64
 	err := s.db.QueryRow(
 		`INSERT INTO users (email, first_name, last_name, is_service_account)
-		 VALUES (?, ?, ?, 1)
+		 VALUES (?, ?, ?, TRUE)
 		 RETURNING id`,
 		email, firstName, lastName,
 	).Scan(&id)

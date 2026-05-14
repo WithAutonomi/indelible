@@ -10,7 +10,7 @@ import (
 	antd "github.com/WithAutonomi/ant-sdk/antd-go"
 
 	"github.com/WithAutonomi/indelible/internal/config"
-	"github.com/WithAutonomi/indelible/internal/database"
+	"github.com/WithAutonomi/indelible/internal/dbtest"
 	"github.com/WithAutonomi/indelible/internal/handlers"
 )
 
@@ -22,22 +22,12 @@ func setupTestRouter(t *testing.T) http.Handler {
 	t.Helper()
 	cfg := &config.Config{
 		Port:                8080,
-		DBURL:               "sqlite://:memory:",
 		AntdURL:             "http://localhost:8082",
 		JWTSecret:           "test-secret-for-jwt-signing-1234567890",
 		WalletEncryptionKey: "0000000000000000000000000000000000000000000000000000000000000000",
 	}
 
-	db, err := database.Open(cfg.DBURL)
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
-
-	if err := database.Migrate(db, "sqlite"); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-
+	db := dbtest.OpenDB(t)
 	return handlers.NewRouter(cfg, db, nil)
 }
 
@@ -231,19 +221,11 @@ func TestHealthEndpoint(t *testing.T) {
 func TestHealthEndpointSurfacesAntdInfo(t *testing.T) {
 	cfg := &config.Config{
 		Port:                8080,
-		DBURL:               "sqlite://:memory:",
 		AntdURL:             "http://localhost:8082",
 		JWTSecret:           "test-secret-for-jwt-signing-1234567890",
 		WalletEncryptionKey: "0000000000000000000000000000000000000000000000000000000000000000",
 	}
-	db, err := database.Open(cfg.DBURL)
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	t.Cleanup(func() { db.Close() })
-	if err := database.Migrate(db, "sqlite"); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	db := dbtest.OpenDB(t)
 
 	provider := fakeAntdInfo{h: &antd.HealthStatus{
 		OK:                  true,

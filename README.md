@@ -211,6 +211,23 @@ make fuzz         # Run fuzz tests (30s each)
 make bench        # Run benchmark tests
 ```
 
+### Running tests against Postgres
+
+`make test` exercises the SQLite path by default. To run the same suite against
+Postgres (matching CI's dual-dialect matrix), point `INDELIBLE_TEST_DB_URL` at a
+local Postgres before running `go test`:
+
+```bash
+docker run --rm -d --name pg-test -p 5432:5432 -e POSTGRES_PASSWORD=ci postgres:16-alpine
+export INDELIBLE_TEST_DB_URL='postgres://postgres:ci@localhost:5432/postgres?sslmode=disable'
+go test -count=1 ./...
+docker rm -f pg-test
+```
+
+The test helper (`internal/dbtest`) seeds an `indelible_template` database once
+per package and clones it via `CREATE DATABASE ... TEMPLATE` for each test, so
+the full suite stays fast on Postgres.
+
 ### Bumping ant-sdk
 
 indelible pins ant-sdk in two independent places:
@@ -242,9 +259,9 @@ The CI runs on every PR and push to `master`:
 | Job | What it checks | Blocks merge |
 |-----|----------------|--------------|
 | **Lint** | go vet, golangci-lint (8 linters), swagger drift | Yes |
-| **Test** | `go test` — 50+ test files including workflow integration tests | Yes |
+| **Test (sqlite, postgres)** | `go test` — 50+ test files including workflow integration tests, run against both dialects | Yes |
 | **Frontend** | vue-tsc type check, vite build, vitest unit tests (35 tests) | Yes |
-| **Race detection** | `go test -race` — detects data races | No (informational) |
+| **Race detection (sqlite, postgres)** | `go test -race` — detects data races, run against both dialects | No (informational) |
 | **Security** | gitleaks (secret scanning), govulncheck (Go vulns), npm audit | No (informational) |
 | **E2E** | Playwright browser tests against full stack | Yes |
 
