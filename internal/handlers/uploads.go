@@ -479,11 +479,11 @@ func GetUpload(db *database.DB) http.HandlerFunc {
 }
 
 // QuoteUpload returns an exact cost quote for a file by routing it to antd.
-// The caller must send the actual bytes (multipart with a "file" field) â€” antd
+// The caller must send the actual bytes (multipart with a "file" field) — antd
 // runs self-encryption + a real quote round-trip with the live network's pricer.
 //
 // @Summary      Quote upload cost
-// @Description  Get an exact cost quote by sending the file bytes. antd runs self-encryption and queries the live network for chunk pricing â€” no estimation, no scaling. Returns a structured estimated_cost object with cost, chunk_count, gas, and payment_mode.
+// @Description  Get an exact cost quote by sending the file bytes. antd runs self-encryption and queries the live network for chunk pricing — no estimation, no scaling. Returns a structured estimated_cost object with cost, chunk_count, gas, and payment_mode.
 // @Tags         Uploads
 // @Accept       multipart/form-data
 // @Produce      json
@@ -500,7 +500,7 @@ func QuoteUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	// quote during peer bootstrap can take 2-3 minutes on mainnet. The
 	// effective ceiling is read per-request from the antd_quote_timeout_secs
 	// setting (default 300, bounds 1-3600) so operators can tune without a
-	// rebuild â€” the cached settings service absorbs the DB hit.
+	// rebuild — the cached settings service absorbs the DB hit.
 	settingsSvc := services.NewCachedSettingsService(services.NewSettingsService(db))
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -594,7 +594,7 @@ func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		// Users can only download their own uploads (unless public â€” future: allow public access)
+		// Users can only download their own uploads (unless public — future: allow public access)
 		if upload.UserID != userID {
 			jsonError(w, "upload not found", http.StatusNotFound)
 			return
@@ -833,7 +833,7 @@ func isAllowedContentType(ct string, settingsSvc *services.SettingsService) bool
 	}
 
 	ct = strings.ToLower(strings.TrimSpace(ct))
-	// Strip parameters (e.g., "text/plain; charset=utf-8" â†’ "text/plain")
+	// Strip parameters (e.g., "text/plain; charset=utf-8" → "text/plain")
 	if idx := strings.IndexByte(ct, ';'); idx != -1 {
 		ct = strings.TrimSpace(ct[:idx])
 	}

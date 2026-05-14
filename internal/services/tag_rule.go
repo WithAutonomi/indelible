@@ -294,7 +294,7 @@ func (s *TagRuleService) getOrCompileRegex(pattern string) (*regexp.Regexp, erro
 		if re, ok := cached.(*regexp.Regexp); ok {
 			return re, nil
 		}
-		// Cached error sentinel â€” the pattern was invalid previously.
+		// Cached error sentinel — the pattern was invalid previously.
 		return nil, fmt.Errorf("previously failed to compile regex: %s", pattern)
 	}
 

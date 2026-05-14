@@ -102,7 +102,7 @@ func (h *scimUserHandler) Get(r *http.Request, id string) (scim.Resource, error)
 }
 
 func (h *scimUserHandler) GetAll(r *http.Request, params scim.ListRequestParams) (scim.Page, error) {
-	// Check for userName eq "..." filter â€” optimize with GetByEmail
+	// Check for userName eq "..." filter — optimize with GetByEmail
 	if params.FilterValidator != nil {
 		f := params.FilterValidator.GetFilter()
 		if attrExpr, ok := f.(*filter.AttributeExpression); ok {

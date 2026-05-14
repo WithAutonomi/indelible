@@ -42,7 +42,7 @@ func toWalletResponse(w *services.Wallet) walletResponse {
 
 type createWalletRequest struct {
 	Name       string `json:"name"`
-	Address    string `json:"address"` // optional â€” derived from private_key if omitted
+	Address    string `json:"address"` // optional — derived from private_key if omitted
 	PrivateKey string `json:"private_key"`
 }
 
@@ -229,7 +229,7 @@ func AdminRefreshWalletBalance(db *database.DB, cfg *config.Config) http.Handler
 		}
 
 		if cfg.EvmRPCURL == "" || cfg.EvmTokenAddress == "" {
-			jsonError(w, "EVM not configured â€” start indelible with --network arbitrum-one (mainnet) or --network arbitrum-sepolia (testnet), or set INDELIBLE_EVM_RPC_URL and INDELIBLE_EVM_TOKEN_ADDRESS explicitly", http.StatusServiceUnavailable)
+			jsonError(w, "EVM not configured — start indelible with --network arbitrum-one (mainnet) or --network arbitrum-sepolia (testnet), or set INDELIBLE_EVM_RPC_URL and INDELIBLE_EVM_TOKEN_ADDRESS explicitly", http.StatusServiceUnavailable)
 			return
 		}
 

@@ -247,7 +247,7 @@ func (s *SettingsService) ImportStructured(data *ExportData, userID int64, ipAdd
 		}
 	}
 
-	// OIDC providers are exported without secrets â€” log a note but skip import
+	// OIDC providers are exported without secrets — log a note but skip import
 	// (admin must re-enter client secrets after import)
 
 	return nil

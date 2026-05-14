@@ -216,7 +216,7 @@ func Register(db *database.DB, cfg *config.Config) http.HandlerFunc {
 		}
 		_ = permSvc.SetDirect(user.ID, permLevel, user.ID)
 
-		// Send verification email (best-effort â€” don't block registration)
+		// Send verification email (best-effort — don't block registration)
 		if token, err := verifySvc.Create(user.ID); err == nil {
 			baseURL := cfg.BaseURL
 			if baseURL == "" {
@@ -383,7 +383,7 @@ func ChangePassword(db *database.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		// password_changed_at is set by UpdatePassword â€” JWTs issued before
+		// password_changed_at is set by UpdatePassword — JWTs issued before
 		// this timestamp are rejected by the auth middleware.
 
 		jsonResponse(w, http.StatusOK, map[string]string{"message": "password updated"})
@@ -432,15 +432,15 @@ func ForgotPassword(db *database.DB, cfg *config.Config) http.HandlerFunc {
 
 		user, err := userSvc.GetByEmail(req.Email)
 		if err != nil {
-			return // email not found â€” respond identically
+			return // email not found — respond identically
 		}
 		if !user.IsActive || user.IsServiceAccount {
-			return // inactive or service account â€” no reset
+			return // inactive or service account — no reset
 		}
 
 		token, err := resetSvc.Create(user.ID)
 		if err != nil {
-			return // token creation failed â€” log but don't reveal
+			return // token creation failed — log but don't reveal
 		}
 
 		baseURL := cfg.BaseURL
@@ -497,7 +497,7 @@ func ResetPassword(db *database.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		// password_changed_at is set by UpdatePassword â€” JWTs issued before
+		// password_changed_at is set by UpdatePassword — JWTs issued before
 		// this timestamp are rejected by the auth middleware.
 
 		jsonResponse(w, http.StatusOK, map[string]string{"message": "password reset successfully"})

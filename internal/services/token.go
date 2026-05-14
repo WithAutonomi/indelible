@@ -59,7 +59,7 @@ func (s *TokenService) Create(
 	allowedTypes string,
 	expiresAt *time.Time,
 ) (secret string, token *Token, err error) {
-	// Generate 32 random bytes â†’ 64-char hex secret
+	// Generate 32 random bytes → 64-char hex secret
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return "", nil, err
@@ -131,7 +131,7 @@ func (s *TokenService) GetByID(id int64) (*Token, error) {
 
 // ValidateSecret finds a token by trying bcrypt compare against all non-revoked,
 // non-expired tokens. Returns the token if found and valid.
-// This is O(n) on active tokens â€” acceptable for typical deployments (<1000 tokens).
+// This is O(n) on active tokens — acceptable for typical deployments (<1000 tokens).
 func (s *TokenService) ValidateSecret(secret string) (*Token, error) {
 	rows, err := s.db.Query(
 		`SELECT id, uuid, name, description, token_hash, user_id, permissions, department,

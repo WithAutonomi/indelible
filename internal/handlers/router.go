@@ -278,7 +278,7 @@ func (w *spaResponseWriter) WriteHeader(code int) {
 
 func (w *spaResponseWriter) Write(b []byte) (int, error) {
 	if w.status == http.StatusNotFound {
-		// Suppress the 404 body â€” we'll serve index.html instead
+		// Suppress the 404 body — we'll serve index.html instead
 		return len(b), nil
 	}
 	if !w.wroteHeader {
@@ -292,7 +292,7 @@ func (w *spaResponseWriter) reset() {
 	w.status = http.StatusOK
 	w.wroteHeader = false
 	w.wroteBody = false
-	// Clear headers from the failed 404 attempt â€” especially Content-Type,
+	// Clear headers from the failed 404 attempt — especially Content-Type,
 	// which http.ServeContent won't overwrite if already set.
 	h := w.ResponseWriter.Header()
 	for k := range h {

@@ -35,7 +35,7 @@ func setupTestRouterWithDB(t *testing.T, db *database.DB, cfg *config.Config) ht
 func TestForgotPassword_ConstantTimeResponse(t *testing.T) {
 	router := setupTestRouter(t)
 
-	// Request reset for nonexistent email â€” should return 200 (no enumeration)
+	// Request reset for nonexistent email — should return 200 (no enumeration)
 	body, _ := json.Marshal(map[string]string{"email": "nobody@test.com"})
 	req := httptest.NewRequest("POST", "/api/v2/auth/forgot-password", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
