@@ -1,12 +1,11 @@
 package handlers
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -19,6 +18,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/WithAutonomi/indelible/internal/config"
+	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/middleware"
 	"github.com/WithAutonomi/indelible/internal/services"
 	"github.com/WithAutonomi/indelible/internal/worker"
@@ -113,7 +113,7 @@ func toUploadResponse(u *services.Upload) uploadResponse {
 // @Failure      503  {object}  map[string]string
 // @Security     BearerAuth
 // @Router       /uploads [post]
-func CreateUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func CreateUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	uploadSvc := services.NewUploadService(db)
 	tagSvc := services.NewTagService(db)
 	tagRuleSvc := services.NewTagRuleService(db)
@@ -311,7 +311,7 @@ func CreateUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 // @Failure      500  {object}  map[string]string
 // @Security     BearerAuth
 // @Router       /uploads [get]
-func ListUploads(db *sql.DB) http.HandlerFunc {
+func ListUploads(db *database.DB) http.HandlerFunc {
 	uploadSvc := services.NewUploadService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -451,7 +451,7 @@ func ListUploads(db *sql.DB) http.HandlerFunc {
 // @Failure      500  {object}  map[string]string
 // @Security     BearerAuth
 // @Router       /uploads/{id} [get]
-func GetUpload(db *sql.DB) http.HandlerFunc {
+func GetUpload(db *database.DB) http.HandlerFunc {
 	uploadSvc := services.NewUploadService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -479,11 +479,11 @@ func GetUpload(db *sql.DB) http.HandlerFunc {
 }
 
 // QuoteUpload returns an exact cost quote for a file by routing it to antd.
-// The caller must send the actual bytes (multipart with a "file" field) — antd
+// The caller must send the actual bytes (multipart with a "file" field) â€” antd
 // runs self-encryption + a real quote round-trip with the live network's pricer.
 //
 // @Summary      Quote upload cost
-// @Description  Get an exact cost quote by sending the file bytes. antd runs self-encryption and queries the live network for chunk pricing — no estimation, no scaling. Returns a structured estimated_cost object with cost, chunk_count, gas, and payment_mode.
+// @Description  Get an exact cost quote by sending the file bytes. antd runs self-encryption and queries the live network for chunk pricing â€” no estimation, no scaling. Returns a structured estimated_cost object with cost, chunk_count, gas, and payment_mode.
 // @Tags         Uploads
 // @Accept       multipart/form-data
 // @Produce      json
@@ -495,12 +495,12 @@ func GetUpload(db *sql.DB) http.HandlerFunc {
 // @Failure      502  {object}  map[string]string
 // @Security     BearerAuth
 // @Router       /uploads/quote [post]
-func QuoteUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func QuoteUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	// antd's quote returns in single-digit seconds once warm, but a cold
 	// quote during peer bootstrap can take 2-3 minutes on mainnet. The
 	// effective ceiling is read per-request from the antd_quote_timeout_secs
 	// setting (default 300, bounds 1-3600) so operators can tune without a
-	// rebuild — the cached settings service absorbs the DB hit.
+	// rebuild â€” the cached settings service absorbs the DB hit.
 	settingsSvc := services.NewCachedSettingsService(services.NewSettingsService(db))
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -576,7 +576,7 @@ func QuoteUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 // @Failure      502  {object}  map[string]string
 // @Security     BearerAuth
 // @Router       /uploads/{id}/download [get]
-func DownloadUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	uploadSvc := services.NewUploadService(db)
 	client := antd.NewClient(cfg.AntdURL, antd.WithTimeout(0))
 
@@ -594,7 +594,7 @@ func DownloadUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		// Users can only download their own uploads (unless public — future: allow public access)
+		// Users can only download their own uploads (unless public â€” future: allow public access)
 		if upload.UserID != userID {
 			jsonError(w, "upload not found", http.StatusNotFound)
 			return
@@ -665,7 +665,7 @@ func DownloadUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 // @Failure      500  {object}  map[string]string
 // @Security     BearerAuth
 // @Router       /uploads/{id}/cancel [post]
-func CancelUpload(db *sql.DB) http.HandlerFunc {
+func CancelUpload(db *database.DB) http.HandlerFunc {
 	uploadSvc := services.NewUploadService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -708,7 +708,7 @@ func CancelUpload(db *sql.DB) http.HandlerFunc {
 // @Failure      500  {object}  map[string]string
 // @Security     BearerAuth
 // @Router       /uploads/{id}/retry [post]
-func RetryUpload(db *sql.DB) http.HandlerFunc {
+func RetryUpload(db *database.DB) http.HandlerFunc {
 	uploadSvc := services.NewUploadService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -751,7 +751,7 @@ func RetryUpload(db *sql.DB) http.HandlerFunc {
 // @Failure      500  {object}  map[string]string
 // @Security     BearerAuth
 // @Router       /uploads/{id}/force-retry [post]
-func ForceRetryUpload(db *sql.DB) http.HandlerFunc {
+func ForceRetryUpload(db *database.DB) http.HandlerFunc {
 	uploadSvc := services.NewUploadService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -794,7 +794,7 @@ func ForceRetryUpload(db *sql.DB) http.HandlerFunc {
 // @Failure      500  {object}  map[string]string
 // @Security     BearerAuth
 // @Router       /uploads/{id} [delete]
-func DeleteUpload(db *sql.DB) http.HandlerFunc {
+func DeleteUpload(db *database.DB) http.HandlerFunc {
 	uploadSvc := services.NewUploadService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -833,7 +833,7 @@ func isAllowedContentType(ct string, settingsSvc *services.SettingsService) bool
 	}
 
 	ct = strings.ToLower(strings.TrimSpace(ct))
-	// Strip parameters (e.g., "text/plain; charset=utf-8" → "text/plain")
+	// Strip parameters (e.g., "text/plain; charset=utf-8" â†’ "text/plain")
 	if idx := strings.IndexByte(ct, ';'); idx != -1 {
 		ct = strings.TrimSpace(ct[:idx])
 	}

@@ -2,7 +2,6 @@ package worker
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -15,6 +14,7 @@ import (
 	antd "github.com/WithAutonomi/ant-sdk/antd-go"
 
 	"github.com/WithAutonomi/indelible/internal/config"
+	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/evm"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
@@ -62,7 +62,7 @@ const circuitBreakerBaseCooldown = 30 * time.Second
 const circuitBreakerMaxCooldown = 5 * time.Minute
 
 // NewUploadWorker creates a new background upload processor.
-func NewUploadWorker(db *sql.DB, cfg *config.Config) *UploadWorker {
+func NewUploadWorker(db *database.DB, cfg *config.Config) *UploadWorker {
 	return &UploadWorker{
 		uploadSvc:       services.NewUploadService(db),
 		quotaSvc:        services.NewQuotaService(db),
@@ -203,7 +203,7 @@ func (w *UploadWorker) processOne(ctx context.Context, upload *services.Upload) 
 			break
 		}
 
-		// Transient error — wait and retry
+		// Transient error â€” wait and retry
 		if attempt < maxTransientRetries {
 			delay := time.Duration(attempt+1) * 5 * time.Second
 			slog.Warn("transient antd error, retrying", "uuid", upload.UUID, "attempt", attempt+1, "delay", delay, "error", lastErr)
@@ -220,9 +220,9 @@ func (w *UploadWorker) processOne(ctx context.Context, upload *services.Upload) 
 		w.prepareFailures++
 		if w.prepareFailures >= circuitBreakerThreshold {
 			w.circuitOpenUntil = time.Now().Add(w.circuitCooldown)
-			slog.Warn("circuit breaker opened — antd appears unreachable",
+			slog.Warn("circuit breaker opened â€” antd appears unreachable",
 				"failures", w.prepareFailures, "cooldown", w.circuitCooldown)
-			// Exponential cooldown: 30s → 60s → 120s → ... → 5min max
+			// Exponential cooldown: 30s â†’ 60s â†’ 120s â†’ ... â†’ 5min max
 			w.circuitCooldown *= 2
 			if w.circuitCooldown > circuitBreakerMaxCooldown {
 				w.circuitCooldown = circuitBreakerMaxCooldown
@@ -254,7 +254,7 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		return fmt.Errorf("Quota exceeded: %w", err)
 	}
 
-	// Get default wallet — required for external signer payment
+	// Get default wallet â€” required for external signer payment
 	wallet, err := w.walletSvc.GetDefault()
 	if err != nil {
 		return fmt.Errorf("No wallet configured for payment")
@@ -265,7 +265,7 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		return fmt.Errorf("Failed to decrypt wallet key")
 	}
 
-	// Phase 1: Prepare upload — encrypts file, collects network quotes.
+	// Phase 1: Prepare upload â€” encrypts file, collects network quotes.
 	// Public visibility: daemon bundles the serialized DataMap chunk into the
 	// same payment batch so the external signer pays for chunks + DataMap in
 	// one EVM tx, and finalize returns a network address for the DataMap.
@@ -280,7 +280,7 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		return fmt.Errorf("Failed to prepare upload: %w", err)
 	}
 
-	// Gas fee check — only applies to wave-batch where cost is known upfront.
+	// Gas fee check â€” only applies to wave-batch where cost is known upfront.
 	// Merkle cost is determined on-chain so we skip the pre-check.
 	if prepared.PaymentType != "merkle" {
 		if maxFeeStr, err := w.settingsSvc.Get("max_gas_fee"); err == nil {
@@ -290,7 +290,7 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 				if costVal > maxFee {
 					attempt := upload.BackoffAttempt + 1
 					if attempt > maxGasBackoffAttempts {
-						return fmt.Errorf("Gas fees too high — try again later")
+						return fmt.Errorf("Gas fees too high â€” try again later")
 					}
 					backoffUntil := calcGasBackoff(attempt)
 					if err := w.uploadSvc.SetGasBackoff(upload.ID, backoffUntil, attempt, prepared.TotalAmount); err != nil {
@@ -326,11 +326,11 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		tokenAddr = prepared.PaymentTokenAddress
 	}
 	if w.cfg.EvmRPCURL != "" && prepared.RPCUrl != "" && prepared.RPCUrl != w.cfg.EvmRPCURL {
-		slog.Warn("antd returned a different EVM RPC URL than configured — using config",
+		slog.Warn("antd returned a different EVM RPC URL than configured â€” using config",
 			"configured", w.cfg.EvmRPCURL, "antd_returned", prepared.RPCUrl)
 	}
 
-	// Cache antd's response only when our config is empty — preserves the
+	// Cache antd's response only when our config is empty â€” preserves the
 	// original "first PrepareUpload populates cfg" behaviour for installs
 	// that rely on antd as authority.
 	if w.cfg.EvmRPCURL == "" && prepared.RPCUrl != "" {
@@ -347,7 +347,7 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		w.evmSigner = signer
 	}
 
-	// Phase 2 + 3: Payment and finalization — branches on payment type
+	// Phase 2 + 3: Payment and finalization â€” branches on payment type
 	var result *antd.FinalizeUploadResult
 	var paidAmount string
 	var txHash string
@@ -404,7 +404,7 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 	// the raw hex-encoded DataMap stored locally.
 	if upload.Visibility == "public" {
 		if result.DataMapAddress == "" {
-			return fmt.Errorf("Daemon did not return data_map_address for public upload — antd >= 0.6.1 required")
+			return fmt.Errorf("Daemon did not return data_map_address for public upload â€” antd >= 0.6.1 required")
 		}
 		if err := w.uploadSvc.MarkCompletedPublic(upload.ID, result.DataMapAddress, paidAmount); err != nil {
 			return fmt.Errorf("Failed to save upload record")
@@ -447,7 +447,7 @@ func (w *UploadWorker) reconcileLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			requeued, err := w.uploadSvc.RequeueStuck(60) // 60 min — must exceed longest realistic upload to avoid racing a live goroutine; 30 min was empirically insufficient on mainnet bootstrap
+			requeued, err := w.uploadSvc.RequeueStuck(60) // 60 min â€” must exceed longest realistic upload to avoid racing a live goroutine; 30 min was empirically insufficient on mainnet bootstrap
 			if err != nil {
 				slog.Error("reconciliation requeue failed", "error", err)
 			} else if requeued > 0 {
@@ -462,9 +462,9 @@ const maxGasBackoffAttempts = 10
 
 // calcGasBackoff returns the time to retry based on the attempt number.
 // Strategy:
-//   - Attempts 1-3: short exponential backoff (5m, 15m, 45m) — covers transient spikes
-//   - Attempts 4-6: longer backoff (2h, 4h, 6h) — waits for intra-day cycle relief
-//   - Attempts 7+:  schedule for next "cheap window" (02:00-06:00 UTC) — gas fees
+//   - Attempts 1-3: short exponential backoff (5m, 15m, 45m) â€” covers transient spikes
+//   - Attempts 4-6: longer backoff (2h, 4h, 6h) â€” waits for intra-day cycle relief
+//   - Attempts 7+:  schedule for next "cheap window" (02:00-06:00 UTC) â€” gas fees
 //     on most blockchains follow a 24h cycle with lows overnight UTC
 func calcGasBackoff(attempt int) time.Time {
 	now := time.Now().UTC()
@@ -541,7 +541,7 @@ func (w *UploadWorker) cleanOrphanedTempFiles() {
 		}
 		fullPath := filepath.Join(tempDir, entry.Name())
 		if _, active := activeSet[fullPath]; !active {
-			// Check file age — only clean files older than 10 minutes
+			// Check file age â€” only clean files older than 10 minutes
 			// to avoid racing with in-progress uploads
 			info, err := entry.Info()
 			if err != nil || time.Since(info.ModTime()) < 10*time.Minute {

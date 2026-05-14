@@ -1,11 +1,11 @@
 package handlers
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
 
+	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/middleware"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
@@ -19,7 +19,7 @@ import (
 // @Router       /admin/settings [get]
 // @Security     BearerAuth
 // AdminGetSettings returns all system settings.
-func AdminGetSettings(db *sql.DB) http.HandlerFunc {
+func AdminGetSettings(db *database.DB) http.HandlerFunc {
 	settingsSvc := services.NewSettingsService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -44,7 +44,7 @@ func AdminGetSettings(db *sql.DB) http.HandlerFunc {
 // @Router       /admin/settings [patch]
 // @Security     BearerAuth
 // AdminUpdateSettings applies partial updates to settings with audit logging.
-func AdminUpdateSettings(db *sql.DB) http.HandlerFunc {
+func AdminUpdateSettings(db *database.DB) http.HandlerFunc {
 	settingsSvc := services.NewSettingsService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -86,7 +86,7 @@ func AdminUpdateSettings(db *sql.DB) http.HandlerFunc {
 // @Router       /admin/settings/export [get]
 // @Security     BearerAuth
 // AdminExportSettings returns all settings as a downloadable JSON file.
-func AdminExportSettings(db *sql.DB) http.HandlerFunc {
+func AdminExportSettings(db *database.DB) http.HandlerFunc {
 	settingsSvc := services.NewSettingsService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -113,7 +113,7 @@ func AdminExportSettings(db *sql.DB) http.HandlerFunc {
 // @Router       /admin/settings/import [post]
 // @Security     BearerAuth
 // AdminImportSettings restores settings from a JSON export.
-func AdminImportSettings(db *sql.DB) http.HandlerFunc {
+func AdminImportSettings(db *database.DB) http.HandlerFunc {
 	settingsSvc := services.NewSettingsService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {

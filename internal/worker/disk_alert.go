@@ -2,13 +2,13 @@ package worker
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/WithAutonomi/indelible/internal/config"
+	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
 
@@ -29,7 +29,7 @@ type DiskAlertWorker struct {
 }
 
 // NewDiskAlertWorker creates a new disk alert worker.
-func NewDiskAlertWorker(db *sql.DB, cfg *config.Config) *DiskAlertWorker {
+func NewDiskAlertWorker(db *database.DB, cfg *config.Config) *DiskAlertWorker {
 	return &DiskAlertWorker{
 		cfg:        cfg,
 		logSvc:     services.NewLogService(db),
@@ -87,7 +87,7 @@ func (w *DiskAlertWorker) check() {
 			w.IsPaused = true
 			w.logSvc.WriteSystem("error", "disk_alert",
 				"Critical: disk usage at "+pctStr+"%, uploads paused", "")
-			slog.Error("disk critical — uploads paused", "usage_pct", usagePct)
+			slog.Error("disk critical â€” uploads paused", "usage_pct", usagePct)
 		}
 		if w.lastAlertLevel != "critical" {
 			w.lastAlertLevel = "critical"
@@ -115,7 +115,7 @@ func (w *DiskAlertWorker) check() {
 			w.IsPaused = false
 			w.logSvc.WriteSystem("info", "disk_alert",
 				"Disk usage back to normal ("+pctStr+"%)", "")
-			slog.Info("disk usage normal — uploads resumed", "usage_pct", usagePct)
+			slog.Info("disk usage normal â€” uploads resumed", "usage_pct", usagePct)
 		}
 		if w.lastAlertLevel != "" {
 			w.webhookSvc.FireSystemEvent("disk_recovered", &services.WebhookSystemData{

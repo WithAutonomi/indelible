@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -9,18 +8,19 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/middleware"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
 
 type collectionResponse struct {
-	ID          int64   `json:"id"`
-	Name        string  `json:"name"`
-	Description string  `json:"description"`
-	ParentID    *int64  `json:"parent_id"`
-	FileCount   int64   `json:"file_count"`
-	CreatedAt   string  `json:"created_at"`
-	UpdatedAt   string  `json:"updated_at"`
+	ID          int64  `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	ParentID    *int64 `json:"parent_id"`
+	FileCount   int64  `json:"file_count"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
 }
 
 func toCollectionResponse(c *services.Collection) collectionResponse {
@@ -63,7 +63,7 @@ type addFileRequest struct {
 // @Failure 400 {object} map[string]string
 // @Router /collections [post]
 // @Security BearerAuth
-func CreateCollection(db *sql.DB) http.HandlerFunc {
+func CreateCollection(db *database.DB) http.HandlerFunc {
 	collSvc := services.NewCollectionService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -101,7 +101,7 @@ func CreateCollection(db *sql.DB) http.HandlerFunc {
 // @Success 200 {object} map[string]interface{}
 // @Router /collections [get]
 // @Security BearerAuth
-func ListCollections(db *sql.DB) http.HandlerFunc {
+func ListCollections(db *database.DB) http.HandlerFunc {
 	collSvc := services.NewCollectionService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -139,7 +139,7 @@ func ListCollections(db *sql.DB) http.HandlerFunc {
 // @Failure 404 {object} map[string]string
 // @Router /collections/{id} [get]
 // @Security BearerAuth
-func GetCollection(db *sql.DB) http.HandlerFunc {
+func GetCollection(db *database.DB) http.HandlerFunc {
 	collSvc := services.NewCollectionService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -192,7 +192,7 @@ func GetCollection(db *sql.DB) http.HandlerFunc {
 // @Failure 404 {object} map[string]string
 // @Router /collections/{id} [put]
 // @Security BearerAuth
-func UpdateCollection(db *sql.DB) http.HandlerFunc {
+func UpdateCollection(db *database.DB) http.HandlerFunc {
 	collSvc := services.NewCollectionService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -240,7 +240,7 @@ func UpdateCollection(db *sql.DB) http.HandlerFunc {
 // @Failure 404 {object} map[string]string
 // @Router /collections/{id} [delete]
 // @Security BearerAuth
-func DeleteCollection(db *sql.DB) http.HandlerFunc {
+func DeleteCollection(db *database.DB) http.HandlerFunc {
 	collSvc := services.NewCollectionService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -278,7 +278,7 @@ func DeleteCollection(db *sql.DB) http.HandlerFunc {
 // @Failure 404 {object} map[string]string
 // @Router /collections/{id}/files [post]
 // @Security BearerAuth
-func AddToCollection(db *sql.DB) http.HandlerFunc {
+func AddToCollection(db *database.DB) http.HandlerFunc {
 	collSvc := services.NewCollectionService(db)
 	collTagSvc := services.NewCollectionTagService(db)
 	uploadSvc := services.NewUploadService(db)
@@ -341,7 +341,7 @@ func AddToCollection(db *sql.DB) http.HandlerFunc {
 // @Failure 404 {object} map[string]string
 // @Router /collections/{id}/files/{upload_id} [delete]
 // @Security BearerAuth
-func RemoveFromCollection(db *sql.DB) http.HandlerFunc {
+func RemoveFromCollection(db *database.DB) http.HandlerFunc {
 	collSvc := services.NewCollectionService(db)
 	uploadSvc := services.NewUploadService(db)
 
@@ -393,7 +393,7 @@ func RemoveFromCollection(db *sql.DB) http.HandlerFunc {
 // @Success 200 {object} map[string]any
 // @Router /uploads/{id}/collections [get]
 // @Security BearerAuth
-func UploadCollections(db *sql.DB) http.HandlerFunc {
+func UploadCollections(db *database.DB) http.HandlerFunc {
 	collSvc := services.NewCollectionService(db)
 	uploadSvc := services.NewUploadService(db)
 

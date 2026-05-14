@@ -3,6 +3,8 @@ package services
 import (
 	"database/sql"
 	"time"
+
+	"github.com/WithAutonomi/indelible/internal/database"
 )
 
 // Transaction represents a cost transaction linked to a wallet and optionally an upload.
@@ -19,11 +21,11 @@ type Transaction struct {
 
 // TransactionService handles transaction logging.
 type TransactionService struct {
-	db *sql.DB
+	db *database.DB
 }
 
 // NewTransactionService creates a new TransactionService.
-func NewTransactionService(db *sql.DB) *TransactionService {
+func NewTransactionService(db *database.DB) *TransactionService {
 	return &TransactionService{db: db}
 }
 

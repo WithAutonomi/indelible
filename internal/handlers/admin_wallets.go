@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -12,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/WithAutonomi/indelible/internal/config"
+	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/evm"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
@@ -42,7 +42,7 @@ func toWalletResponse(w *services.Wallet) walletResponse {
 
 type createWalletRequest struct {
 	Name       string `json:"name"`
-	Address    string `json:"address"`     // optional — derived from private_key if omitted
+	Address    string `json:"address"` // optional â€” derived from private_key if omitted
 	PrivateKey string `json:"private_key"`
 }
 
@@ -55,7 +55,7 @@ type createWalletRequest struct {
 // @Router       /admin/wallets [get]
 // @Security     BearerAuth
 // AdminListWallets returns all wallets.
-func AdminListWallets(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func AdminListWallets(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	walletSvc := services.NewWalletService(db, cfg.WalletEncryptionKey)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -86,7 +86,7 @@ func AdminListWallets(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 // @Router       /admin/wallets [post]
 // @Security     BearerAuth
 // AdminCreateWallet adds a new wallet with encrypted key storage.
-func AdminCreateWallet(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func AdminCreateWallet(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	walletSvc := services.NewWalletService(db, cfg.WalletEncryptionKey)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -136,7 +136,7 @@ func AdminCreateWallet(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 // @Router       /admin/wallets/{id}/default [put]
 // @Security     BearerAuth
 // AdminSetDefaultWallet makes a wallet the default for uploads.
-func AdminSetDefaultWallet(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func AdminSetDefaultWallet(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	walletSvc := services.NewWalletService(db, cfg.WalletEncryptionKey)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -170,7 +170,7 @@ func AdminSetDefaultWallet(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 // @Failure      404 {object} map[string]string
 // @Router       /admin/wallets/{id} [delete]
 // @Security     BearerAuth
-func AdminDeleteWallet(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func AdminDeleteWallet(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	walletSvc := services.NewWalletService(db, cfg.WalletEncryptionKey)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -207,7 +207,7 @@ func AdminDeleteWallet(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 // @Failure      404 {object} map[string]string
 // @Router       /admin/wallets/{id}/balance [post]
 // @Security     BearerAuth
-func AdminRefreshWalletBalance(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func AdminRefreshWalletBalance(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	walletSvc := services.NewWalletService(db, cfg.WalletEncryptionKey)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -229,7 +229,7 @@ func AdminRefreshWalletBalance(db *sql.DB, cfg *config.Config) http.HandlerFunc 
 		}
 
 		if cfg.EvmRPCURL == "" || cfg.EvmTokenAddress == "" {
-			jsonError(w, "EVM not configured — start indelible with --network arbitrum-one (mainnet) or --network arbitrum-sepolia (testnet), or set INDELIBLE_EVM_RPC_URL and INDELIBLE_EVM_TOKEN_ADDRESS explicitly", http.StatusServiceUnavailable)
+			jsonError(w, "EVM not configured â€” start indelible with --network arbitrum-one (mainnet) or --network arbitrum-sepolia (testnet), or set INDELIBLE_EVM_RPC_URL and INDELIBLE_EVM_TOKEN_ADDRESS explicitly", http.StatusServiceUnavailable)
 			return
 		}
 

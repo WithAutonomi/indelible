@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"time"
+
+	"github.com/WithAutonomi/indelible/internal/database"
 )
 
 // Setting represents a runtime configuration setting.
@@ -28,11 +30,11 @@ type ConfigAuditEntry struct {
 
 // SettingsService handles runtime settings.
 type SettingsService struct {
-	db *sql.DB
+	db *database.DB
 }
 
 // NewSettingsService creates a new SettingsService.
-func NewSettingsService(db *sql.DB) *SettingsService {
+func NewSettingsService(db *database.DB) *SettingsService {
 	return &SettingsService{db: db}
 }
 
@@ -114,10 +116,10 @@ func (s *SettingsService) Update(changes map[string]string, userID int64, ipAddr
 
 // ExportData is the structured export format including all instance configuration.
 type ExportData struct {
-	Settings      map[string]string  `json:"settings"`
-	Webhooks      []ExportWebhook    `json:"webhooks,omitempty"`
-	OIDCProviders []ExportOIDC       `json:"oidc_providers,omitempty"`
-	Groups        []ExportGroup      `json:"groups,omitempty"`
+	Settings      map[string]string `json:"settings"`
+	Webhooks      []ExportWebhook   `json:"webhooks,omitempty"`
+	OIDCProviders []ExportOIDC      `json:"oidc_providers,omitempty"`
+	Groups        []ExportGroup     `json:"groups,omitempty"`
 }
 
 // ExportWebhook is the webhook config in export format.
@@ -245,7 +247,7 @@ func (s *SettingsService) ImportStructured(data *ExportData, userID int64, ipAdd
 		}
 	}
 
-	// OIDC providers are exported without secrets — log a note but skip import
+	// OIDC providers are exported without secrets â€” log a note but skip import
 	// (admin must re-enter client secrets after import)
 
 	return nil

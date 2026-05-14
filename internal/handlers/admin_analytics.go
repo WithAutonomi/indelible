@@ -1,11 +1,11 @@
 package handlers
 
 import (
-	"database/sql"
 	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
 
@@ -27,7 +27,7 @@ func parseSince(r *http.Request) time.Time {
 // @Router       /admin/analytics/uploads [get]
 // @Security     BearerAuth
 // AdminUploadAnalytics returns upload statistics.
-func AdminUploadAnalytics(db *sql.DB) http.HandlerFunc {
+func AdminUploadAnalytics(db *database.DB) http.HandlerFunc {
 	analyticsSvc := services.NewAnalyticsService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -51,7 +51,7 @@ func AdminUploadAnalytics(db *sql.DB) http.HandlerFunc {
 // @Router       /admin/analytics/tokens [get]
 // @Security     BearerAuth
 // AdminTokenAnalytics returns token usage statistics.
-func AdminTokenAnalytics(db *sql.DB) http.HandlerFunc {
+func AdminTokenAnalytics(db *database.DB) http.HandlerFunc {
 	analyticsSvc := services.NewAnalyticsService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -75,7 +75,7 @@ func AdminTokenAnalytics(db *sql.DB) http.HandlerFunc {
 // @Router       /admin/analytics/costs [get]
 // @Security     BearerAuth
 // AdminCostAnalytics returns cost analytics by token and department.
-func AdminCostAnalytics(db *sql.DB) http.HandlerFunc {
+func AdminCostAnalytics(db *database.DB) http.HandlerFunc {
 	analyticsSvc := services.NewAnalyticsService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {

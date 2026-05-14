@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -9,12 +8,13 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/middleware"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
 
 // ListTagKeys returns all distinct tag keys used by the current user.
-func ListTagKeys(db *sql.DB) http.HandlerFunc {
+func ListTagKeys(db *database.DB) http.HandlerFunc {
 	tagSvc := services.NewTagService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -32,7 +32,7 @@ func ListTagKeys(db *sql.DB) http.HandlerFunc {
 }
 
 // ListTagValues returns all distinct values for a given tag key used by the current user.
-func ListTagValues(db *sql.DB) http.HandlerFunc {
+func ListTagValues(db *database.DB) http.HandlerFunc {
 	tagSvc := services.NewTagService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -64,7 +64,7 @@ func ListTagValues(db *sql.DB) http.HandlerFunc {
 // @Failure 404 {object} map[string]string
 // @Router /uploads/{id}/tags [get]
 // @Security BearerAuth
-func GetTags(db *sql.DB) http.HandlerFunc {
+func GetTags(db *database.DB) http.HandlerFunc {
 	tagSvc := services.NewTagService(db)
 	uploadSvc := services.NewUploadService(db)
 
@@ -109,7 +109,7 @@ func GetTags(db *sql.DB) http.HandlerFunc {
 // @Failure 404 {object} map[string]string
 // @Router /uploads/{id}/tags [put]
 // @Security BearerAuth
-func UpdateTags(db *sql.DB) http.HandlerFunc {
+func UpdateTags(db *database.DB) http.HandlerFunc {
 	tagSvc := services.NewTagService(db)
 	uploadSvc := services.NewUploadService(db)
 
@@ -168,7 +168,7 @@ func UpdateTags(db *sql.DB) http.HandlerFunc {
 // @Success 200 {object} map[string]interface{}
 // @Router /search [get]
 // @Security BearerAuth
-func SearchByTags(db *sql.DB) http.HandlerFunc {
+func SearchByTags(db *database.DB) http.HandlerFunc {
 	tagSvc := services.NewTagService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {

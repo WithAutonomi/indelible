@@ -1,11 +1,11 @@
 package handlers
 
 import (
-	"database/sql"
 	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
 
@@ -100,7 +100,7 @@ func toSystemLogResponse(e *services.SystemLogEntry) systemLogResponse {
 // @Router       /admin/logs/audit [get]
 // @Security     BearerAuth
 // AdminAuditLogs returns audit log entries (permanent, never deleted).
-func AdminAuditLogs(db *sql.DB) http.HandlerFunc {
+func AdminAuditLogs(db *database.DB) http.HandlerFunc {
 	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -141,7 +141,7 @@ func AdminAuditLogs(db *sql.DB) http.HandlerFunc {
 // @Router       /admin/logs/system [get]
 // @Security     BearerAuth
 // AdminSystemLogs returns system log entries (retention-managed).
-func AdminSystemLogs(db *sql.DB) http.HandlerFunc {
+func AdminSystemLogs(db *database.DB) http.HandlerFunc {
 	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -183,7 +183,7 @@ func AdminSystemLogs(db *sql.DB) http.HandlerFunc {
 // @Router       /admin/logs/user [get]
 // @Security     BearerAuth
 // AdminUserLogs returns user activity log entries.
-func AdminUserLogs(db *sql.DB) http.HandlerFunc {
+func AdminUserLogs(db *database.DB) http.HandlerFunc {
 	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {

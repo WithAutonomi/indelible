@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"net/http"
 	"time"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/WithAutonomi/indelible/internal/buildinfo"
 	"github.com/WithAutonomi/indelible/internal/config"
+	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
 
@@ -31,7 +31,7 @@ type AntdInfoProvider interface {
 // @Success 200 {object} map[string]interface{}
 // @Failure 503 {object} map[string]interface{}
 // @Router /health [get]
-func Health(db *sql.DB, cfg *config.Config, antdInfo AntdInfoProvider) http.HandlerFunc {
+func Health(db *database.DB, cfg *config.Config, antdInfo AntdInfoProvider) http.HandlerFunc {
 	uploadSvc := services.NewUploadService(db)
 	settingsSvc := services.NewCachedSettingsService(services.NewSettingsService(db))
 

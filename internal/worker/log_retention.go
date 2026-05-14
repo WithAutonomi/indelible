@@ -2,12 +2,12 @@ package worker
 
 import (
 	"context"
-	"database/sql"
 	"log/slog"
 	"strconv"
 	"sync"
 	"time"
 
+	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
 
@@ -21,7 +21,7 @@ type LogRetentionWorker struct {
 }
 
 // NewLogRetentionWorker creates a new log retention worker.
-func NewLogRetentionWorker(db *sql.DB) *LogRetentionWorker {
+func NewLogRetentionWorker(db *database.DB) *LogRetentionWorker {
 	return &LogRetentionWorker{
 		logSvc:      services.NewLogService(db),
 		webhookSvc:  services.NewWebhookDeliveryService(db),

@@ -14,8 +14,10 @@ import (
 var memDBCounter atomic.Int64
 
 // Open connects to the database specified by the URL.
-// Supports sqlite:// and postgres:// schemes.
-func Open(dbURL string) (*sql.DB, error) {
+// Supports sqlite:// and postgres:// schemes. The returned *DB transparently
+// rewrites `?` placeholders to `$N` when the driver is Postgres — service code
+// should write queries with `?` regardless of dialect.
+func Open(dbURL string) (*DB, error) {
 	driver, dsn, err := parseURL(dbURL)
 	if err != nil {
 		return nil, err
@@ -51,7 +53,7 @@ func Open(dbURL string) (*sql.DB, error) {
 		return nil, fmt.Errorf("pinging database: %w", err)
 	}
 
-	return db, nil
+	return &DB{DB: db, driver: driver}, nil
 }
 
 // parseURL converts a db_url into a driver name and DSN.

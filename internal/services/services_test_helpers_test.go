@@ -1,13 +1,12 @@
 package services
 
 import (
-	"database/sql"
 	"testing"
 
 	"github.com/WithAutonomi/indelible/internal/database"
 )
 
-func setupTestDB(t *testing.T) *sql.DB {
+func setupTestDB(t *testing.T) *database.DB {
 	t.Helper()
 	db, err := database.Open("sqlite://:memory:")
 	if err != nil {

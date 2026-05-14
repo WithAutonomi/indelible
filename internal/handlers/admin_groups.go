@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -10,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/middleware"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
@@ -65,7 +65,7 @@ func validPermissionLevel(level string) bool {
 // @Failure      500 {object} map[string]string
 // @Router       /admin/groups [get]
 // @Security     BearerAuth
-func AdminListGroups(db *sql.DB) http.HandlerFunc {
+func AdminListGroups(db *database.DB) http.HandlerFunc {
 	groupSvc := services.NewGroupService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -97,7 +97,7 @@ func AdminListGroups(db *sql.DB) http.HandlerFunc {
 // @Failure      500 {object} map[string]string
 // @Router       /admin/groups [post]
 // @Security     BearerAuth
-func AdminCreateGroup(db *sql.DB) http.HandlerFunc {
+func AdminCreateGroup(db *database.DB) http.HandlerFunc {
 	groupSvc := services.NewGroupService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -144,7 +144,7 @@ func AdminCreateGroup(db *sql.DB) http.HandlerFunc {
 // @Failure      500 {object} map[string]string
 // @Router       /admin/groups/{id} [put]
 // @Security     BearerAuth
-func AdminUpdateGroup(db *sql.DB) http.HandlerFunc {
+func AdminUpdateGroup(db *database.DB) http.HandlerFunc {
 	groupSvc := services.NewGroupService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -190,7 +190,7 @@ func AdminUpdateGroup(db *sql.DB) http.HandlerFunc {
 // @Failure      500 {object} map[string]string
 // @Router       /admin/groups/{id} [delete]
 // @Security     BearerAuth
-func AdminDeleteGroup(db *sql.DB) http.HandlerFunc {
+func AdminDeleteGroup(db *database.DB) http.HandlerFunc {
 	groupSvc := services.NewGroupService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -222,7 +222,7 @@ func AdminDeleteGroup(db *sql.DB) http.HandlerFunc {
 // @Failure      500 {object} map[string]string
 // @Router       /admin/groups/{id}/members [post]
 // @Security     BearerAuth
-func AdminAddGroupMember(db *sql.DB) http.HandlerFunc {
+func AdminAddGroupMember(db *database.DB) http.HandlerFunc {
 	groupSvc := services.NewGroupService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -264,7 +264,7 @@ func AdminAddGroupMember(db *sql.DB) http.HandlerFunc {
 // @Failure      500 {object} map[string]string
 // @Router       /admin/groups/{id}/members/{userId} [delete]
 // @Security     BearerAuth
-func AdminRemoveGroupMember(db *sql.DB) http.HandlerFunc {
+func AdminRemoveGroupMember(db *database.DB) http.HandlerFunc {
 	groupSvc := services.NewGroupService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {

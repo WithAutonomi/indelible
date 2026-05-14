@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -9,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
 
@@ -58,7 +58,7 @@ type updateQuotaRequest struct {
 // @Failure      500 {object} map[string]string
 // @Router       /admin/quotas [get]
 // @Security     BearerAuth
-func AdminListQuotas(db *sql.DB) http.HandlerFunc {
+func AdminListQuotas(db *database.DB) http.HandlerFunc {
 	quotaSvc := services.NewQuotaService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -89,7 +89,7 @@ func AdminListQuotas(db *sql.DB) http.HandlerFunc {
 // @Failure      500 {object} map[string]string
 // @Router       /admin/quotas [post]
 // @Security     BearerAuth
-func AdminCreateQuota(db *sql.DB) http.HandlerFunc {
+func AdminCreateQuota(db *database.DB) http.HandlerFunc {
 	quotaSvc := services.NewQuotaService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -134,7 +134,7 @@ func AdminCreateQuota(db *sql.DB) http.HandlerFunc {
 // @Failure      500 {object} map[string]string
 // @Router       /admin/quotas/{id} [put]
 // @Security     BearerAuth
-func AdminUpdateQuota(db *sql.DB) http.HandlerFunc {
+func AdminUpdateQuota(db *database.DB) http.HandlerFunc {
 	quotaSvc := services.NewQuotaService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -175,7 +175,7 @@ func AdminUpdateQuota(db *sql.DB) http.HandlerFunc {
 // @Failure      500 {object} map[string]string
 // @Router       /admin/quotas/{id} [delete]
 // @Security     BearerAuth
-func AdminDeleteQuota(db *sql.DB) http.HandlerFunc {
+func AdminDeleteQuota(db *database.DB) http.HandlerFunc {
 	quotaSvc := services.NewQuotaService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {

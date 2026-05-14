@@ -3,7 +3,6 @@ package migrate
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -21,11 +20,11 @@ import (
 // Tracks how many times each method was called.
 type fakePublisher struct {
 	mu              sync.Mutex
-	stored          map[string][]byte // address → bytes
+	stored          map[string][]byte // address â†’ bytes
 	prepareCalls    int
 	finalizeCalls   int
 	getCalls        int
-	alreadyStoredOn map[string]bool // hex address → return AlreadyStored=true on prepare
+	alreadyStoredOn map[string]bool // hex address â†’ return AlreadyStored=true on prepare
 }
 
 func newFake() *fakePublisher {
@@ -92,12 +91,12 @@ func (f *fakePublisher) ChunkGet(_ context.Context, address string) ([]byte, err
 
 // happyPublisher is fakePublisher with a wired prepare/finalize chain that
 // returns matching addresses so the migrator's address-match check passes.
-// Keeps an explicit upload_id → address map (real antd stashes the prepared
+// Keeps an explicit upload_id â†’ address map (real antd stashes the prepared
 // chunk by upload_id internally; emulating that gives us correct semantics
 // even when content prefixes collide in our deterministic fake addresses).
 type happyPublisher struct {
 	*fakePublisher
-	uploadAddrs map[string]string // upload_id → address
+	uploadAddrs map[string]string // upload_id â†’ address
 }
 
 func newHappy() *happyPublisher {
@@ -147,7 +146,7 @@ func (p *fakePayer) PayForQuotes(_ context.Context, _ string, payments []sdk.Pay
 	return out, nil
 }
 
-func setupDB(t *testing.T) *sql.DB {
+func setupDB(t *testing.T) *database.DB {
 	t.Helper()
 	db, err := database.Open("sqlite://:memory:")
 	if err != nil {
@@ -160,7 +159,7 @@ func setupDB(t *testing.T) *sql.DB {
 	return db
 }
 
-func newUser(t *testing.T, db *sql.DB, email string) int64 {
+func newUser(t *testing.T, db *database.DB, email string) int64 {
 	t.Helper()
 	u, err := services.NewUserService(db).Create(email, "hashed_pw", "T", "U")
 	if err != nil {
@@ -317,7 +316,7 @@ func TestPublishDataMaps_PrepareErrorContinues(t *testing.T) {
 	}
 }
 
-// corruptingPublisher returns wrong bytes on ChunkGet — for verify-mismatch coverage.
+// corruptingPublisher returns wrong bytes on ChunkGet â€” for verify-mismatch coverage.
 type corruptingPublisher struct{ *happyPublisher }
 
 func (c *corruptingPublisher) ChunkGet(ctx context.Context, address string) ([]byte, error) {

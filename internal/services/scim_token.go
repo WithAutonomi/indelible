@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
+
+	"github.com/WithAutonomi/indelible/internal/database"
 )
 
 var (
@@ -28,10 +30,10 @@ type ScimToken struct {
 
 // ScimTokenService handles SCIM token operations.
 type ScimTokenService struct {
-	db *sql.DB
+	db *database.DB
 }
 
-func NewScimTokenService(db *sql.DB) *ScimTokenService {
+func NewScimTokenService(db *database.DB) *ScimTokenService {
 	return &ScimTokenService{db: db}
 }
 

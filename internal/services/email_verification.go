@@ -5,14 +5,16 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"time"
+
+	"github.com/WithAutonomi/indelible/internal/database"
 )
 
 // EmailVerificationService manages email verification tokens.
 type EmailVerificationService struct {
-	db *sql.DB
+	db *database.DB
 }
 
-func NewEmailVerificationService(db *sql.DB) *EmailVerificationService {
+func NewEmailVerificationService(db *database.DB) *EmailVerificationService {
 	return &EmailVerificationService{db: db}
 }
 

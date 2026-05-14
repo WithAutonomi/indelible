@@ -1,7 +1,6 @@
 package database
 
 import (
-	"database/sql"
 	"embed"
 	"fmt"
 
@@ -15,7 +14,7 @@ var sqliteMigrations embed.FS
 var postgresMigrations embed.FS
 
 // MigrateDown rolls back one migration for the given driver.
-func MigrateDown(db *sql.DB, driver string) error {
+func MigrateDown(db *DB, driver string) error {
 	var fs embed.FS
 	var dir string
 
@@ -36,7 +35,7 @@ func MigrateDown(db *sql.DB, driver string) error {
 		return fmt.Errorf("setting goose dialect: %w", err)
 	}
 
-	if err := goose.Down(db, dir); err != nil {
+	if err := goose.Down(db.DB, dir); err != nil {
 		return fmt.Errorf("rolling back migration: %w", err)
 	}
 
@@ -44,7 +43,7 @@ func MigrateDown(db *sql.DB, driver string) error {
 }
 
 // Migrate runs all pending database migrations for the given driver.
-func Migrate(db *sql.DB, driver string) error {
+func Migrate(db *DB, driver string) error {
 	var fs embed.FS
 	var dir string
 
@@ -65,7 +64,7 @@ func Migrate(db *sql.DB, driver string) error {
 		return fmt.Errorf("setting goose dialect: %w", err)
 	}
 
-	if err := goose.Up(db, dir); err != nil {
+	if err := goose.Up(db.DB, dir); err != nil {
 		return fmt.Errorf("running migrations: %w", err)
 	}
 

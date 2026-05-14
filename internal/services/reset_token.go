@@ -5,21 +5,23 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"time"
+
+	"github.com/WithAutonomi/indelible/internal/database"
 )
 
 // ResetTokenService manages password reset tokens.
 type ResetTokenService struct {
-	db *sql.DB
+	db *database.DB
 }
 
-func NewResetTokenService(db *sql.DB) *ResetTokenService {
+func NewResetTokenService(db *database.DB) *ResetTokenService {
 	return &ResetTokenService{db: db}
 }
 
 // Create generates a one-time-use reset token for the given email.
 // Returns the raw token (to be sent to the user). The token hash is stored.
 func (s *ResetTokenService) Create(userID int64) (string, error) {
-	// Generate 32 random bytes → 64-char hex token
+	// Generate 32 random bytes â†’ 64-char hex token
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return "", err
@@ -32,7 +34,7 @@ func (s *ResetTokenService) Create(userID int64) (string, error) {
 		userID,
 	)
 
-	// Store new token (plain — these are short-lived and single-use)
+	// Store new token (plain â€” these are short-lived and single-use)
 	_, err := s.db.Exec(
 		`INSERT INTO password_reset_tokens (user_id, token, expires_at)
 		 VALUES (?, ?, ?)`,

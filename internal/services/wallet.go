@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/WithAutonomi/indelible/internal/crypto"
+	"github.com/WithAutonomi/indelible/internal/database"
 )
 
 var (
@@ -30,12 +31,12 @@ type Wallet struct {
 
 // WalletService handles wallet operations.
 type WalletService struct {
-	db            *sql.DB
+	db            *database.DB
 	encryptionKey string // hex-encoded AES-256 key
 }
 
 // NewWalletService creates a new WalletService.
-func NewWalletService(db *sql.DB, encryptionKey string) *WalletService {
+func NewWalletService(db *database.DB, encryptionKey string) *WalletService {
 	return &WalletService{db: db, encryptionKey: encryptionKey}
 }
 

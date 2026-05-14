@@ -3,16 +3,18 @@ package services
 import (
 	"database/sql"
 	"errors"
+
+	"github.com/WithAutonomi/indelible/internal/database"
 )
 
 var ErrLastAdmin = errors.New("cannot remove the last admin")
 
 // PermissionService handles permission-related database operations.
 type PermissionService struct {
-	db *sql.DB
+	db *database.DB
 }
 
-func NewPermissionService(db *sql.DB) *PermissionService {
+func NewPermissionService(db *database.DB) *PermissionService {
 	return &PermissionService{db: db}
 }
 

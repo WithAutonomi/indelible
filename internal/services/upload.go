@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/WithAutonomi/indelible/internal/database"
 )
 
 var (
@@ -22,8 +24,8 @@ type Upload struct {
 	OriginalFilename string
 	FileSize         int64
 	ContentType      string
-	Visibility       string // "public" or "private"
-	Status           string // "queued", "processing", "completed", "failed"
+	Visibility       string         // "public" or "private"
+	Status           string         // "queued", "processing", "completed", "failed"
 	StatusDetail     sql.NullString // substatus: "gas_backoff", etc.
 	DatamapAddress   sql.NullString
 	EstimatedCost    sql.NullString
@@ -59,11 +61,11 @@ func scanUpload(scanner interface{ Scan(...any) error }) (*Upload, error) {
 
 // UploadService handles database operations for file uploads.
 type UploadService struct {
-	db *sql.DB
+	db *database.DB
 }
 
 // NewUploadService creates a new UploadService.
-func NewUploadService(db *sql.DB) *UploadService {
+func NewUploadService(db *database.DB) *UploadService {
 	return &UploadService{db: db}
 }
 
@@ -348,7 +350,7 @@ func (s *UploadService) MarkCompleted(id int64, dataMap, actualCost string) erro
 // DataMap address and cost. datamapAddress is the hex-encoded network address returned
 // in antd's finalize response when prepare was called with visibility:"public".
 // The DataMap chunk itself was already published as part of the same external-signer
-// payment batch — no separate daemon-wallet payment.
+// payment batch â€” no separate daemon-wallet payment.
 func (s *UploadService) MarkCompletedPublic(id int64, datamapAddress, actualCost string) error {
 	_, err := s.db.Exec(
 		`UPDATE uploads SET status = 'completed', datamap_address = ?, actual_cost = ?, completed_at = CURRENT_TIMESTAMP, temp_path = NULL WHERE id = ?`,
@@ -359,7 +361,7 @@ func (s *UploadService) MarkCompletedPublic(id int64, datamapAddress, actualCost
 
 // MarkPublished flips a previously-private completed upload to visibility='public'
 // with its now-published DataMap address. The existing data_map column is preserved
-// for idempotency and as a belt-and-suspenders fallback — both forms address the
+// for idempotency and as a belt-and-suspenders fallback â€” both forms address the
 // same content. Used by cmd/migrate-publish-datamaps to back-publish DataMaps of
 // uploads created before public visibility shipped.
 func (s *UploadService) MarkPublished(id int64, datamapAddress string) error {

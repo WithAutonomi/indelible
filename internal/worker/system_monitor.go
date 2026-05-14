@@ -2,7 +2,6 @@ package worker
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -15,6 +14,7 @@ import (
 	antd "github.com/WithAutonomi/ant-sdk/antd-go"
 
 	"github.com/WithAutonomi/indelible/internal/config"
+	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
 
@@ -23,19 +23,19 @@ import (
 // failure rate, webhook delivery failures, gas backoff count, stale uploads,
 // temp directory size, and worker liveness.
 type SystemMonitor struct {
-	cfg        *config.Config
-	db         *sql.DB
-	uploadSvc  *services.UploadService
-	walletSvc  *services.WalletService
+	cfg         *config.Config
+	db          *database.DB
+	uploadSvc   *services.UploadService
+	walletSvc   *services.WalletService
 	settingsSvc *services.CachedSettingsService
-	logSvc     *services.LogService
-	webhookSvc *services.WebhookDeliveryService
+	logSvc      *services.LogService
+	webhookSvc  *services.WebhookDeliveryService
 
 	wg     sync.WaitGroup
 	cancel context.CancelFunc
 
-	// Alert deduplication — only fire when state changes
-	lastAlerts map[string]string // check name → last alert level
+	// Alert deduplication â€” only fire when state changes
+	lastAlerts map[string]string // check name â†’ last alert level
 	mu         sync.Mutex
 
 	// Worker liveness tracking
@@ -43,7 +43,7 @@ type SystemMonitor struct {
 }
 
 // NewSystemMonitor creates a new consolidated system monitor.
-func NewSystemMonitor(db *sql.DB, cfg *config.Config) *SystemMonitor {
+func NewSystemMonitor(db *database.DB, cfg *config.Config) *SystemMonitor {
 	return &SystemMonitor{
 		cfg:         cfg,
 		db:          db,
@@ -108,14 +108,14 @@ func (m *SystemMonitor) runLoop(ctx context.Context, interval time.Duration, fn 
 	}
 }
 
-// fastChecks run every 30 seconds — lightweight, time-sensitive checks.
+// fastChecks run every 30 seconds â€” lightweight, time-sensitive checks.
 func (m *SystemMonitor) fastChecks() {
 	m.checkAntdHealth()
 	m.checkWorkerLiveness()
 	m.checkStaleUploads()
 }
 
-// slowChecks run every 5 minutes — heavier or less urgent checks.
+// slowChecks run every 5 minutes â€” heavier or less urgent checks.
 func (m *SystemMonitor) slowChecks() {
 	m.checkWalletBalance()
 	m.checkQueueBacklog()
@@ -143,7 +143,7 @@ func (m *SystemMonitor) checkAntdHealth() {
 
 	// DataCost forces antd to query peers for chunk pricing, so success means
 	// antd is reachable AND has overlay connectivity. A failed probe could be
-	// either antd process-down OR network-partitioned — both mean uploads and
+	// either antd process-down OR network-partitioned â€” both mean uploads and
 	// downloads will fail, so we surface them under the same alert.
 	// Payload must be >= 3 bytes: antd's self-encryption rejects smaller.
 	probe := antd.NewClient(m.cfg.AntdURL, antd.WithTimeout(probeTimeout))
@@ -290,7 +290,7 @@ func (m *SystemMonitor) checkGasBackoffCount() {
 	).Scan(&count)
 
 	if count >= 10 {
-		msg := fmt.Sprintf("%d uploads waiting in gas backoff — network costs may be elevated", count)
+		msg := fmt.Sprintf("%d uploads waiting in gas backoff â€” network costs may be elevated", count)
 		m.fireAlert("gas_backoff", "warning", "gas_backoff_high", msg, float64(count))
 	} else {
 		m.clearAlert("gas_backoff", "gas_backoff_normal",
@@ -328,7 +328,7 @@ func (m *SystemMonitor) checkTempDirSize() {
 	const threshold = 10 * 1024 * 1024 * 1024
 	if totalSize > threshold {
 		sizeGB := float64(totalSize) / (1024 * 1024 * 1024)
-		msg := fmt.Sprintf("Temp upload directory is %.1f GB — files may not be cleaning up", sizeGB)
+		msg := fmt.Sprintf("Temp upload directory is %.1f GB â€” files may not be cleaning up", sizeGB)
 		m.fireAlert("temp_dir_size", "warning", "temp_dir_large", msg, sizeGB)
 	} else {
 		m.clearAlert("temp_dir_size", "temp_dir_ok", "Temp directory size normal", float64(totalSize))
@@ -355,7 +355,7 @@ func (m *SystemMonitor) checkWorkerLiveness() {
 	}
 
 	if time.Since(lastDequeue) > 5*time.Minute {
-		msg := fmt.Sprintf("Upload worker appears stuck — %d queued items but no dequeue in %.0f minutes",
+		msg := fmt.Sprintf("Upload worker appears stuck â€” %d queued items but no dequeue in %.0f minutes",
 			counts["queued"], time.Since(lastDequeue).Minutes())
 		m.fireAlert("worker_liveness", "critical", "worker_stuck", msg, time.Since(lastDequeue).Minutes())
 	} else {

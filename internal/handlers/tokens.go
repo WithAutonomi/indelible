@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -12,16 +11,17 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/WithAutonomi/indelible/internal/config"
+	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/middleware"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
 
 type createTokenRequest struct {
-	Name         string   `json:"name"`
-	Description  string   `json:"description"`
-	Permissions  []string `json:"permissions"` // ["read"], ["read","write"], etc.
-	Department   string   `json:"department"`
-	ExpiresInDays *int    `json:"expires_in_days"` // null = use system default
+	Name          string   `json:"name"`
+	Description   string   `json:"description"`
+	Permissions   []string `json:"permissions"` // ["read"], ["read","write"], etc.
+	Department    string   `json:"department"`
+	ExpiresInDays *int     `json:"expires_in_days"` // null = use system default
 }
 
 type tokenResponse struct {
@@ -96,7 +96,7 @@ func toTokenResponse(t *services.Token) tokenResponse {
 // @Failure      500  {object}  map[string]string
 // @Security     BearerAuth
 // @Router       /tokens [post]
-func CreateToken(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func CreateToken(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	tokenSvc := services.NewTokenService(db)
 	permSvc := services.NewPermissionService(db)
 	settingsSvc := services.NewSettingsService(db)
@@ -182,7 +182,7 @@ func CreateToken(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 // @Failure      500  {object}  map[string]string
 // @Security     BearerAuth
 // @Router       /tokens [get]
-func ListTokens(db *sql.DB) http.HandlerFunc {
+func ListTokens(db *database.DB) http.HandlerFunc {
 	tokenSvc := services.NewTokenService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -216,7 +216,7 @@ func ListTokens(db *sql.DB) http.HandlerFunc {
 // @Failure      500  {object}  map[string]string
 // @Security     BearerAuth
 // @Router       /tokens/{id} [delete]
-func RevokeToken(db *sql.DB) http.HandlerFunc {
+func RevokeToken(db *database.DB) http.HandlerFunc {
 	tokenSvc := services.NewTokenService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -264,7 +264,7 @@ func RevokeToken(db *sql.DB) http.HandlerFunc {
 // @Failure      500 {object} map[string]string
 // @Router       /admin/tokens [get]
 // @Security     BearerAuth
-func AdminListAllTokens(db *sql.DB) http.HandlerFunc {
+func AdminListAllTokens(db *database.DB) http.HandlerFunc {
 	tokenSvc := services.NewTokenService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -305,7 +305,7 @@ func AdminListAllTokens(db *sql.DB) http.HandlerFunc {
 // @Failure      500 {object} map[string]string
 // @Router       /admin/tokens/bulk [delete]
 // @Security     BearerAuth
-func AdminBulkRevokeTokens(db *sql.DB) http.HandlerFunc {
+func AdminBulkRevokeTokens(db *database.DB) http.HandlerFunc {
 	tokenSvc := services.NewTokenService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {

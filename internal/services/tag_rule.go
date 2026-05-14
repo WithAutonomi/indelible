@@ -10,13 +10,15 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/WithAutonomi/indelible/internal/database"
 )
 
 var (
-	ErrTagRuleNotFound    = errors.New("tag rule not found")
-	ErrInvalidMatchField  = errors.New("match_field must be one of: content_type, filename, file_size, visibility")
-	ErrInvalidMatchOp     = errors.New("match_op is not valid for the given match_field")
-	ErrInvalidApplyKey    = errors.New("apply_key must match ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$")
+	ErrTagRuleNotFound   = errors.New("tag rule not found")
+	ErrInvalidMatchField = errors.New("match_field must be one of: content_type, filename, file_size, visibility")
+	ErrInvalidMatchOp    = errors.New("match_op is not valid for the given match_field")
+	ErrInvalidApplyKey   = errors.New("apply_key must match ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$")
 )
 
 // validApplyKey matches a tag key: starts with alphanumeric, then up to 62 more
@@ -51,14 +53,14 @@ type TagRule struct {
 
 // TagRuleService handles auto-tag rule operations.
 type TagRuleService struct {
-	db *sql.DB
+	db *database.DB
 
 	// regexCache caches compiled regexes keyed by pattern string.
 	regexCache sync.Map
 }
 
 // NewTagRuleService creates a new TagRuleService.
-func NewTagRuleService(db *sql.DB) *TagRuleService {
+func NewTagRuleService(db *database.DB) *TagRuleService {
 	return &TagRuleService{db: db}
 }
 
@@ -292,7 +294,7 @@ func (s *TagRuleService) getOrCompileRegex(pattern string) (*regexp.Regexp, erro
 		if re, ok := cached.(*regexp.Regexp); ok {
 			return re, nil
 		}
-		// Cached error sentinel — the pattern was invalid previously.
+		// Cached error sentinel â€” the pattern was invalid previously.
 		return nil, fmt.Errorf("previously failed to compile regex: %s", pattern)
 	}
 
