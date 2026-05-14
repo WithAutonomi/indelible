@@ -110,13 +110,43 @@ func openPostgres(t testing.TB, adminURL string, migrate bool) *database.DB {
 	return db
 }
 
+// templateLockKey is an arbitrary 64-bit key for the cross-process
+// pg_advisory_lock that serialises template seeding. Go's test runner
+// invokes each package in its own process, so `sync.Once` alone is not
+// enough — without the lock, two processes can race to CREATE DATABASE
+// indelible_template and one fails with a unique-constraint violation.
+const templateLockKey int64 = 0xC0FFEE_DB_5EED
+
 func seedTemplate(adminURL string) error {
-	if err := dropDB(adminURL, templateDBName); err != nil {
-		return fmt.Errorf("drop stale template: %w", err)
+	admin, err := sql.Open("postgres", adminURL)
+	if err != nil {
+		return fmt.Errorf("open admin: %w", err)
 	}
-	if err := createDB(adminURL, templateDBName, false); err != nil {
+	defer admin.Close()
+
+	if _, err := admin.Exec(`SELECT pg_advisory_lock($1)`, templateLockKey); err != nil {
+		return fmt.Errorf("acquire seed lock: %w", err)
+	}
+	defer func() { _, _ = admin.Exec(`SELECT pg_advisory_unlock($1)`, templateLockKey) }()
+
+	var exists bool
+	if err := admin.QueryRow(
+		`SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1)`, templateDBName,
+	).Scan(&exists); err != nil {
+		return fmt.Errorf("check template existence: %w", err)
+	}
+	if exists {
+		// Another process already seeded it. Trust the existing template;
+		// migrations only diverge between code revisions, and each CI run
+		// gets a fresh container anyway. Local devs running stale templates
+		// can manually `DROP DATABASE indelible_template`.
+		return nil
+	}
+
+	if _, err := admin.Exec(`CREATE DATABASE "` + templateDBName + `"`); err != nil {
 		return fmt.Errorf("create template: %w", err)
 	}
+
 	tmplURL := urlWithDB(adminURL, templateDBName)
 	tdb, err := database.Open(tmplURL)
 	if err != nil {
