@@ -678,7 +678,8 @@ func TestUploadRequeueStuck(t *testing.T) {
 	svc.DequeueNext()
 
 	// Manually backdate processing_at to simulate stuck uploads
-	db.Exec(`UPDATE uploads SET processing_at = datetime('now', '-120 minutes') WHERE status = 'processing'`)
+	backdated := time.Now().UTC().Add(-120 * time.Minute).Format("2006-01-02 15:04:05")
+	db.Exec(`UPDATE uploads SET processing_at = ? WHERE status = 'processing'`, backdated)
 
 	requeued, err := svc.RequeueStuck(60) // 60 minute timeout
 	if err != nil {

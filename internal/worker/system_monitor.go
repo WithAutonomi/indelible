@@ -236,11 +236,12 @@ func (m *SystemMonitor) checkQueueBacklog() {
 func (m *SystemMonitor) checkFailureRate() {
 	// Count recent failures (last 15 minutes)
 	var recentFail, recentTotal int64
+	cutoff := time.Now().UTC().Add(-15 * time.Minute).Format("2006-01-02 15:04:05")
 	m.db.QueryRow(
-		`SELECT COUNT(*) FROM uploads WHERE failed_at > datetime('now', '-15 minutes')`,
+		`SELECT COUNT(*) FROM uploads WHERE failed_at > ?`, cutoff,
 	).Scan(&recentFail)
 	m.db.QueryRow(
-		`SELECT COUNT(*) FROM uploads WHERE created_at > datetime('now', '-15 minutes')`,
+		`SELECT COUNT(*) FROM uploads WHERE created_at > ?`, cutoff,
 	).Scan(&recentTotal)
 
 	if recentTotal < 5 {
@@ -260,11 +261,12 @@ func (m *SystemMonitor) checkFailureRate() {
 func (m *SystemMonitor) checkWebhookDeliveryFailures() {
 	// Count failed deliveries in last hour
 	var failed, total int64
+	cutoff := time.Now().UTC().Add(-1 * time.Hour).Format("2006-01-02 15:04:05")
 	m.db.QueryRow(
-		`SELECT COUNT(*) FROM webhook_delivery_log WHERE created_at > datetime('now', '-1 hour') AND success = 0`,
+		`SELECT COUNT(*) FROM webhook_delivery_log WHERE created_at > ? AND success = 0`, cutoff,
 	).Scan(&failed)
 	m.db.QueryRow(
-		`SELECT COUNT(*) FROM webhook_delivery_log WHERE created_at > datetime('now', '-1 hour')`,
+		`SELECT COUNT(*) FROM webhook_delivery_log WHERE created_at > ?`, cutoff,
 	).Scan(&total)
 
 	if total < 3 {
@@ -298,8 +300,9 @@ func (m *SystemMonitor) checkGasBackoffCount() {
 
 func (m *SystemMonitor) checkStaleUploads() {
 	var count int64
+	cutoff := time.Now().UTC().Add(-10 * time.Minute).Format("2006-01-02 15:04:05")
 	m.db.QueryRow(
-		`SELECT COUNT(*) FROM uploads WHERE status = 'processing' AND processing_at < datetime('now', '-10 minutes')`,
+		`SELECT COUNT(*) FROM uploads WHERE status = 'processing' AND processing_at < ?`, cutoff,
 	).Scan(&count)
 
 	if count > 0 {

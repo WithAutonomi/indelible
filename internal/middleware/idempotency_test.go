@@ -287,10 +287,11 @@ func TestCleanupIdempotencyKeys(t *testing.T) {
 	db := setupTestDB(t)
 
 	// Insert an old key (> 24 hours ago)
+	oldStamp := time.Now().UTC().Add(-48 * time.Hour).Format("2006-01-02 15:04:05")
 	_, err := db.Exec(
 		`INSERT INTO idempotency_keys (key, user_id, status_code, response_body, created_at)
-		 VALUES (?, ?, ?, ?, datetime('now', '-2 days'))`,
-		"old-key", 1, 201, `{"old":true}`,
+		 VALUES (?, ?, ?, ?, ?)`,
+		"old-key", 1, 201, `{"old":true}`, oldStamp,
 	)
 	if err != nil {
 		t.Fatalf("insert old key: %v", err)
@@ -381,10 +382,11 @@ func TestCleanupIdempotencyKeys_KeepsRecent(t *testing.T) {
 	db := setupTestDB(t)
 
 	// Insert key 23 hours ago -- should NOT be cleaned up
+	recentStamp := time.Now().UTC().Add(-23 * time.Hour).Format("2006-01-02 15:04:05")
 	_, err := db.Exec(
 		`INSERT INTO idempotency_keys (key, user_id, status_code, response_body, created_at)
-		 VALUES (?, ?, ?, ?, datetime('now', '-23 hours'))`,
-		"recent-key", 1, 200, `{}`,
+		 VALUES (?, ?, ?, ?, ?)`,
+		"recent-key", 1, 200, `{}`, recentStamp,
 	)
 	if err != nil {
 		t.Fatalf("insert: %v", err)

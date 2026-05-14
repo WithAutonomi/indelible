@@ -140,7 +140,7 @@ func (s *WalletService) SetDefault(id int64) error {
 	}
 
 	// Set new default
-	if _, err := tx.Exec(`UPDATE wallets SET is_default = 1, updated_at = datetime('now') WHERE id = ?`, id); err != nil {
+	if _, err := tx.Exec(`UPDATE wallets SET is_default = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, id); err != nil {
 		return err
 	}
 
@@ -169,7 +169,7 @@ func (s *WalletService) DecryptKey(w *Wallet) (string, error) {
 // UpdateBalance updates a wallet's payment and gas balances.
 func (s *WalletService) UpdateBalance(id int64, paymentBalance, gasBalance string) error {
 	_, err := s.db.Exec(
-		`UPDATE wallets SET payment_balance = ?, gas_balance = ?, updated_at = datetime('now') WHERE id = ?`,
+		`UPDATE wallets SET payment_balance = ?, gas_balance = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 		paymentBalance, gasBalance, id,
 	)
 	return err

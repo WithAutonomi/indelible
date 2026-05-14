@@ -309,7 +309,7 @@ func (s *UploadService) DequeueNext() (*Upload, error) {
 	var id int64
 	err = tx.QueryRow(
 		`SELECT id FROM uploads WHERE status = 'queued'
-		 AND (backoff_until IS NULL OR backoff_until <= datetime('now'))
+		 AND (backoff_until IS NULL OR backoff_until <= CURRENT_TIMESTAMP)
 		 ORDER BY queued_at ASC LIMIT 1`,
 	).Scan(&id)
 	if err != nil {
@@ -320,7 +320,7 @@ func (s *UploadService) DequeueNext() (*Upload, error) {
 	}
 
 	_, err = tx.Exec(
-		`UPDATE uploads SET status = 'processing', processing_at = datetime('now') WHERE id = ? AND status = 'queued'`,
+		`UPDATE uploads SET status = 'processing', processing_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'queued'`,
 		id,
 	)
 	if err != nil {
@@ -338,7 +338,7 @@ func (s *UploadService) DequeueNext() (*Upload, error) {
 // The dataMap is the hex-encoded serialized DataMap returned by antd's finalize endpoint.
 func (s *UploadService) MarkCompleted(id int64, dataMap, actualCost string) error {
 	_, err := s.db.Exec(
-		`UPDATE uploads SET status = 'completed', data_map = ?, actual_cost = ?, completed_at = datetime('now'), temp_path = NULL WHERE id = ?`,
+		`UPDATE uploads SET status = 'completed', data_map = ?, actual_cost = ?, completed_at = CURRENT_TIMESTAMP, temp_path = NULL WHERE id = ?`,
 		dataMap, actualCost, id,
 	)
 	return err
@@ -351,7 +351,7 @@ func (s *UploadService) MarkCompleted(id int64, dataMap, actualCost string) erro
 // payment batch — no separate daemon-wallet payment.
 func (s *UploadService) MarkCompletedPublic(id int64, datamapAddress, actualCost string) error {
 	_, err := s.db.Exec(
-		`UPDATE uploads SET status = 'completed', datamap_address = ?, actual_cost = ?, completed_at = datetime('now'), temp_path = NULL WHERE id = ?`,
+		`UPDATE uploads SET status = 'completed', datamap_address = ?, actual_cost = ?, completed_at = CURRENT_TIMESTAMP, temp_path = NULL WHERE id = ?`,
 		datamapAddress, actualCost, id,
 	)
 	return err
@@ -403,7 +403,7 @@ func (s *UploadService) ListPrivatePublishCandidates(limit int) ([]*Upload, erro
 // MarkFailed transitions an upload to "failed" with an error message.
 func (s *UploadService) MarkFailed(id int64, errMsg string) error {
 	_, err := s.db.Exec(
-		`UPDATE uploads SET status = 'failed', error_message = ?, failed_at = datetime('now'), temp_path = NULL WHERE id = ?`,
+		`UPDATE uploads SET status = 'failed', error_message = ?, failed_at = CURRENT_TIMESTAMP, temp_path = NULL WHERE id = ?`,
 		errMsg, id,
 	)
 	return err
@@ -433,11 +433,12 @@ func (s *UploadService) ClearBackoff(id int64) error {
 // RequeueStuck finds uploads that have been "processing" for longer than the timeout
 // and resets them to "queued". Returns the number of requeued uploads.
 func (s *UploadService) RequeueStuck(timeoutMinutes int) (int64, error) {
+	cutoff := time.Now().UTC().Add(-time.Duration(timeoutMinutes) * time.Minute).Format("2006-01-02 15:04:05")
 	result, err := s.db.Exec(
 		`UPDATE uploads SET status = 'queued', processing_at = NULL
 		 WHERE status = 'processing'
-		 AND processing_at < datetime('now', ? || ' minutes')`,
-		-timeoutMinutes,
+		 AND processing_at < ?`,
+		cutoff,
 	)
 	if err != nil {
 		return 0, err
@@ -469,7 +470,7 @@ func (s *UploadService) CountByStatus() (map[string]int64, error) {
 func (s *UploadService) Cancel(id int64) error {
 	result, err := s.db.Exec(
 		`UPDATE uploads SET status = 'failed', error_message = 'Cancelled by user', status_detail = NULL,
-		 backoff_until = NULL, failed_at = datetime('now'), temp_path = NULL
+		 backoff_until = NULL, failed_at = CURRENT_TIMESTAMP, temp_path = NULL
 		 WHERE id = ? AND status IN ('queued', 'processing')`,
 		id,
 	)
@@ -488,7 +489,7 @@ func (s *UploadService) Retry(id int64) error {
 	result, err := s.db.Exec(
 		`UPDATE uploads SET status = 'queued', status_detail = NULL, error_message = NULL,
 		 backoff_until = NULL, backoff_attempt = 0, last_quoted_cost = NULL,
-		 failed_at = NULL, processing_at = NULL, queued_at = datetime('now')
+		 failed_at = NULL, processing_at = NULL, queued_at = CURRENT_TIMESTAMP
 		 WHERE id = ? AND status = 'failed'`,
 		id,
 	)

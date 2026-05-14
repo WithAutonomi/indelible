@@ -117,13 +117,33 @@ func (s *AnalyticsService) UploadAnalytics(since time.Time) (*UploadStats, error
 		stats.AvgFileSize = stats.TotalBytes / stats.TotalUploads
 	}
 
-	// Average processing time (completed uploads only)
-	s.db.QueryRow(
-		`SELECT COALESCE(AVG(
-			(julianday(completed_at) - julianday(processing_at)) * 86400000
-		), 0) FROM uploads WHERE status = 'completed' AND completed_at IS NOT NULL AND processing_at IS NOT NULL AND created_at >= ?`,
+	// Average processing time (completed uploads only) — computed in Go because
+	// SQLite uses julianday() while Postgres uses EXTRACT(EPOCH FROM ...).
+	procRows, err := s.db.Query(
+		`SELECT processing_at, completed_at FROM uploads
+		 WHERE status = 'completed' AND completed_at IS NOT NULL AND processing_at IS NOT NULL AND created_at >= ?`,
 		sinceStr,
-	).Scan(&stats.AvgProcessingMs)
+	)
+	if err != nil {
+		return nil, err
+	}
+	var totalMs, procCount int64
+	for procRows.Next() {
+		var procAt, compAt time.Time
+		if err := procRows.Scan(&procAt, &compAt); err != nil {
+			procRows.Close()
+			return nil, err
+		}
+		totalMs += compAt.Sub(procAt).Milliseconds()
+		procCount++
+	}
+	procRows.Close()
+	if err := procRows.Err(); err != nil {
+		return nil, err
+	}
+	if procCount > 0 {
+		stats.AvgProcessingMs = totalMs / procCount
+	}
 
 	// Top uploaders
 	uploaderRows, err := s.db.Query(

@@ -104,6 +104,48 @@ func TestUploadAnalytics_RecentFailures(t *testing.T) {
 	}
 }
 
+func TestUploadAnalytics_AvgProcessingMs(t *testing.T) {
+	db := setupTestDB(t)
+	userSvc := NewUserService(db)
+	uploadSvc := NewUploadService(db)
+	analyticsSvc := NewAnalyticsService(db)
+
+	user := createTestUser(t, userSvc, "test@example.com", "Test", "User")
+
+	// Insert two completed uploads. We control processing_at and completed_at
+	// directly so the average is deterministic regardless of wall clock.
+	u1 := insertTestUpload(t, uploadSvc, user.ID, "a.bin", 100, "completed")
+	u2 := insertTestUpload(t, uploadSvc, user.ID, "b.bin", 200, "completed")
+
+	base := time.Now().UTC().Truncate(time.Second)
+	stamp := func(t time.Time) string { return t.Format("2006-01-02 15:04:05") }
+
+	// u1: 2000ms processing
+	if _, err := db.Exec(
+		`UPDATE uploads SET processing_at = ?, completed_at = ? WHERE id = ?`,
+		stamp(base), stamp(base.Add(2*time.Second)), u1.ID,
+	); err != nil {
+		t.Fatalf("backdate u1: %v", err)
+	}
+	// u2: 4000ms processing
+	if _, err := db.Exec(
+		`UPDATE uploads SET processing_at = ?, completed_at = ? WHERE id = ?`,
+		stamp(base), stamp(base.Add(4*time.Second)), u2.ID,
+	); err != nil {
+		t.Fatalf("backdate u2: %v", err)
+	}
+
+	since := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+	stats, err := analyticsSvc.UploadAnalytics(since)
+	if err != nil {
+		t.Fatalf("UploadAnalytics: %v", err)
+	}
+	// Average of 2000ms and 4000ms is 3000ms.
+	if stats.AvgProcessingMs != 3000 {
+		t.Errorf("AvgProcessingMs = %d, want 3000", stats.AvgProcessingMs)
+	}
+}
+
 func TestUploadAnalytics_Empty(t *testing.T) {
 	db := setupTestDB(t)
 	analyticsSvc := NewAnalyticsService(db)

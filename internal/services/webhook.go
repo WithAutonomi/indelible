@@ -100,7 +100,7 @@ func (s *WebhookService) List() ([]*Webhook, error) {
 // Update modifies a webhook configuration.
 func (s *WebhookService) Update(id int64, url, integrationType, events string, isEnabled bool) (*Webhook, error) {
 	_, err := s.db.Exec(
-		`UPDATE webhook_config SET url = ?, integration_type = ?, events = ?, is_enabled = ?, updated_at = datetime('now') WHERE id = ?`,
+		`UPDATE webhook_config SET url = ?, integration_type = ?, events = ?, is_enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 		url, integrationType, events, isEnabled, id,
 	)
 	if err != nil {
@@ -131,7 +131,7 @@ func (s *WebhookService) RotateSecret(id int64) (string, error) {
 	secret := "whsec_" + hex.EncodeToString(raw)
 
 	result, err := s.db.Exec(
-		`UPDATE webhook_config SET secret = ?, updated_at = datetime('now') WHERE id = ?`,
+		`UPDATE webhook_config SET secret = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 		secret, id,
 	)
 	if err != nil {

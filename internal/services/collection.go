@@ -118,7 +118,7 @@ func (s *CollectionService) List(userID int64, parentID *int64) ([]*Collection, 
 // Update modifies a collection's name and description.
 func (s *CollectionService) Update(id int64, name, description string) (*Collection, error) {
 	_, err := s.db.Exec(
-		`UPDATE collections SET name = ?, description = ?, updated_at = datetime('now') WHERE id = ?`,
+		`UPDATE collections SET name = ?, description = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 		name, description, id,
 	)
 	if err != nil {
