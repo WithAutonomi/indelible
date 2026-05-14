@@ -48,18 +48,17 @@ func (s *CollectionService) Create(name, description string, parentID *int64, cr
 		pID = sql.NullInt64{Int64: *parentID, Valid: true}
 	}
 
-	result, err := s.db.Exec(
-		`INSERT INTO collections (name, description, parent_id, created_by) VALUES (?, ?, ?, ?)`,
+	var id int64
+	err := s.db.QueryRow(
+		`INSERT INTO collections (name, description, parent_id, created_by) VALUES (?, ?, ?, ?) RETURNING id`,
 		name, description, pID, createdBy,
-	)
+	).Scan(&id)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return nil, ErrCollectionNameTaken
 		}
 		return nil, err
 	}
-
-	id, _ := result.LastInsertId()
 	return s.GetByID(id)
 }
 

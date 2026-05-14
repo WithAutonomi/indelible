@@ -48,15 +48,14 @@ func (s *OIDCProviderService) Create(name, displayName, issuerURL, clientID, cli
 		scopes = "openid,email,profile"
 	}
 
-	result, err := s.db.Exec(
-		`INSERT INTO oidc_providers (name, display_name, issuer_url, client_id, client_secret, scopes) VALUES (?, ?, ?, ?, ?, ?)`,
+	var id int64
+	err = s.db.QueryRow(
+		`INSERT INTO oidc_providers (name, display_name, issuer_url, client_id, client_secret, scopes) VALUES (?, ?, ?, ?, ?, ?) RETURNING id`,
 		name, displayName, issuerURL, clientID, encryptedSecret, scopes,
-	)
+	).Scan(&id)
 	if err != nil {
 		return nil, err
 	}
-
-	id, _ := result.LastInsertId()
 	return s.GetByID(id)
 }
 

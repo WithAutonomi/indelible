@@ -38,15 +38,14 @@ func (s *TransactionService) Record(walletID int64, uploadID *int64, txType, amo
 		hash = sql.NullString{String: txHash, Valid: true}
 	}
 
-	result, err := s.db.Exec(
-		`INSERT INTO transactions (wallet_id, upload_id, tx_type, amount, balance_after, tx_hash) VALUES (?, ?, ?, ?, ?, ?)`,
+	var id int64
+	err := s.db.QueryRow(
+		`INSERT INTO transactions (wallet_id, upload_id, tx_type, amount, balance_after, tx_hash) VALUES (?, ?, ?, ?, ?, ?) RETURNING id`,
 		walletID, uID, txType, amount, balanceAfter, hash,
-	)
+	).Scan(&id)
 	if err != nil {
 		return nil, err
 	}
-
-	id, _ := result.LastInsertId()
 	return s.GetByID(id)
 }
 

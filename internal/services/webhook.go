@@ -50,15 +50,14 @@ func (s *WebhookService) Create(url, integrationType, events string) (*Webhook, 
 	}
 	secret := "whsec_" + hex.EncodeToString(raw)
 
-	result, err := s.db.Exec(
-		`INSERT INTO webhook_config (url, integration_type, events, secret) VALUES (?, ?, ?, ?)`,
+	var id int64
+	err := s.db.QueryRow(
+		`INSERT INTO webhook_config (url, integration_type, events, secret) VALUES (?, ?, ?, ?) RETURNING id`,
 		url, integrationType, events, secret,
-	)
+	).Scan(&id)
 	if err != nil {
 		return nil, err
 	}
-
-	id, _ := result.LastInsertId()
 	return s.GetByID(id)
 }
 

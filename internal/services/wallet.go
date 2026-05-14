@@ -54,15 +54,14 @@ func (s *WalletService) Create(name, address, privateKey string) (*Wallet, error
 	}
 	isDefault := count == 0
 
-	result, err := s.db.Exec(
-		`INSERT INTO wallets (name, address, encrypted_key, is_default) VALUES (?, ?, ?, ?)`,
+	var id int64
+	err = s.db.QueryRow(
+		`INSERT INTO wallets (name, address, encrypted_key, is_default) VALUES (?, ?, ?, ?) RETURNING id`,
 		name, address, encryptedKey, isDefault,
-	)
+	).Scan(&id)
 	if err != nil {
 		return nil, err
 	}
-
-	id, _ := result.LastInsertId()
 	return s.GetByID(id)
 }
 
