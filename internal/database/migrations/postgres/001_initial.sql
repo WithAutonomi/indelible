@@ -18,7 +18,7 @@ CREATE TABLE users (
     last_login_at TIMESTAMPTZ,
     password_changed_at TIMESTAMPTZ,
     max_file_size_bytes BIGINT,
-    allowed_file_types JSONB, -- array of extensions
+    allowed_file_types TEXT, -- array of extensions
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     deleted_at TIMESTAMPTZ
@@ -67,10 +67,10 @@ CREATE TABLE api_tokens (
     description TEXT NOT NULL DEFAULT '',
     token_hash TEXT NOT NULL,
     user_id BIGINT NOT NULL REFERENCES users(id),
-    permissions JSONB NOT NULL DEFAULT '["read"]',
+    permissions TEXT NOT NULL DEFAULT '["read"]',
     department TEXT,
     max_file_size_bytes BIGINT,
-    allowed_file_types JSONB,
+    allowed_file_types TEXT,
     expires_at TIMESTAMPTZ,
     revoked_at TIMESTAMPTZ,
     revoked_by BIGINT REFERENCES users(id),
@@ -303,7 +303,7 @@ CREATE TABLE webhook_config (
     secret TEXT NOT NULL DEFAULT '',
     integration_type TEXT NOT NULL DEFAULT 'generic' CHECK (integration_type IN ('generic', 'slack')),
     is_enabled BOOLEAN NOT NULL DEFAULT true,
-    events JSONB NOT NULL DEFAULT '["completed","failed"]',
+    events TEXT NOT NULL DEFAULT '["completed","failed"]',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -328,7 +328,7 @@ CREATE TABLE user_notification_prefs (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(id) UNIQUE,
     webhook_url TEXT,
-    events JSONB NOT NULL DEFAULT '[]',
+    events TEXT NOT NULL DEFAULT '[]',
     digest_mode TEXT DEFAULT 'realtime' CHECK (digest_mode IN ('realtime', 'daily', 'weekly')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
