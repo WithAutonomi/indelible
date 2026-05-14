@@ -83,20 +83,15 @@ func (s *TagRuleService) Create(name, description, matchField, matchOp, matchVal
 		return nil, err
 	}
 
-	result, err := s.db.Exec(
+	var id int64
+	err := s.db.QueryRow(
 		`INSERT INTO tag_rules (name, description, match_field, match_op, match_value, apply_key, apply_value, priority, created_by)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
 		name, description, matchField, matchOp, matchValue, applyKey, applyValue, priority, createdBy,
-	)
+	).Scan(&id)
 	if err != nil {
 		return nil, err
 	}
-
-	id, err := result.LastInsertId()
-	if err != nil {
-		return nil, err
-	}
-
 	return s.GetByID(id)
 }
 

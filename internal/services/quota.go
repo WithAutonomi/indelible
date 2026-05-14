@@ -41,18 +41,17 @@ func (s *QuotaService) Create(entityType, entityID string, maxBytes int64) (*Quo
 		eID = sql.NullString{String: entityID, Valid: true}
 	}
 
-	result, err := s.db.Exec(
-		`INSERT INTO quotas (entity_type, entity_id, max_bytes) VALUES (?, ?, ?)`,
+	var id int64
+	err := s.db.QueryRow(
+		`INSERT INTO quotas (entity_type, entity_id, max_bytes) VALUES (?, ?, ?) RETURNING id`,
 		entityType, eID, maxBytes,
-	)
+	).Scan(&id)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return nil, ErrQuotaDuplicate
 		}
 		return nil, err
 	}
-
-	id, _ := result.LastInsertId()
 	return s.GetByID(id)
 }
 

@@ -80,16 +80,15 @@ func (s *UploadService) Create(userID int64, tokenID *int64, filename, originalF
 		estCost = sql.NullString{String: *estimatedCost, Valid: true}
 	}
 
-	result, err := s.db.Exec(
+	var id int64
+	err := s.db.QueryRow(
 		`INSERT INTO uploads (uuid, user_id, token_id, filename, original_filename, file_size, content_type, visibility, status, estimated_cost, temp_path)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?) RETURNING id`,
 		uid, userID, tID, filename, originalFilename, fileSize, contentType, visibility, estCost, tempPath,
-	)
+	).Scan(&id)
 	if err != nil {
 		return nil, err
 	}
-
-	id, _ := result.LastInsertId()
 	return s.GetByID(id)
 }
 
