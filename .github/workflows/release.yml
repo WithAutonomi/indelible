@@ -86,7 +86,7 @@ jobs:
             goarch: arm64
             os: ubuntu-latest
             indelible_artifact: indelible-linux-arm64
-            antd_artifact: ""
+            antd_artifact: antd-linux-arm64
           - goos: darwin
             goarch: arm64
             os: macos-latest
