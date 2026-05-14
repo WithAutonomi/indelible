@@ -83,7 +83,7 @@ func (s *ScimTokenService) Validate(secret string) (*ScimToken, error) {
 	rows, err := s.db.Query(
 		`SELECT id, name, token_hash, is_active, created_by, last_used_at, created_at, revoked_at
 		 FROM scim_tokens
-		 WHERE is_active = 1 AND revoked_at IS NULL`,
+		 WHERE is_active = TRUE AND revoked_at IS NULL`,
 	)
 	if err != nil {
 		return nil, err
@@ -128,7 +128,7 @@ func (s *ScimTokenService) List() ([]*ScimToken, error) {
 // Revoke marks a SCIM token as revoked.
 func (s *ScimTokenService) Revoke(id int64) error {
 	result, err := s.db.Exec(
-		`UPDATE scim_tokens SET is_active = 0, revoked_at = CURRENT_TIMESTAMP WHERE id = ? AND revoked_at IS NULL`,
+		`UPDATE scim_tokens SET is_active = FALSE, revoked_at = CURRENT_TIMESTAMP WHERE id = ? AND revoked_at IS NULL`,
 		id,
 	)
 	if err != nil {

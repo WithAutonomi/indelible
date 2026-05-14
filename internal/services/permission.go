@@ -57,7 +57,7 @@ func (s *PermissionService) GetEffective(userID int64) (string, error) {
 	err = s.db.QueryRow(
 		`SELECT g.permission_level FROM groups g
 		 JOIN group_members gm ON gm.group_id = g.id
-		 WHERE gm.user_id = ? AND g.is_active = 1
+		 WHERE gm.user_id = ? AND g.is_active = TRUE
 		 ORDER BY CASE g.permission_level
 		   WHEN 'admin' THEN 3
 		   WHEN 'write' THEN 2
@@ -95,8 +95,8 @@ func (s *PermissionService) CountAdmins() (int64, error) {
 		`SELECT COUNT(DISTINCT u.id) FROM users u
 		 LEFT JOIN user_permissions up ON up.user_id = u.id
 		 LEFT JOIN group_members gm ON gm.user_id = u.id
-		 LEFT JOIN groups g ON g.id = gm.group_id AND g.is_active = 1
-		 WHERE u.is_active = 1 AND u.deleted_at IS NULL
+		 LEFT JOIN groups g ON g.id = gm.group_id AND g.is_active = TRUE
+		 WHERE u.is_active = TRUE AND u.deleted_at IS NULL
 		   AND (up.permission_level = 'admin' OR g.permission_level = 'admin')`,
 	).Scan(&count)
 	return count, err

@@ -87,7 +87,7 @@ func (s *WalletService) GetDefault() (*Wallet, error) {
 	w := &Wallet{}
 	err := s.db.QueryRow(
 		`SELECT id, name, address, encrypted_key, is_default, payment_balance, gas_balance, created_at, updated_at
-		 FROM wallets WHERE is_default = 1`,
+		 FROM wallets WHERE is_default = TRUE`,
 	).Scan(&w.ID, &w.Name, &w.Address, &w.EncryptedKey, &w.IsDefault, &w.PaymentBalance, &w.GasBalance, &w.CreatedAt, &w.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -136,12 +136,12 @@ func (s *WalletService) SetDefault(id int64) error {
 	}
 
 	// Clear all defaults
-	if _, err := tx.Exec(`UPDATE wallets SET is_default = 0`); err != nil {
+	if _, err := tx.Exec(`UPDATE wallets SET is_default = FALSE`); err != nil {
 		return err
 	}
 
 	// Set new default
-	if _, err := tx.Exec(`UPDATE wallets SET is_default = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, id); err != nil {
+	if _, err := tx.Exec(`UPDATE wallets SET is_default = TRUE, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, id); err != nil {
 		return err
 	}
 
