@@ -312,7 +312,7 @@ func (s *TagRuleService) getOrCompileRegex(pattern string) (*regexp.Regexp, erro
 // scanTagRule scans a single row from QueryRow into a TagRule.
 func scanTagRule(row *sql.Row) (*TagRule, error) {
 	r := &TagRule{}
-	var isEnabled int
+	var isEnabled bool
 	err := row.Scan(
 		&r.ID, &r.Name, &r.Description, &r.MatchField, &r.MatchOp, &r.MatchValue,
 		&r.ApplyKey, &r.ApplyValue, &r.Priority, &isEnabled, &r.CreatedBy,
@@ -321,14 +321,14 @@ func scanTagRule(row *sql.Row) (*TagRule, error) {
 	if err != nil {
 		return nil, err
 	}
-	r.IsEnabled = isEnabled != 0
+	r.IsEnabled = isEnabled
 	return r, nil
 }
 
 // scanTagRuleRows scans a single row from Rows into a TagRule.
 func scanTagRuleRows(rows *sql.Rows) (*TagRule, error) {
 	r := &TagRule{}
-	var isEnabled int
+	var isEnabled bool
 	err := rows.Scan(
 		&r.ID, &r.Name, &r.Description, &r.MatchField, &r.MatchOp, &r.MatchValue,
 		&r.ApplyKey, &r.ApplyValue, &r.Priority, &isEnabled, &r.CreatedBy,
@@ -337,6 +337,6 @@ func scanTagRuleRows(rows *sql.Rows) (*TagRule, error) {
 	if err != nil {
 		return nil, err
 	}
-	r.IsEnabled = isEnabled != 0
+	r.IsEnabled = isEnabled
 	return r, nil
 }
