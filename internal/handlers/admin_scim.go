@@ -1,13 +1,13 @@
 package handlers
 
 import (
-	"database/sql"
 	"encoding/json"
 	"net/http"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/middleware"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
@@ -52,7 +52,7 @@ func toScimTokenResponse(t *services.ScimToken) scimTokenResponse {
 // @Failure      500 {object} map[string]string
 // @Router       /admin/scim/tokens [post]
 // @Security     BearerAuth
-func AdminCreateScimToken(db *sql.DB) http.HandlerFunc {
+func AdminCreateScimToken(db *database.DB) http.HandlerFunc {
 	scimTokenSvc := services.NewScimTokenService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -90,7 +90,7 @@ func AdminCreateScimToken(db *sql.DB) http.HandlerFunc {
 // @Failure      500 {object} map[string]string
 // @Router       /admin/scim/tokens [get]
 // @Security     BearerAuth
-func AdminListScimTokens(db *sql.DB) http.HandlerFunc {
+func AdminListScimTokens(db *database.DB) http.HandlerFunc {
 	scimTokenSvc := services.NewScimTokenService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -120,7 +120,7 @@ func AdminListScimTokens(db *sql.DB) http.HandlerFunc {
 // @Failure      500 {object} map[string]string
 // @Router       /admin/scim/tokens/{id} [delete]
 // @Security     BearerAuth
-func AdminRevokeScimToken(db *sql.DB) http.HandlerFunc {
+func AdminRevokeScimToken(db *database.DB) http.HandlerFunc {
 	scimTokenSvc := services.NewScimTokenService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {

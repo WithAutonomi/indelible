@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -11,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/WithAutonomi/indelible/internal/auth"
+	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/middleware"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
@@ -29,10 +29,10 @@ type adminUserResponse struct {
 }
 
 type adminListUsersResponse struct {
-	Users []adminUserResponse `json:"users"`
-	Total int64               `json:"total"`
-	Limit int                 `json:"limit"`
-	Offset int               `json:"offset"`
+	Users  []adminUserResponse `json:"users"`
+	Total  int64               `json:"total"`
+	Limit  int                 `json:"limit"`
+	Offset int                 `json:"offset"`
 }
 
 type adminCreateUserRequest struct {
@@ -89,7 +89,7 @@ func toAdminUserResponse(u *services.User, perms string) adminUserResponse {
 // @Failure      500 {object} map[string]string
 // @Router       /admin/users [get]
 // @Security     BearerAuth
-func AdminListUsers(db *sql.DB) http.HandlerFunc {
+func AdminListUsers(db *database.DB) http.HandlerFunc {
 	userSvc := services.NewUserService(db)
 	permSvc := services.NewPermissionService(db)
 
@@ -132,7 +132,7 @@ func AdminListUsers(db *sql.DB) http.HandlerFunc {
 // @Failure      500 {object} map[string]string
 // @Router       /admin/users/{id} [get]
 // @Security     BearerAuth
-func AdminGetUser(db *sql.DB) http.HandlerFunc {
+func AdminGetUser(db *database.DB) http.HandlerFunc {
 	userSvc := services.NewUserService(db)
 	permSvc := services.NewPermissionService(db)
 
@@ -171,7 +171,7 @@ func AdminGetUser(db *sql.DB) http.HandlerFunc {
 // @Failure      500 {object} map[string]string
 // @Router       /admin/users/{id} [put]
 // @Security     BearerAuth
-func AdminUpdateUser(db *sql.DB) http.HandlerFunc {
+func AdminUpdateUser(db *database.DB) http.HandlerFunc {
 	userSvc := services.NewUserService(db)
 	permSvc := services.NewPermissionService(db)
 
@@ -222,7 +222,7 @@ func AdminUpdateUser(db *sql.DB) http.HandlerFunc {
 // @Failure      500 {object} map[string]string
 // @Router       /admin/users/{id} [delete]
 // @Security     BearerAuth
-func AdminDeleteUser(db *sql.DB) http.HandlerFunc {
+func AdminDeleteUser(db *database.DB) http.HandlerFunc {
 	userSvc := services.NewUserService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -259,7 +259,7 @@ func AdminDeleteUser(db *sql.DB) http.HandlerFunc {
 // @Failure      500 {object} map[string]string
 // @Router       /admin/users [post]
 // @Security     BearerAuth
-func AdminCreateUser(db *sql.DB) http.HandlerFunc {
+func AdminCreateUser(db *database.DB) http.HandlerFunc {
 	userSvc := services.NewUserService(db)
 	permSvc := services.NewPermissionService(db)
 
@@ -321,7 +321,7 @@ func AdminCreateUser(db *sql.DB) http.HandlerFunc {
 // @Failure      500 {object} map[string]string
 // @Router       /admin/users/service-accounts [post]
 // @Security     BearerAuth
-func AdminCreateServiceAccount(db *sql.DB) http.HandlerFunc {
+func AdminCreateServiceAccount(db *database.DB) http.HandlerFunc {
 	userSvc := services.NewUserService(db)
 	permSvc := services.NewPermissionService(db)
 
@@ -376,7 +376,7 @@ func AdminCreateServiceAccount(db *sql.DB) http.HandlerFunc {
 // @Failure      500 {object} map[string]string
 // @Router       /admin/users/{id}/permissions [put]
 // @Security     BearerAuth
-func AdminSetPermissions(db *sql.DB) http.HandlerFunc {
+func AdminSetPermissions(db *database.DB) http.HandlerFunc {
 	permSvc := services.NewPermissionService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -421,4 +421,3 @@ func AdminSetPermissions(db *sql.DB) http.HandlerFunc {
 		})
 	}
 }
-

@@ -2,13 +2,13 @@ package worker
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/WithAutonomi/indelible/internal/config"
+	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
 
@@ -29,7 +29,7 @@ type DiskAlertWorker struct {
 }
 
 // NewDiskAlertWorker creates a new disk alert worker.
-func NewDiskAlertWorker(db *sql.DB, cfg *config.Config) *DiskAlertWorker {
+func NewDiskAlertWorker(db *database.DB, cfg *config.Config) *DiskAlertWorker {
 	return &DiskAlertWorker{
 		cfg:        cfg,
 		logSvc:     services.NewLogService(db),

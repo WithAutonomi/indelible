@@ -3,6 +3,8 @@ package services
 import (
 	"database/sql"
 	"time"
+
+	"github.com/WithAutonomi/indelible/internal/database"
 )
 
 // AuditLogEntry represents a security/compliance event.
@@ -29,11 +31,11 @@ type SystemLogEntry struct {
 
 // LogService handles log queries and writes.
 type LogService struct {
-	db *sql.DB
+	db *database.DB
 }
 
 // NewLogService creates a new LogService.
-func NewLogService(db *sql.DB) *LogService {
+func NewLogService(db *database.DB) *LogService {
 	return &LogService{db: db}
 }
 

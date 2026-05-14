@@ -5,14 +5,16 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"time"
+
+	"github.com/WithAutonomi/indelible/internal/database"
 )
 
 // ResetTokenService manages password reset tokens.
 type ResetTokenService struct {
-	db *sql.DB
+	db *database.DB
 }
 
-func NewResetTokenService(db *sql.DB) *ResetTokenService {
+func NewResetTokenService(db *database.DB) *ResetTokenService {
 	return &ResetTokenService{db: db}
 }
 

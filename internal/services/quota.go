@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"errors"
 	"time"
+
+	"github.com/WithAutonomi/indelible/internal/database"
 )
 
 var (
@@ -26,11 +28,11 @@ type Quota struct {
 
 // QuotaService handles quota operations.
 type QuotaService struct {
-	db *sql.DB
+	db *database.DB
 }
 
 // NewQuotaService creates a new QuotaService.
-func NewQuotaService(db *sql.DB) *QuotaService {
+func NewQuotaService(db *database.DB) *QuotaService {
 	return &QuotaService{db: db}
 }
 
@@ -210,4 +212,3 @@ func (s *QuotaService) calcUsage(entityType string, entityID sql.NullString) int
 	}
 	return used
 }
-

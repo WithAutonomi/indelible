@@ -4,13 +4,15 @@ import (
 	"database/sql"
 	"errors"
 	"time"
+
+	"github.com/WithAutonomi/indelible/internal/database"
 )
 
 var (
-	ErrCollectionNotFound = errors.New("collection not found")
-	ErrCollectionNameTaken = errors.New("collection name already exists at this level")
+	ErrCollectionNotFound      = errors.New("collection not found")
+	ErrCollectionNameTaken     = errors.New("collection name already exists at this level")
 	ErrFileAlreadyInCollection = errors.New("file already in collection")
-	ErrFileNotInCollection = errors.New("file not in collection")
+	ErrFileNotInCollection     = errors.New("file not in collection")
 )
 
 // Collection represents a virtual folder.
@@ -27,11 +29,11 @@ type Collection struct {
 
 // CollectionService handles collection operations.
 type CollectionService struct {
-	db *sql.DB
+	db *database.DB
 }
 
 // NewCollectionService creates a new CollectionService.
-func NewCollectionService(db *sql.DB) *CollectionService {
+func NewCollectionService(db *database.DB) *CollectionService {
 	return &CollectionService{db: db}
 }
 
@@ -143,7 +145,7 @@ func (s *CollectionService) Delete(id int64) error {
 	return tx.Commit()
 }
 
-func deleteCollectionRecursive(tx *sql.Tx, id int64) error {
+func deleteCollectionRecursive(tx *database.Tx, id int64) error {
 	// Find children
 	rows, err := tx.Query(`SELECT id FROM collections WHERE parent_id = ?`, id)
 	if err != nil {

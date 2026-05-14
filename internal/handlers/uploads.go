@@ -1,12 +1,11 @@
 package handlers
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -19,6 +18,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/WithAutonomi/indelible/internal/config"
+	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/middleware"
 	"github.com/WithAutonomi/indelible/internal/services"
 	"github.com/WithAutonomi/indelible/internal/worker"
@@ -113,7 +113,7 @@ func toUploadResponse(u *services.Upload) uploadResponse {
 // @Failure      503  {object}  map[string]string
 // @Security     BearerAuth
 // @Router       /uploads [post]
-func CreateUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func CreateUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	uploadSvc := services.NewUploadService(db)
 	tagSvc := services.NewTagService(db)
 	tagRuleSvc := services.NewTagRuleService(db)
@@ -311,7 +311,7 @@ func CreateUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 // @Failure      500  {object}  map[string]string
 // @Security     BearerAuth
 // @Router       /uploads [get]
-func ListUploads(db *sql.DB) http.HandlerFunc {
+func ListUploads(db *database.DB) http.HandlerFunc {
 	uploadSvc := services.NewUploadService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -451,7 +451,7 @@ func ListUploads(db *sql.DB) http.HandlerFunc {
 // @Failure      500  {object}  map[string]string
 // @Security     BearerAuth
 // @Router       /uploads/{id} [get]
-func GetUpload(db *sql.DB) http.HandlerFunc {
+func GetUpload(db *database.DB) http.HandlerFunc {
 	uploadSvc := services.NewUploadService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -495,7 +495,7 @@ func GetUpload(db *sql.DB) http.HandlerFunc {
 // @Failure      502  {object}  map[string]string
 // @Security     BearerAuth
 // @Router       /uploads/quote [post]
-func QuoteUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func QuoteUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	// antd's quote returns in single-digit seconds once warm, but a cold
 	// quote during peer bootstrap can take 2-3 minutes on mainnet. The
 	// effective ceiling is read per-request from the antd_quote_timeout_secs
@@ -576,7 +576,7 @@ func QuoteUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 // @Failure      502  {object}  map[string]string
 // @Security     BearerAuth
 // @Router       /uploads/{id}/download [get]
-func DownloadUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	uploadSvc := services.NewUploadService(db)
 	client := antd.NewClient(cfg.AntdURL, antd.WithTimeout(0))
 
@@ -665,7 +665,7 @@ func DownloadUpload(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 // @Failure      500  {object}  map[string]string
 // @Security     BearerAuth
 // @Router       /uploads/{id}/cancel [post]
-func CancelUpload(db *sql.DB) http.HandlerFunc {
+func CancelUpload(db *database.DB) http.HandlerFunc {
 	uploadSvc := services.NewUploadService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -708,7 +708,7 @@ func CancelUpload(db *sql.DB) http.HandlerFunc {
 // @Failure      500  {object}  map[string]string
 // @Security     BearerAuth
 // @Router       /uploads/{id}/retry [post]
-func RetryUpload(db *sql.DB) http.HandlerFunc {
+func RetryUpload(db *database.DB) http.HandlerFunc {
 	uploadSvc := services.NewUploadService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -751,7 +751,7 @@ func RetryUpload(db *sql.DB) http.HandlerFunc {
 // @Failure      500  {object}  map[string]string
 // @Security     BearerAuth
 // @Router       /uploads/{id}/force-retry [post]
-func ForceRetryUpload(db *sql.DB) http.HandlerFunc {
+func ForceRetryUpload(db *database.DB) http.HandlerFunc {
 	uploadSvc := services.NewUploadService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -794,7 +794,7 @@ func ForceRetryUpload(db *sql.DB) http.HandlerFunc {
 // @Failure      500  {object}  map[string]string
 // @Security     BearerAuth
 // @Router       /uploads/{id} [delete]
-func DeleteUpload(db *sql.DB) http.HandlerFunc {
+func DeleteUpload(db *database.DB) http.HandlerFunc {
 	uploadSvc := services.NewUploadService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {

@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -10,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/WithAutonomi/indelible/internal/config"
+	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
 
@@ -66,7 +66,7 @@ type updateOIDCRequest struct {
 // @Failure      500 {object} map[string]string
 // @Router       /admin/oidc/providers [get]
 // @Security     BearerAuth
-func AdminListOIDCProviders(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func AdminListOIDCProviders(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	oidcSvc := services.NewOIDCProviderService(db, cfg.WalletEncryptionKey)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -96,7 +96,7 @@ func AdminListOIDCProviders(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 // @Failure      500 {object} map[string]string
 // @Router       /admin/oidc/providers [post]
 // @Security     BearerAuth
-func AdminCreateOIDCProvider(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func AdminCreateOIDCProvider(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	oidcSvc := services.NewOIDCProviderService(db, cfg.WalletEncryptionKey)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -136,7 +136,7 @@ func AdminCreateOIDCProvider(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 // @Failure      500 {object} map[string]string
 // @Router       /admin/oidc/providers/{id} [put]
 // @Security     BearerAuth
-func AdminUpdateOIDCProvider(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func AdminUpdateOIDCProvider(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	oidcSvc := services.NewOIDCProviderService(db, cfg.WalletEncryptionKey)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -177,7 +177,7 @@ func AdminUpdateOIDCProvider(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 // @Failure      500 {object} map[string]string
 // @Router       /admin/oidc/providers/{id} [delete]
 // @Security     BearerAuth
-func AdminDeleteOIDCProvider(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func AdminDeleteOIDCProvider(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	oidcSvc := services.NewOIDCProviderService(db, cfg.WalletEncryptionKey)
 
 	return func(w http.ResponseWriter, r *http.Request) {

@@ -4,13 +4,15 @@ import (
 	"database/sql"
 	"errors"
 	"time"
+
+	"github.com/WithAutonomi/indelible/internal/database"
 )
 
 var (
-	ErrUserNotFound      = errors.New("user not found")
-	ErrEmailTaken        = errors.New("email already registered")
+	ErrUserNotFound       = errors.New("user not found")
+	ErrEmailTaken         = errors.New("email already registered")
 	ErrInvalidCredentials = errors.New("invalid email or password")
-	ErrAccountInactive   = errors.New("account is inactive")
+	ErrAccountInactive    = errors.New("account is inactive")
 )
 
 // User represents a user record from the database.
@@ -35,10 +37,10 @@ type User struct {
 
 // UserService handles user-related database operations.
 type UserService struct {
-	db *sql.DB
+	db *database.DB
 }
 
-func NewUserService(db *sql.DB) *UserService {
+func NewUserService(db *database.DB) *UserService {
 	return &UserService{db: db}
 }
 

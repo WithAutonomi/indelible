@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -9,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
 
@@ -55,7 +55,7 @@ type updateWebhookRequest struct {
 // @Failure      500 {object} map[string]string
 // @Router       /admin/webhooks [get]
 // @Security     BearerAuth
-func AdminGetWebhooks(db *sql.DB) http.HandlerFunc {
+func AdminGetWebhooks(db *database.DB) http.HandlerFunc {
 	webhookSvc := services.NewWebhookService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -85,7 +85,7 @@ func AdminGetWebhooks(db *sql.DB) http.HandlerFunc {
 // @Failure      500 {object} map[string]string
 // @Router       /admin/webhooks [post]
 // @Security     BearerAuth
-func AdminCreateWebhook(db *sql.DB) http.HandlerFunc {
+func AdminCreateWebhook(db *database.DB) http.HandlerFunc {
 	webhookSvc := services.NewWebhookService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -127,7 +127,7 @@ func AdminCreateWebhook(db *sql.DB) http.HandlerFunc {
 // @Failure      500 {object} map[string]string
 // @Router       /admin/webhooks/{id} [put]
 // @Security     BearerAuth
-func AdminUpdateWebhook(db *sql.DB) http.HandlerFunc {
+func AdminUpdateWebhook(db *database.DB) http.HandlerFunc {
 	webhookSvc := services.NewWebhookService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -168,7 +168,7 @@ func AdminUpdateWebhook(db *sql.DB) http.HandlerFunc {
 // @Failure      500 {object} map[string]string
 // @Router       /admin/webhooks/{id} [delete]
 // @Security     BearerAuth
-func AdminDeleteWebhook(db *sql.DB) http.HandlerFunc {
+func AdminDeleteWebhook(db *database.DB) http.HandlerFunc {
 	webhookSvc := services.NewWebhookService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -203,7 +203,7 @@ func AdminDeleteWebhook(db *sql.DB) http.HandlerFunc {
 // @Router       /admin/webhooks/{id}/test [post]
 // @Security     BearerAuth
 // AdminTestWebhook sends a test ping to a webhook endpoint synchronously.
-func AdminTestWebhook(db *sql.DB) http.HandlerFunc {
+func AdminTestWebhook(db *database.DB) http.HandlerFunc {
 	webhookSvc := services.NewWebhookService(db)
 	deliverySvc := services.NewWebhookDeliveryService(db)
 
@@ -260,7 +260,7 @@ type deliveryResponse struct {
 // @Router       /admin/webhooks/{id}/deliveries [get]
 // @Security     BearerAuth
 // AdminGetWebhookDeliveries returns recent delivery log entries for a webhook.
-func AdminGetWebhookDeliveries(db *sql.DB) http.HandlerFunc {
+func AdminGetWebhookDeliveries(db *database.DB) http.HandlerFunc {
 	deliverySvc := services.NewWebhookDeliveryService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -317,7 +317,7 @@ func AdminGetWebhookDeliveries(db *sql.DB) http.HandlerFunc {
 // @Failure      500 {object} map[string]string
 // @Router       /admin/webhooks/{id}/rotate-secret [post]
 // @Security     BearerAuth
-func AdminRotateWebhookSecret(db *sql.DB) http.HandlerFunc {
+func AdminRotateWebhookSecret(db *database.DB) http.HandlerFunc {
 	webhookSvc := services.NewWebhookService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {

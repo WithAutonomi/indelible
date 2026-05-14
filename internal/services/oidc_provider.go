@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/WithAutonomi/indelible/internal/crypto"
+	"github.com/WithAutonomi/indelible/internal/database"
 )
 
 var (
@@ -14,26 +15,26 @@ var (
 
 // OIDCProvider represents an OIDC/SSO provider configuration.
 type OIDCProvider struct {
-	ID                int64
-	Name              string
-	DisplayName       string
-	IssuerURL         string
-	ClientID          string
-	EncryptedSecret   string
-	Scopes            string
-	IsEnabled         bool
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	ID              int64
+	Name            string
+	DisplayName     string
+	IssuerURL       string
+	ClientID        string
+	EncryptedSecret string
+	Scopes          string
+	IsEnabled       bool
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 // OIDCProviderService handles OIDC provider configuration.
 type OIDCProviderService struct {
-	db            *sql.DB
+	db            *database.DB
 	encryptionKey string
 }
 
 // NewOIDCProviderService creates a new OIDCProviderService.
-func NewOIDCProviderService(db *sql.DB, encryptionKey string) *OIDCProviderService {
+func NewOIDCProviderService(db *database.DB, encryptionKey string) *OIDCProviderService {
 	return &OIDCProviderService{db: db, encryptionKey: encryptionKey}
 }
 

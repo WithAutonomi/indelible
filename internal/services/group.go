@@ -4,13 +4,15 @@ import (
 	"database/sql"
 	"errors"
 	"time"
+
+	"github.com/WithAutonomi/indelible/internal/database"
 )
 
 var (
-	ErrGroupNotFound = errors.New("group not found")
+	ErrGroupNotFound  = errors.New("group not found")
 	ErrGroupNameTaken = errors.New("group name already exists")
-	ErrAlreadyMember = errors.New("user is already a member")
-	ErrNotMember     = errors.New("user is not a member")
+	ErrAlreadyMember  = errors.New("user is already a member")
+	ErrNotMember      = errors.New("user is not a member")
 )
 
 type Group struct {
@@ -33,10 +35,10 @@ type GroupMember struct {
 }
 
 type GroupService struct {
-	db *sql.DB
+	db *database.DB
 }
 
-func NewGroupService(db *sql.DB) *GroupService {
+func NewGroupService(db *database.DB) *GroupService {
 	return &GroupService{db: db}
 }
 

@@ -1,14 +1,14 @@
 package services
 
-import "database/sql"
+import "github.com/WithAutonomi/indelible/internal/database"
 
 // CollectionTagService manages tags on collections and their inheritance to files.
 type CollectionTagService struct {
-	db *sql.DB
+	db *database.DB
 }
 
 // NewCollectionTagService creates a new CollectionTagService.
-func NewCollectionTagService(db *sql.DB) *CollectionTagService {
+func NewCollectionTagService(db *database.DB) *CollectionTagService {
 	return &CollectionTagService{db: db}
 }
 

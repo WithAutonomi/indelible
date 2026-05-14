@@ -2,7 +2,6 @@ package worker
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -15,6 +14,7 @@ import (
 	antd "github.com/WithAutonomi/ant-sdk/antd-go"
 
 	"github.com/WithAutonomi/indelible/internal/config"
+	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
 
@@ -23,13 +23,13 @@ import (
 // failure rate, webhook delivery failures, gas backoff count, stale uploads,
 // temp directory size, and worker liveness.
 type SystemMonitor struct {
-	cfg        *config.Config
-	db         *sql.DB
-	uploadSvc  *services.UploadService
-	walletSvc  *services.WalletService
+	cfg         *config.Config
+	db          *database.DB
+	uploadSvc   *services.UploadService
+	walletSvc   *services.WalletService
 	settingsSvc *services.CachedSettingsService
-	logSvc     *services.LogService
-	webhookSvc *services.WebhookDeliveryService
+	logSvc      *services.LogService
+	webhookSvc  *services.WebhookDeliveryService
 
 	wg     sync.WaitGroup
 	cancel context.CancelFunc
@@ -43,7 +43,7 @@ type SystemMonitor struct {
 }
 
 // NewSystemMonitor creates a new consolidated system monitor.
-func NewSystemMonitor(db *sql.DB, cfg *config.Config) *SystemMonitor {
+func NewSystemMonitor(db *database.DB, cfg *config.Config) *SystemMonitor {
 	return &SystemMonitor{
 		cfg:         cfg,
 		db:          db,

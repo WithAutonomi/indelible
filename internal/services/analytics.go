@@ -1,9 +1,10 @@
 package services
 
 import (
-	"database/sql"
 	"fmt"
 	"time"
+
+	"github.com/WithAutonomi/indelible/internal/database"
 )
 
 // UploadStats holds upload analytics.
@@ -35,9 +36,9 @@ type FailureStat struct {
 
 // TokenStats holds token usage analytics.
 type TokenStats struct {
-	TotalRequests int64             `json:"total_requests"`
-	ActiveTokens  int64             `json:"active_tokens"`
-	TopTokens     []TokenUsageStat  `json:"top_tokens"`
+	TotalRequests int64            `json:"total_requests"`
+	ActiveTokens  int64            `json:"active_tokens"`
+	TopTokens     []TokenUsageStat `json:"top_tokens"`
 }
 
 // TokenUsageStat is per-token usage.
@@ -50,12 +51,12 @@ type TokenUsageStat struct {
 
 // CostStats holds cost analytics.
 type CostStats struct {
-	TotalCost       string            `json:"total_cost"`
-	TotalUploads    int64             `json:"total_uploads"`
-	TotalBytes      int64             `json:"total_bytes"`
+	TotalCost        string           `json:"total_cost"`
+	TotalUploads     int64            `json:"total_uploads"`
+	TotalBytes       int64            `json:"total_bytes"`
 	AvgCostPerUpload string           `json:"avg_cost_per_upload"`
-	ByDepartment    []DepartmentCost  `json:"by_department"`
-	ByToken         []TokenCost       `json:"by_token"`
+	ByDepartment     []DepartmentCost `json:"by_department"`
+	ByToken          []TokenCost      `json:"by_token"`
 }
 
 // DepartmentCost is per-department cost aggregation.
@@ -77,11 +78,11 @@ type TokenCost struct {
 
 // AnalyticsService provides analytics queries.
 type AnalyticsService struct {
-	db *sql.DB
+	db *database.DB
 }
 
 // NewAnalyticsService creates a new AnalyticsService.
-func NewAnalyticsService(db *sql.DB) *AnalyticsService {
+func NewAnalyticsService(db *database.DB) *AnalyticsService {
 	return &AnalyticsService{db: db}
 }
 

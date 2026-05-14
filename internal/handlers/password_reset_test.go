@@ -2,7 +2,6 @@ package handlers_test
 
 import (
 	"bytes"
-	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -15,7 +14,7 @@ import (
 	"github.com/WithAutonomi/indelible/internal/services"
 )
 
-func setupTestDB(t *testing.T) *sql.DB {
+func setupTestDB(t *testing.T) *database.DB {
 	t.Helper()
 	db, err := database.Open("sqlite://:memory:")
 	if err != nil {
@@ -28,7 +27,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 	return db
 }
 
-func setupTestRouterWithDB(t *testing.T, db *sql.DB, cfg *config.Config) http.Handler {
+func setupTestRouterWithDB(t *testing.T, db *database.DB, cfg *config.Config) http.Handler {
 	t.Helper()
 	return handlers.NewRouter(cfg, db, nil)
 }

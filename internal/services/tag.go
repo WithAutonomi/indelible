@@ -1,8 +1,9 @@
 package services
 
 import (
-	"database/sql"
 	"time"
+
+	"github.com/WithAutonomi/indelible/internal/database"
 )
 
 // Tag represents a key-value tag on an upload.
@@ -16,11 +17,11 @@ type Tag struct {
 
 // TagService handles file tag operations.
 type TagService struct {
-	db *sql.DB
+	db *database.DB
 }
 
 // NewTagService creates a new TagService.
-func NewTagService(db *sql.DB) *TagService {
+func NewTagService(db *database.DB) *TagService {
 	return &TagService{db: db}
 }
 

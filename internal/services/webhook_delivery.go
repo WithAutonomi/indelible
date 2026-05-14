@@ -11,16 +11,18 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/WithAutonomi/indelible/internal/database"
 )
 
 // WebhookPayload is the JSON payload sent to webhook endpoints.
 type WebhookPayload struct {
-	EventType  string                   `json:"event_type"`
-	Timestamp  string                   `json:"timestamp"`
-	Upload     *WebhookUploadData       `json:"upload,omitempty"`
-	System     *WebhookSystemData       `json:"system,omitempty"`
-	Tags       *WebhookTagData          `json:"tags,omitempty"`
-	Collection *WebhookCollectionData   `json:"collection,omitempty"`
+	EventType  string                 `json:"event_type"`
+	Timestamp  string                 `json:"timestamp"`
+	Upload     *WebhookUploadData     `json:"upload,omitempty"`
+	System     *WebhookSystemData     `json:"system,omitempty"`
+	Tags       *WebhookTagData        `json:"tags,omitempty"`
+	Collection *WebhookCollectionData `json:"collection,omitempty"`
 }
 
 // WebhookTagData contains tag change details in webhook payloads.
@@ -70,13 +72,13 @@ type WebhookDelivery struct {
 
 // WebhookDeliveryService handles dispatching webhook notifications.
 type WebhookDeliveryService struct {
-	db         *sql.DB
+	db         *database.DB
 	webhookSvc *WebhookService
 	client     *http.Client
 }
 
 // NewWebhookDeliveryService creates a new delivery service.
-func NewWebhookDeliveryService(db *sql.DB) *WebhookDeliveryService {
+func NewWebhookDeliveryService(db *database.DB) *WebhookDeliveryService {
 	return &WebhookDeliveryService{
 		db:         db,
 		webhookSvc: NewWebhookService(db),

@@ -1,19 +1,19 @@
 package handlers
 
 import (
-	"database/sql"
 	"encoding/json"
 	"net/http"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/middleware"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
 
 // GetCollectionTags returns tags on a collection.
-func GetCollectionTags(db *sql.DB) http.HandlerFunc {
+func GetCollectionTags(db *database.DB) http.HandlerFunc {
 	collSvc := services.NewCollectionService(db)
 	collTagSvc := services.NewCollectionTagService(db)
 
@@ -46,7 +46,7 @@ func GetCollectionTags(db *sql.DB) http.HandlerFunc {
 }
 
 // UpdateCollectionTags sets tags on a collection.
-func UpdateCollectionTags(db *sql.DB) http.HandlerFunc {
+func UpdateCollectionTags(db *database.DB) http.HandlerFunc {
 	collSvc := services.NewCollectionService(db)
 	collTagSvc := services.NewCollectionTagService(db)
 

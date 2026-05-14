@@ -3,7 +3,6 @@ package migrate
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -147,7 +146,7 @@ func (p *fakePayer) PayForQuotes(_ context.Context, _ string, payments []sdk.Pay
 	return out, nil
 }
 
-func setupDB(t *testing.T) *sql.DB {
+func setupDB(t *testing.T) *database.DB {
 	t.Helper()
 	db, err := database.Open("sqlite://:memory:")
 	if err != nil {
@@ -160,7 +159,7 @@ func setupDB(t *testing.T) *sql.DB {
 	return db
 }
 
-func newUser(t *testing.T, db *sql.DB, email string) int64 {
+func newUser(t *testing.T, db *database.DB, email string) int64 {
 	t.Helper()
 	u, err := services.NewUserService(db).Create(email, "hashed_pw", "T", "U")
 	if err != nil {

@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -10,6 +9,7 @@ import (
 
 	"github.com/WithAutonomi/indelible/internal/auth"
 	"github.com/WithAutonomi/indelible/internal/config"
+	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/middleware"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
@@ -83,7 +83,7 @@ func toUserResponse(u *services.User, perms string) userResponse {
 // @Failure 401 {object} map[string]string
 // @Failure 403 {object} map[string]string
 // @Router /auth/login [post]
-func Login(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func Login(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	userSvc := services.NewUserService(db)
 	permSvc := services.NewPermissionService(db)
 	settingsSvc := services.NewSettingsService(db)
@@ -165,7 +165,7 @@ func Login(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 // @Failure 400 {object} map[string]string
 // @Failure 409 {object} map[string]string
 // @Router /auth/register [post]
-func Register(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func Register(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	userSvc := services.NewUserService(db)
 	permSvc := services.NewPermissionService(db)
 	settingsSvc := services.NewSettingsService(db)
@@ -280,7 +280,7 @@ func Logout() http.HandlerFunc {
 // @Failure 404 {object} map[string]string
 // @Router /me [get]
 // @Security BearerAuth
-func GetProfile(db *sql.DB) http.HandlerFunc {
+func GetProfile(db *database.DB) http.HandlerFunc {
 	userSvc := services.NewUserService(db)
 	permSvc := services.NewPermissionService(db)
 
@@ -308,7 +308,7 @@ func GetProfile(db *sql.DB) http.HandlerFunc {
 // @Failure 400 {object} map[string]string
 // @Router /me [put]
 // @Security BearerAuth
-func UpdateProfile(db *sql.DB) http.HandlerFunc {
+func UpdateProfile(db *database.DB) http.HandlerFunc {
 	userSvc := services.NewUserService(db)
 	permSvc := services.NewPermissionService(db)
 
@@ -344,7 +344,7 @@ func UpdateProfile(db *sql.DB) http.HandlerFunc {
 // @Failure 401 {object} map[string]string
 // @Router /me/password [put]
 // @Security BearerAuth
-func ChangePassword(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func ChangePassword(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	userSvc := services.NewUserService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -408,7 +408,7 @@ type resetPasswordRequest struct {
 // @Param body body forgotPasswordRequest true "Email address"
 // @Success 200 {object} map[string]string
 // @Router /auth/forgot-password [post]
-func ForgotPassword(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func ForgotPassword(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	userSvc := services.NewUserService(db)
 	resetSvc := services.NewResetTokenService(db)
 	notifier := services.NewNotifier(cfg)
@@ -464,7 +464,7 @@ func ForgotPassword(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 // @Failure 400 {object} map[string]string
 // @Failure 401 {object} map[string]string
 // @Router /auth/reset-password [post]
-func ResetPassword(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func ResetPassword(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	userSvc := services.NewUserService(db)
 	resetSvc := services.NewResetTokenService(db)
 
@@ -514,7 +514,7 @@ func ResetPassword(db *sql.DB, cfg *config.Config) http.HandlerFunc {
 // @Failure 400 {object} map[string]string
 // @Failure 401 {object} map[string]string
 // @Router /auth/verify-email [get]
-func VerifyEmail(db *sql.DB) http.HandlerFunc {
+func VerifyEmail(db *database.DB) http.HandlerFunc {
 	verifySvc := services.NewEmailVerificationService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -543,7 +543,7 @@ func VerifyEmail(db *sql.DB) http.HandlerFunc {
 // @Failure 404 {object} map[string]string
 // @Router /me/resend-verification [post]
 // @Security BearerAuth
-func ResendVerification(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func ResendVerification(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	userSvc := services.NewUserService(db)
 	verifySvc := services.NewEmailVerificationService(db)
 	notifier := services.NewNotifier(cfg)

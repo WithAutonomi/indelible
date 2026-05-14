@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"database/sql"
 	"io/fs"
 	"net/http"
 	"time"
@@ -12,6 +11,7 @@ import (
 	httpSwagger "github.com/swaggo/http-swagger"
 
 	"github.com/WithAutonomi/indelible/internal/config"
+	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/middleware"
 	"github.com/WithAutonomi/indelible/web"
 )
@@ -21,7 +21,7 @@ import (
 // antdInfo carries the last-known antd /health snapshot so /health can surface
 // daemon version, EVM network, and payment contract addresses. Pass nil when
 // antd is unmanaged or in tests that don't need the diagnostic fields.
-func NewRouter(cfg *config.Config, db *sql.DB, antdInfo AntdInfoProvider) http.Handler {
+func NewRouter(cfg *config.Config, db *database.DB, antdInfo AntdInfoProvider) http.Handler {
 	r := chi.NewRouter()
 
 	// Global middleware

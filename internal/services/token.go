@@ -9,6 +9,8 @@ import (
 
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
+
+	"github.com/WithAutonomi/indelible/internal/database"
 )
 
 var (
@@ -40,10 +42,10 @@ type Token struct {
 
 // TokenService handles API token operations.
 type TokenService struct {
-	db *sql.DB
+	db *database.DB
 }
 
-func NewTokenService(db *sql.DB) *TokenService {
+func NewTokenService(db *database.DB) *TokenService {
 	return &TokenService{db: db}
 }
 

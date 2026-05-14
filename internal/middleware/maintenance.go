@@ -1,15 +1,15 @@
 package middleware
 
 import (
-	"database/sql"
 	"net/http"
 
+	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
 
 // MaintenanceMode checks the system settings for maintenance mode and returns
 // 503 Service Unavailable if enabled. Health and admin routes are exempt.
-func MaintenanceMode(db *sql.DB) func(http.Handler) http.Handler {
+func MaintenanceMode(db *database.DB) func(http.Handler) http.Handler {
 	settingsSvc := services.NewSettingsService(db)
 
 	return func(next http.Handler) http.Handler {

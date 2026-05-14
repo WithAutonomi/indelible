@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"errors"
 	"time"
+
+	"github.com/WithAutonomi/indelible/internal/database"
 )
 
 // NotificationPref represents a user's notification preferences.
@@ -19,11 +21,11 @@ type NotificationPref struct {
 
 // NotificationPrefService handles user notification preferences.
 type NotificationPrefService struct {
-	db *sql.DB
+	db *database.DB
 }
 
 // NewNotificationPrefService creates a new NotificationPrefService.
-func NewNotificationPrefService(db *sql.DB) *NotificationPrefService {
+func NewNotificationPrefService(db *database.DB) *NotificationPrefService {
 	return &NotificationPrefService{db: db}
 }
 

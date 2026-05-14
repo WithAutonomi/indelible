@@ -2,7 +2,6 @@ package worker
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -15,6 +14,7 @@ import (
 	antd "github.com/WithAutonomi/ant-sdk/antd-go"
 
 	"github.com/WithAutonomi/indelible/internal/config"
+	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/evm"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
@@ -62,7 +62,7 @@ const circuitBreakerBaseCooldown = 30 * time.Second
 const circuitBreakerMaxCooldown = 5 * time.Minute
 
 // NewUploadWorker creates a new background upload processor.
-func NewUploadWorker(db *sql.DB, cfg *config.Config) *UploadWorker {
+func NewUploadWorker(db *database.DB, cfg *config.Config) *UploadWorker {
 	return &UploadWorker{
 		uploadSvc:       services.NewUploadService(db),
 		quotaSvc:        services.NewQuotaService(db),

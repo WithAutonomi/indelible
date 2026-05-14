@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/WithAutonomi/indelible/internal/database"
 )
 
 var (
@@ -22,8 +24,8 @@ type Upload struct {
 	OriginalFilename string
 	FileSize         int64
 	ContentType      string
-	Visibility       string // "public" or "private"
-	Status           string // "queued", "processing", "completed", "failed"
+	Visibility       string         // "public" or "private"
+	Status           string         // "queued", "processing", "completed", "failed"
 	StatusDetail     sql.NullString // substatus: "gas_backoff", etc.
 	DatamapAddress   sql.NullString
 	EstimatedCost    sql.NullString
@@ -59,11 +61,11 @@ func scanUpload(scanner interface{ Scan(...any) error }) (*Upload, error) {
 
 // UploadService handles database operations for file uploads.
 type UploadService struct {
-	db *sql.DB
+	db *database.DB
 }
 
 // NewUploadService creates a new UploadService.
-func NewUploadService(db *sql.DB) *UploadService {
+func NewUploadService(db *database.DB) *UploadService {
 	return &UploadService{db: db}
 }
 

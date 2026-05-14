@@ -1,10 +1,10 @@
 package handlers
 
 import (
-	"database/sql"
 	"encoding/json"
 	"net/http"
 
+	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/middleware"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
@@ -17,7 +17,7 @@ type notificationPrefResponse struct {
 
 type updateNotificationPrefRequest struct {
 	WebhookURL *string `json:"webhook_url"`
-	Events     string  `json:"events"`     // JSON array string
+	Events     string  `json:"events"`      // JSON array string
 	DigestMode string  `json:"digest_mode"` // "realtime", "daily", "weekly"
 }
 
@@ -28,7 +28,7 @@ type updateNotificationPrefRequest struct {
 // @Success 200 {object} notificationPrefResponse
 // @Router /notifications/preferences [get]
 // @Security BearerAuth
-func GetNotificationPrefs(db *sql.DB) http.HandlerFunc {
+func GetNotificationPrefs(db *database.DB) http.HandlerFunc {
 	prefSvc := services.NewNotificationPrefService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -61,7 +61,7 @@ func GetNotificationPrefs(db *sql.DB) http.HandlerFunc {
 // @Success 200 {object} notificationPrefResponse
 // @Router /notifications/preferences [put]
 // @Security BearerAuth
-func UpdateNotificationPrefs(db *sql.DB) http.HandlerFunc {
+func UpdateNotificationPrefs(db *database.DB) http.HandlerFunc {
 	prefSvc := services.NewNotificationPrefService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {

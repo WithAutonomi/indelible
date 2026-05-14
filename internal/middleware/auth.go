@@ -2,12 +2,12 @@ package middleware
 
 import (
 	"context"
-	"database/sql"
 	"net/http"
 	"strings"
 
 	"github.com/WithAutonomi/indelible/internal/auth"
 	"github.com/WithAutonomi/indelible/internal/config"
+	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
 
@@ -20,7 +20,7 @@ const (
 )
 
 // Authenticate validates JWT session tokens or API bearer tokens.
-func Authenticate(db *sql.DB, cfg *config.Config) func(http.Handler) http.Handler {
+func Authenticate(db *database.DB, cfg *config.Config) func(http.Handler) http.Handler {
 	userSvc := services.NewUserService(db)
 
 	return func(next http.Handler) http.Handler {
@@ -93,7 +93,7 @@ func Authenticate(db *sql.DB, cfg *config.Config) func(http.Handler) http.Handle
 }
 
 // RequireAdmin checks that the authenticated user has admin permissions.
-func RequireAdmin(db *sql.DB) func(http.Handler) http.Handler {
+func RequireAdmin(db *database.DB) func(http.Handler) http.Handler {
 	permSvc := services.NewPermissionService(db)
 
 	return func(next http.Handler) http.Handler {

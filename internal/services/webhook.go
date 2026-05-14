@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"time"
+
+	"github.com/WithAutonomi/indelible/internal/database"
 )
 
 var (
@@ -26,11 +28,11 @@ type Webhook struct {
 
 // WebhookService handles webhook configuration CRUD.
 type WebhookService struct {
-	db *sql.DB
+	db *database.DB
 }
 
 // NewWebhookService creates a new WebhookService.
-func NewWebhookService(db *sql.DB) *WebhookService {
+func NewWebhookService(db *database.DB) *WebhookService {
 	return &WebhookService{db: db}
 }
 

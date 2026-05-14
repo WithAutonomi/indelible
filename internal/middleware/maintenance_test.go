@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"database/sql"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,7 +9,7 @@ import (
 	"github.com/WithAutonomi/indelible/internal/database"
 )
 
-func setupMaintenanceDB(t *testing.T) *sql.DB {
+func setupMaintenanceDB(t *testing.T) *database.DB {
 	t.Helper()
 	db, err := database.Open("sqlite://:memory:")
 	if err != nil {
@@ -23,7 +22,7 @@ func setupMaintenanceDB(t *testing.T) *sql.DB {
 	return db
 }
 
-func setMaintenanceMode(t *testing.T, db *sql.DB, enabled bool, message string) {
+func setMaintenanceMode(t *testing.T, db *database.DB, enabled bool, message string) {
 	t.Helper()
 	val := "false"
 	if enabled {

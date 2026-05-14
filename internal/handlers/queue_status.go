@@ -1,15 +1,15 @@
 package handlers
 
 import (
-	"database/sql"
 	"net/http"
 	"strconv"
 
+	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
 
 // QueueStatus returns the current upload queue state for backpressure signaling.
-func QueueStatus(db *sql.DB) http.HandlerFunc {
+func QueueStatus(db *database.DB) http.HandlerFunc {
 	uploadSvc := services.NewUploadService(db)
 	settingsSvc := services.NewSettingsService(db)
 
@@ -46,13 +46,13 @@ func QueueStatus(db *sql.DB) http.HandlerFunc {
 		}
 
 		jsonResponse(w, http.StatusOK, map[string]any{
-			"queued":               queued,
-			"processing":           processing,
-			"completed":            completed,
-			"failed":               failed,
-			"max_queued":           maxQueued,
-			"max_concurrent":       maxConcurrent,
-			"queue_available":      maxQueued - queued - processing,
+			"queued":                 queued,
+			"processing":             processing,
+			"completed":              completed,
+			"failed":                 failed,
+			"max_queued":             maxQueued,
+			"max_concurrent":         maxConcurrent,
+			"queue_available":        maxQueued - queued - processing,
 			"estimated_wait_minutes": estimatedWaitMin,
 		})
 	}

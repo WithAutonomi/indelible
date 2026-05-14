@@ -1,10 +1,10 @@
 package handlers
 
 import (
-	"database/sql"
 	"net/http"
 
 	"github.com/WithAutonomi/indelible/internal/config"
+	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
 
@@ -16,7 +16,7 @@ import (
 // @Success 200 {object} map[string]interface{}
 // @Router /system/wallet-status [get]
 // @Security BearerAuth
-func WalletStatus(db *sql.DB, cfg *config.Config) http.HandlerFunc {
+func WalletStatus(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	walletSvc := services.NewWalletService(db, cfg.WalletEncryptionKey)
 
 	return func(w http.ResponseWriter, r *http.Request) {

@@ -2,10 +2,10 @@ package middleware
 
 import (
 	"context"
-	"database/sql"
 	"net/http"
 	"strings"
 
+	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
 
@@ -14,7 +14,7 @@ const (
 )
 
 // SCIMAuth validates SCIM bearer tokens and checks that SCIM is enabled.
-func SCIMAuth(db *sql.DB) func(http.Handler) http.Handler {
+func SCIMAuth(db *database.DB) func(http.Handler) http.Handler {
 	settingSvc := services.NewSettingsService(db)
 	tokenSvc := services.NewScimTokenService(db)
 

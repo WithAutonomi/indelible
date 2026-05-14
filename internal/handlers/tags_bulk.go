@@ -1,24 +1,24 @@
 package handlers
 
 import (
-	"database/sql"
 	"encoding/json"
 	"net/http"
 
+	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/middleware"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
 
 type bulkTagRequest struct {
-	UploadUUIDs []string              `json:"upload_uuids"`
-	Selector    string                `json:"selector"`
-	AddTags     map[string][]string   `json:"add_tags"`
-	RemoveTags  []string              `json:"remove_tags"`
+	UploadUUIDs []string            `json:"upload_uuids"`
+	Selector    string              `json:"selector"`
+	AddTags     map[string][]string `json:"add_tags"`
+	RemoveTags  []string            `json:"remove_tags"`
 }
 
 // BulkTagUploads applies or removes tags across multiple uploads.
 // Targets can be specified by UUID list or by label selector.
-func BulkTagUploads(db *sql.DB) http.HandlerFunc {
+func BulkTagUploads(db *database.DB) http.HandlerFunc {
 	uploadSvc := services.NewUploadService(db)
 	tagSvc := services.NewTagService(db)
 
@@ -110,7 +110,7 @@ func BulkTagUploads(db *sql.DB) http.HandlerFunc {
 }
 
 // TagFacets returns aggregated tag counts for the user's uploads.
-func TagFacets(db *sql.DB) http.HandlerFunc {
+func TagFacets(db *database.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID := middleware.GetUserID(r.Context())
 

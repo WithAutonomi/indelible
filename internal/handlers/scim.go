@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"database/sql"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -12,11 +11,12 @@ import (
 	"github.com/elimity-com/scim/schema"
 	filter "github.com/scim2/filter-parser/v2"
 
+	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
 
 // NewSCIMServer creates a configured SCIM 2.0 server as an http.Handler.
-func NewSCIMServer(db *sql.DB) (http.Handler, error) {
+func NewSCIMServer(db *database.DB) (http.Handler, error) {
 	userHandler := &scimUserHandler{
 		userSvc: services.NewUserService(db),
 		permSvc: services.NewPermissionService(db),
@@ -29,9 +29,9 @@ func NewSCIMServer(db *sql.DB) (http.Handler, error) {
 
 	server, err := scim.NewServer(&scim.ServerArgs{
 		ServiceProviderConfig: &scim.ServiceProviderConfig{
-			SupportPatch:    true,
+			SupportPatch:     true,
 			SupportFiltering: true,
-			MaxResults:      100,
+			MaxResults:       100,
 			AuthenticationSchemes: []scim.AuthenticationScheme{
 				{
 					Type:        scim.AuthenticationTypeOauthBearerToken,

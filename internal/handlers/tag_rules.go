@@ -1,13 +1,13 @@
 package handlers
 
 import (
-	"database/sql"
 	"encoding/json"
 	"net/http"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/middleware"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
@@ -57,7 +57,7 @@ func toTagRuleResponse(r *services.TagRule) tagRuleResponse {
 }
 
 // ListTagRules returns all auto-tag rules.
-func ListTagRules(db *sql.DB) http.HandlerFunc {
+func ListTagRules(db *database.DB) http.HandlerFunc {
 	svc := services.NewTagRuleService(db)
 	return func(w http.ResponseWriter, r *http.Request) {
 		rules, err := svc.List()
@@ -74,7 +74,7 @@ func ListTagRules(db *sql.DB) http.HandlerFunc {
 }
 
 // CreateTagRule adds a new auto-tag rule.
-func CreateTagRule(db *sql.DB) http.HandlerFunc {
+func CreateTagRule(db *database.DB) http.HandlerFunc {
 	svc := services.NewTagRuleService(db)
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID := middleware.GetUserID(r.Context())
@@ -100,7 +100,7 @@ func CreateTagRule(db *sql.DB) http.HandlerFunc {
 }
 
 // UpdateTagRule modifies an auto-tag rule.
-func UpdateTagRule(db *sql.DB) http.HandlerFunc {
+func UpdateTagRule(db *database.DB) http.HandlerFunc {
 	svc := services.NewTagRuleService(db)
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
@@ -127,7 +127,7 @@ func UpdateTagRule(db *sql.DB) http.HandlerFunc {
 }
 
 // DeleteTagRule removes an auto-tag rule.
-func DeleteTagRule(db *sql.DB) http.HandlerFunc {
+func DeleteTagRule(db *database.DB) http.HandlerFunc {
 	svc := services.NewTagRuleService(db)
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)

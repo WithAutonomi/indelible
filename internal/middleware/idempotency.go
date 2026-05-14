@@ -2,10 +2,11 @@ package middleware
 
 import (
 	"bytes"
-	"database/sql"
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/WithAutonomi/indelible/internal/database"
 )
 
 // responseRecorder captures the status code and body written by downstream handlers.
@@ -28,7 +29,7 @@ func (r *responseRecorder) Write(b []byte) (int, error) {
 // Idempotency returns middleware that supports idempotent POST requests.
 // When a request includes an Idempotency-Key header, the response is cached
 // and replayed on subsequent requests with the same key.
-func Idempotency(db *sql.DB) func(http.Handler) http.Handler {
+func Idempotency(db *database.DB) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Only act on POST requests with an Idempotency-Key header
@@ -78,7 +79,7 @@ func Idempotency(db *sql.DB) func(http.Handler) http.Handler {
 }
 
 // CleanupIdempotencyKeys removes expired idempotency keys (older than 24 hours).
-func CleanupIdempotencyKeys(db *sql.DB) {
+func CleanupIdempotencyKeys(db *database.DB) {
 	cutoff := time.Now().UTC().Add(-24 * time.Hour).Format("2006-01-02 15:04:05")
 	_, _ = db.Exec(`DELETE FROM idempotency_keys WHERE created_at < ?`, cutoff)
 }
