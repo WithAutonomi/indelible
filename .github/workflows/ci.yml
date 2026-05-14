@@ -45,8 +45,23 @@ jobs:
           git diff --exit-code docs/ || (echo "Swagger docs are out of date — run 'swag init -g cmd/indelible/main.go -o docs/ --parseDependency' and commit" && exit 1)
 
   test:
-    name: Test
+    name: Test (${{ matrix.db }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        db: [sqlite, postgres]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: ci
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
 
@@ -58,11 +73,28 @@ jobs:
         run: mkdir -p web/dist && echo '<!doctype html>' > web/dist/index.html
 
       - name: Run tests
+        env:
+          INDELIBLE_TEST_DB_URL: ${{ matrix.db == 'postgres' && 'postgres://postgres:ci@localhost:5432/postgres?sslmode=disable' || '' }}
         run: go test -count=1 -timeout 5m ./...
 
   race:
-    name: Race detection
+    name: Race detection (${{ matrix.db }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        db: [sqlite, postgres]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: ci
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
 
@@ -74,6 +106,8 @@ jobs:
         run: mkdir -p web/dist && echo '<!doctype html>' > web/dist/index.html
 
       - name: Run tests with race detector
+        env:
+          INDELIBLE_TEST_DB_URL: ${{ matrix.db == 'postgres' && 'postgres://postgres:ci@localhost:5432/postgres?sslmode=disable' || '' }}
         run: go test -race -count=1 -timeout 10m ./...
 
   security:
