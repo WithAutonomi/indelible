@@ -132,12 +132,22 @@ func (s *GroupService) Delete(id int64) error {
 func (s *GroupService) AddMember(groupID, userID, addedBy int64) error {
 	_, err := s.db.Exec(
 		`INSERT INTO group_members (group_id, user_id, added_by) VALUES (?, ?, ?)`,
-		groupID, userID, addedBy,
+		groupID, userID, nullableAddedBy(addedBy),
 	)
 	if err != nil && isUniqueViolation(err) {
 		return ErrAlreadyMember
 	}
 	return err
+}
+
+// nullableAddedBy translates the addedBy=0 sentinel used by SCIM provisioning
+// (where there is no acting user) into a SQL NULL, so the optional FK to
+// users(id) doesn't fail with a constraint violation.
+func nullableAddedBy(addedBy int64) sql.NullInt64 {
+	if addedBy == 0 {
+		return sql.NullInt64{}
+	}
+	return sql.NullInt64{Int64: addedBy, Valid: true}
 }
 
 func (s *GroupService) RemoveMember(groupID, userID int64) error {
@@ -219,10 +229,11 @@ func (s *GroupService) ReplaceMembers(groupID int64, userIDs []int64, addedBy in
 		return err
 	}
 
+	added := nullableAddedBy(addedBy)
 	for _, uid := range userIDs {
 		if _, err := tx.Exec(
 			`INSERT INTO group_members (group_id, user_id, added_by) VALUES (?, ?, ?)`,
-			groupID, uid, addedBy,
+			groupID, uid, added,
 		); err != nil {
 			return err
 		}

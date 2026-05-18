@@ -283,6 +283,13 @@ func (h *scimGroupHandler) Create(r *http.Request, attributes scim.ResourceAttri
 		_ = h.groupSvc.AddMember(group.ID, uid, 0)
 	}
 
+	// Re-fetch so the response reflects the externalId set above (and any
+	// timestamps the DB bumped).
+	group, err = h.groupSvc.GetByID(group.ID)
+	if err != nil {
+		return scim.Resource{}, err
+	}
+
 	h.audit(r, "scim.group.create", fmt.Sprintf("created group %s (id=%d)", displayName, group.ID))
 	return h.groupToResource(group)
 }

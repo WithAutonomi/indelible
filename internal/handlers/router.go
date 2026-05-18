@@ -210,12 +210,16 @@ func NewRouter(cfg *config.Config, db *database.DB, antdInfo AntdInfoProvider) h
 		})
 	})
 
-	// SCIM 2.0 provisioning endpoint
+	// SCIM 2.0 provisioning endpoint.
+	// The elimity-com/scim server matches paths like "/Users" and "/Groups" after
+	// stripping a "/v2" prefix from r.URL.Path. chi.Mount does NOT rewrite
+	// r.URL.Path, so we must StripPrefix("/scim/v2") ourselves; otherwise every
+	// request 404s with "Specified endpoint does not exist."
 	scimServer, err := NewSCIMServer(db)
 	if err == nil {
 		r.Route("/scim/v2", func(r chi.Router) {
 			r.Use(middleware.SCIMAuth(db))
-			r.Mount("/", scimServer)
+			r.Mount("/", http.StripPrefix("/scim/v2", scimServer))
 		})
 	}
 
