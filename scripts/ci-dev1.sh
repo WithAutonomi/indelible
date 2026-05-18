@@ -139,6 +139,7 @@ run() {
 
 PG_CONTAINER=indelible-dev1-pg
 SMOKE_CONTAINER=indelible-dev1-smoke
+DEX_CONTAINER=indelible-dev1-dex
 
 start_pg() {
   docker rm -f "$PG_CONTAINER" >/dev/null 2>&1 || true
@@ -163,7 +164,31 @@ stop_pg() {
   docker rm -f "$PG_CONTAINER" >/dev/null 2>&1 || true
 }
 
-trap 'stop_pg; docker rm -f "$SMOKE_CONTAINER" >/dev/null 2>&1 || true' EXIT
+start_dex() {
+  docker rm -f "$DEX_CONTAINER" >/dev/null 2>&1 || true
+  # --network=host for the same Incus reason as postgres. Dex serves OIDC on
+  # 5556; e2e/tests/sso.spec.ts polls /.well-known/openid-configuration and
+  # t.skips itself if the endpoint is unreachable.
+  docker run -d --name "$DEX_CONTAINER" --network=host \
+    -v "$PWD/deploy/dex:/etc/dex/cfg:ro" \
+    ghcr.io/dexidp/dex:v2.41.1 \
+    dex serve /etc/dex/cfg/config.yaml >/dev/null
+  for _ in $(seq 1 30); do
+    if curl -fsS http://localhost:5556/.well-known/openid-configuration >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "dex did not become ready" >&2
+  docker logs "$DEX_CONTAINER" >&2 || true
+  return 1
+}
+
+stop_dex() {
+  docker rm -f "$DEX_CONTAINER" >/dev/null 2>&1 || true
+}
+
+trap 'stop_pg; stop_dex; docker rm -f "$SMOKE_CONTAINER" >/dev/null 2>&1 || true' EXIT
 
 # Postgres tests
 if have_step postgres; then
@@ -242,19 +267,25 @@ fi
 # Real E2E suite (e2e/) — full user-journey tests (upload → list → download
 # → verify content, etc). Not run in CI at all. Requires a working antd
 # binary on PATH (or in /usr/local/bin); tests will t.skip themselves if
-# antd is missing.
+# antd is missing. Dex is started alongside so sso.spec.ts has a real OIDC
+# IdP to drive — the test self-skips if Dex isn't reachable, but starting
+# it here is the difference between "tested" and "silently skipped".
 if have_step e2e; then
   run "Frontend build (for e2e)" bash -c 'cd web && (test -d node_modules || npm ci --silent) && npm run build'
   run "Server build (for e2e)" go build -o bin/indelible-test ./cmd/indelible
-  run "Playwright E2E" bash -c '
-    cd e2e && npm ci --silent
-    npx playwright install --with-deps chromium >/dev/null
-    INDELIBLE_DB_URL="sqlite://:memory:" \
-    INDELIBLE_JWT_SECRET="e2e-ci-test-secret-minimum-32-characters" \
-    INDELIBLE_WALLET_ENCRYPTION_KEY="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab" \
-    INDELIBLE_DATA_DIR="/tmp/indelible-dev1-e2e" \
-    npx playwright test
-  '
+  if start_dex; then
+    run "Playwright E2E" bash -c '
+      cd e2e && npm ci --silent
+      npx playwright install --with-deps chromium >/dev/null
+      INDELIBLE_DB_URL="sqlite://:memory:" \
+      INDELIBLE_JWT_SECRET="e2e-ci-test-secret-minimum-32-characters" \
+      INDELIBLE_WALLET_ENCRYPTION_KEY="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab" \
+      INDELIBLE_DATA_DIR="/tmp/indelible-dev1-e2e" \
+      npx playwright test
+    '
+  else
+    failed+=("Playwright E2E [dex startup failed]")
+  fi
 fi
 
 echo ""
