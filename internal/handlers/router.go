@@ -67,6 +67,12 @@ func NewRouter(cfg *config.Config, db *database.DB, antdInfo AntdInfoProvider) h
 			r.With(resetRL).Post("/auth/forgot-password", ForgotPassword(db, cfg))
 			r.With(resetRL).Post("/auth/reset-password", ResetPassword(db, cfg))
 			r.Get("/auth/verify-email", VerifyEmail(db))
+
+			// OIDC/SSO login flow (public). authorize → IdP → callback round-trip
+			// is driven by a 10-minute encrypted state cookie; see oidc_login.go.
+			r.Get("/auth/oidc/providers", ListOIDCProviders(db))
+			r.Get("/auth/oidc/authorize/{providerId}", OIDCAuthorize(db, cfg))
+			r.Get("/auth/oidc/callback", OIDCCallback(db, cfg))
 		})
 
 		// Authenticated routes
@@ -124,6 +130,12 @@ func NewRouter(cfg *config.Config, db *database.DB, antdInfo AntdInfoProvider) h
 			// Notification preferences
 			r.Get("/notifications/preferences", GetNotificationPrefs(db))
 			r.Put("/notifications/preferences", UpdateNotificationPrefs(db))
+
+			// OIDC linking (authenticated): start a flow that adds a new
+			// identity to the current user, list/unlink existing ones.
+			r.Post("/auth/oidc/link/{providerId}", OIDCLinkStart(db, cfg))
+			r.Delete("/auth/oidc/identities/{identityId}", OIDCUnlinkIdentity(db, cfg))
+			r.Get("/me/oidc/identities", ListMyOIDCIdentities(db))
 		})
 
 		// Admin routes
@@ -191,6 +203,7 @@ func NewRouter(cfg *config.Config, db *database.DB, antdInfo AntdInfoProvider) h
 			r.Post("/admin/oidc/providers", AdminCreateOIDCProvider(db, cfg))
 			r.Put("/admin/oidc/providers/{id}", AdminUpdateOIDCProvider(db, cfg))
 			r.Delete("/admin/oidc/providers/{id}", AdminDeleteOIDCProvider(db, cfg))
+			r.Put("/admin/oidc/providers/{id}/auto-provision", AdminSetOIDCAutoProvision(db, cfg))
 
 			// Analytics
 			r.Get("/admin/analytics/uploads", AdminUploadAnalytics(db))
