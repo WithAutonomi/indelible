@@ -1,0 +1,52 @@
+{
+  "request": {
+    "method": "PATCH",
+    "path": "/scim/v2/Groups/1",
+    "headers": {
+      "User-Agent": "Okta SCIM Client 1.0.0",
+      "Accept": "application/scim+json",
+      "Content-Type": "application/scim+json; charset=utf-8"
+    },
+    "query": [],
+    "body": {
+      "schemas": [
+        "urn:ietf:params:scim:api:messages:2.0:PatchOp"
+      ],
+      "Operations": [
+        {
+          "op": "replace",
+          "value": {
+            "id": "1",
+            "displayName": "SCIMTestGroup"
+          }
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/scim+json"
+    },
+    "body": {
+      "displayName": "SCIMTestGroup",
+      "id": "1",
+      "members": [
+        {
+          "$ref": "Users/3",
+          "display": "",
+          "value": "3"
+        }
+      ],
+      "meta": {
+        "resourceType": "Group",
+        "created": "2026-05-18T15:28:40Z",
+        "lastModified": "2026-05-18T15:28:40Z",
+        "location": "Groups/1"
+      },
+      "schemas": [
+        "urn:ietf:params:scim:schemas:core:2.0:Group"
+      ]
+    }
+  }
+}

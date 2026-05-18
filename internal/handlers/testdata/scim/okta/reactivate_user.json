@@ -1,0 +1,56 @@
+{
+  "request": {
+    "method": "PATCH",
+    "path": "/scim/v2/Users/4",
+    "headers": {
+      "User-Agent": "Okta SCIM Client 1.0.0",
+      "Accept": "application/scim+json",
+      "Content-Type": "application/scim+json; charset=utf-8"
+    },
+    "query": [],
+    "body": {
+      "schemas": [
+        "urn:ietf:params:scim:api:messages:2.0:PatchOp"
+      ],
+      "Operations": [
+        {
+          "op": "replace",
+          "value": {
+            "active": true
+          }
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/scim+json"
+    },
+    "body": {
+      "active": true,
+      "emails": [
+        {
+          "primary": true,
+          "value": "fixture.user@maidsafe.net"
+        }
+      ],
+      "externalId": "00u13542539yHv3Xq698",
+      "id": "4",
+      "meta": {
+        "resourceType": "User",
+        "created": "2026-05-18T15:38:02Z",
+        "lastModified": "2026-05-18T15:38:51Z",
+        "location": "Users/4"
+      },
+      "name": {
+        "familyName": "user",
+        "givenName": "fixture"
+      },
+      "schemas": [
+        "urn:ietf:params:scim:schemas:core:2.0:User"
+      ],
+      "userName": "fixture.user@maidsafe.net"
+    }
+  }
+}
