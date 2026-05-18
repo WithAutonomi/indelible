@@ -238,17 +238,18 @@ func CreateUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		// Check quota before accepting upload
-		if err := quotaSvc.CheckUserQuota(userID, written); err != nil {
-			os.Remove(tempPath)
-			jsonErrorWithCode(w, "quota exceeded: "+err.Error(), "quota_exceeded", http.StatusForbidden)
-			return
-		}
-
 		// Create upload record
 		var tID *int64
 		if tokenID != 0 {
 			tID = &tokenID
+		}
+
+		// Check quota before accepting upload. Pass tokenID so the department
+		// tier can resolve the token's department; nil for web-UI uploads.
+		if err := quotaSvc.CheckUserQuota(userID, tID, written); err != nil {
+			os.Remove(tempPath)
+			jsonErrorWithCode(w, "quota exceeded: "+err.Error(), "quota_exceeded", http.StatusForbidden)
+			return
 		}
 
 		upload, err := uploadSvc.Create(

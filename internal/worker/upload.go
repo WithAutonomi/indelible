@@ -249,8 +249,14 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		return fmt.Errorf("File not found on server")
 	}
 
-	// S3: Re-check quota at processing time (includes in-flight bytes)
-	if err := w.quotaSvc.CheckUserQuotaInFlight(upload.UserID, upload.FileSize); err != nil {
+	// S3: Re-check quota at processing time (includes in-flight bytes). Pass
+	// the upload's token_id so the department tier can resolve correctly.
+	var tID *int64
+	if upload.TokenID.Valid {
+		v := upload.TokenID.Int64
+		tID = &v
+	}
+	if err := w.quotaSvc.CheckUserQuotaInFlight(upload.UserID, tID, upload.FileSize); err != nil {
 		return fmt.Errorf("Quota exceeded: %w", err)
 	}
 
