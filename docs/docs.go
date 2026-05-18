@@ -594,21 +594,23 @@ const docTemplate = `{
                 }
             }
         },
-        "/admin/logs/system": {
+        "/admin/logs/config": {
             "get": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
-                "description": "Return system log entries with optional filtering (retention-managed)",
+                "description": "Return system log entries with optional filtering (retention-managed)\nReturn config_audit entries showing old/new value, actor, IP, and UA for every settings change. Permanent (never purged).",
                 "produces": [
+                    "application/json",
                     "application/json"
                 ],
                 "tags": [
+                    "Admin: Logs",
                     "Admin: Logs"
                 ],
-                "summary": "Query system logs",
+                "summary": "Query config-change audit log",
                 "parameters": [
                     {
                         "type": "string",
@@ -645,6 +647,36 @@ const docTemplate = `{
                         "description": "Offset for pagination",
                         "name": "offset",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by setting key",
+                        "name": "setting_key",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Start date (YYYY-MM-DD)",
+                        "name": "since",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "End date (YYYY-MM-DD)",
+                        "name": "until",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Max results (default 100, max 500)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Offset for pagination",
+                        "name": "offset",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -665,6 +697,16 @@ const docTemplate = `{
                         }
                     }
                 }
+            }
+        },
+        "/admin/logs/system": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "responses": {}
             }
         },
         "/admin/logs/user": {
