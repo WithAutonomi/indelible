@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, watch, onMounted } from 'vue'
+import { ref, reactive, watch, onMounted, computed } from 'vue'
 import { useToast } from 'primevue/usetoast'
 import { api } from '../../api/client'
 import { useAuthStore } from '../../stores/auth'
@@ -11,6 +11,12 @@ import Message from 'primevue/message'
 
 const auth = useAuthStore()
 const toast = useToast()
+
+// Connected accounts (OIDC identities + available providers to link).
+type OIDCIdentity = { id: number; provider_id: number; provider_name: string; subject: string; created_at: string }
+type SSOProvider = { id: number; name: string; display_name: string }
+const identities = ref<OIDCIdentity[]>([])
+const providers = ref<SSOProvider[]>([])
 
 // Profile card - dirty tracking
 const profileSaved = ref({ firstName: '', lastName: '' })
@@ -38,13 +44,65 @@ watch([currentPassword, newPassword, confirmPassword], () => {
   passwordDirty.value = !!(currentPassword.value || newPassword.value || confirmPassword.value)
 })
 
-onMounted(() => {
+onMounted(async () => {
   if (auth.user) {
     profile.firstName = auth.user.first_name
     profile.lastName = auth.user.last_name
     profileSaved.value = { firstName: auth.user.first_name, lastName: auth.user.last_name }
   }
+  await fetchConnectedAccounts()
 })
+
+async function fetchConnectedAccounts() {
+  try {
+    const [idsRes, provRes] = await Promise.all([
+      api.get('/api/v2/me/oidc/identities'),
+      api.get('/api/v2/auth/oidc/providers'),
+    ])
+    identities.value = idsRes.data.identities || []
+    providers.value = provRes.data.providers || []
+  } catch {
+    // Endpoint may be off; leave the section empty.
+  }
+}
+
+async function linkProvider(p: SSOProvider) {
+  try {
+    const res = await api.post(`/api/v2/auth/oidc/link/${p.id}`)
+    const url = res.data.authorize_url as string
+    if (url) {
+      window.location.href = url
+    }
+  } catch (e: any) {
+    toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to start link flow', life: 5000 })
+  }
+}
+
+async function unlinkIdentity(id: OIDCIdentity) {
+  if (!confirm(`Unlink ${id.provider_name}?`)) return
+  try {
+    await api.delete(`/api/v2/auth/oidc/identities/${id.id}`)
+    await fetchConnectedAccounts()
+    toast.add({ severity: 'success', summary: 'Unlinked', detail: `${id.provider_name} removed`, life: 3000 })
+  } catch (e: any) {
+    const code = e.response?.data?.code
+    if (code === 'last_login_method') {
+      toast.add({
+        severity: 'warn',
+        summary: 'Cannot unlink',
+        detail: 'This is your only login method. Set a password first or link another provider.',
+        life: 7000,
+      })
+      return
+    }
+    toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to unlink', life: 5000 })
+  }
+}
+
+// Providers the user hasn't yet linked — drives the "Link another" buttons.
+const linkableProviders = computed(() =>
+  providers.value.filter(p => !identities.value.some(id => id.provider_id === p.id))
+)
 
 async function updateProfile() {
   saving.value = true
@@ -149,6 +207,41 @@ function discardPassword() {
           <div class="flex gap-2">
             <Button label="Discard" severity="secondary" text @click="discardProfile" />
             <Button :label="saving ? 'Saving...' : 'Save'" :loading="saving" @click="updateProfile" />
+          </div>
+        </div>
+      </template>
+    </Card>
+
+    <!-- Connected accounts (OIDC identities) -->
+    <Card v-if="identities.length > 0 || linkableProviders.length > 0" class="mb-6">
+      <template #title>Connected Accounts</template>
+      <template #content>
+        <p class="text-sm text-surface-400 mb-4">
+          Identity providers you can sign in with. Linking a provider lets you sign in via your company SSO in addition to email + password.
+        </p>
+
+        <div v-if="identities.length > 0" class="divide-y divide-surface-100">
+          <div v-for="id in identities" :key="id.id" class="flex items-center justify-between py-3">
+            <div>
+              <p class="text-sm font-medium">{{ id.provider_name }}</p>
+              <p class="text-xs text-surface-400">Subject: <code>{{ id.subject }}</code> &middot; linked {{ id.created_at }}</p>
+            </div>
+            <Button label="Unlink" severity="danger" outlined size="small" @click="unlinkIdentity(id)" />
+          </div>
+        </div>
+
+        <div v-if="linkableProviders.length > 0" class="mt-4 pt-4 border-t border-surface-100">
+          <p class="text-xs text-surface-400 mb-3">Link another provider:</p>
+          <div class="flex flex-wrap gap-2">
+            <Button
+              v-for="p in linkableProviders"
+              :key="p.id"
+              :label="`Link ${p.display_name}`"
+              severity="secondary"
+              outlined
+              size="small"
+              @click="linkProvider(p)"
+            />
           </div>
         </div>
       </template>

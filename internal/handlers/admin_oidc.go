@@ -14,29 +14,37 @@ import (
 )
 
 type oidcProviderResponse struct {
-	ID          int64  `json:"id"`
-	Name        string `json:"name"`
-	DisplayName string `json:"display_name"`
-	IssuerURL   string `json:"issuer_url"`
-	ClientID    string `json:"client_id"`
-	Scopes      string `json:"scopes"`
-	IsEnabled   bool   `json:"is_enabled"`
-	CreatedAt   string `json:"created_at"`
-	UpdatedAt   string `json:"updated_at"`
+	ID             int64  `json:"id"`
+	Name           string `json:"name"`
+	DisplayName    string `json:"display_name"`
+	IssuerURL      string `json:"issuer_url"`
+	ClientID       string `json:"client_id"`
+	Scopes         string `json:"scopes"`
+	IsEnabled      bool   `json:"is_enabled"`
+	AutoProvision  bool   `json:"auto_provision"`
+	DefaultGroupID *int64 `json:"default_group_id"`
+	CreatedAt      string `json:"created_at"`
+	UpdatedAt      string `json:"updated_at"`
 }
 
 func toOIDCProviderResponse(p *services.OIDCProvider) oidcProviderResponse {
-	return oidcProviderResponse{
-		ID:          p.ID,
-		Name:        p.Name,
-		DisplayName: p.DisplayName,
-		IssuerURL:   p.IssuerURL,
-		ClientID:    p.ClientID,
-		Scopes:      p.Scopes,
-		IsEnabled:   p.IsEnabled,
-		CreatedAt:   p.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		UpdatedAt:   p.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+	resp := oidcProviderResponse{
+		ID:            p.ID,
+		Name:          p.Name,
+		DisplayName:   p.DisplayName,
+		IssuerURL:     p.IssuerURL,
+		ClientID:      p.ClientID,
+		Scopes:        p.Scopes,
+		IsEnabled:     p.IsEnabled,
+		AutoProvision: p.AutoProvision,
+		CreatedAt:     p.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		UpdatedAt:     p.UpdatedAt.Format("2006-01-02T15:04:05Z"),
 	}
+	if p.DefaultGroupID.Valid {
+		gid := p.DefaultGroupID.Int64
+		resp.DefaultGroupID = &gid
+	}
+	return resp
 }
 
 type createOIDCRequest struct {
