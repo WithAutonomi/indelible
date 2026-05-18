@@ -46,7 +46,6 @@ indelible.toml.local
 Thumbs.db
 
 # Docs and planning content — image doesn't need them
-docs/
 *.md
 !web/README.md
 LICENSE*
