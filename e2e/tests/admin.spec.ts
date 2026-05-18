@@ -128,7 +128,8 @@ test.describe('Admin', () => {
       data: { name: `primary-${Date.now()}`, private_key: TEST_WALLET_KEY },
     })
     expect(createRes.status(), `create wallet: ${await createRes.text()}`).toBe(201)
-    const created = await createRes.json()
+    // Handler wraps the wallet in {message, wallet}; tests read from .wallet.
+    const created = (await createRes.json()).wallet
     expect(created.is_default).toBe(true)
     expect(created.address).toMatch(/^0x[a-fA-F0-9]{40}$/)
 
