@@ -964,6 +964,64 @@ const docTemplate = `{
                 }
             }
         },
+        "/admin/oidc/providers/{id}/auto-provision": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Configure whether unknown sub/email pairs create new local users (off by default), and which group new users join",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin: OIDC"
+                ],
+                "summary": "Toggle OIDC auto-provisioning",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Provider ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "auto_provision + default_group_id (0 to clear)",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handlers.adminOIDCAutoProvisionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "boolean"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/admin/quotas": {
             "get": {
                 "security": [
@@ -2877,6 +2935,201 @@ const docTemplate = `{
                 }
             }
         },
+        "/auth/oidc/authorize/{providerId}": {
+            "get": {
+                "description": "Generates state/nonce/PKCE, sets an encrypted cookie, and 302's to the IdP authorize endpoint",
+                "tags": [
+                    "Auth"
+                ],
+                "summary": "Start OIDC login flow",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "OIDC provider ID",
+                        "name": "providerId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "302": {
+                        "description": "Found"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/oidc/callback": {
+            "get": {
+                "description": "Validates the IdP response, resolves or provisions the user, issues a session JWT, and redirects to /",
+                "tags": [
+                    "Auth"
+                ],
+                "summary": "Complete OIDC login flow",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "OIDC authorization code",
+                        "name": "code",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Opaque state token (matches encrypted cookie)",
+                        "name": "state",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "302": {
+                        "description": "Found"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/oidc/identities/{identityId}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Remove an OIDC login method from the current user",
+                "tags": [
+                    "Auth"
+                ],
+                "summary": "Unlink an OIDC identity",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "OIDC identity ID",
+                        "name": "identityId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/oidc/link/{providerId}": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Authenticated user kicks off an OIDC flow that adds a new identity to their account on callback",
+                "tags": [
+                    "Auth"
+                ],
+                "summary": "Start OIDC linking flow",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "OIDC provider ID",
+                        "name": "providerId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/auth/oidc/providers": {
+            "get": {
+                "description": "Returns enabled OIDC providers for the login page (no secrets, no client_id)",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Auth"
+                ],
+                "summary": "List OIDC providers",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "array",
+                                "items": {
+                                    "$ref": "#/definitions/internal_handlers.publicOIDCProvider"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/auth/register": {
             "post": {
                 "description": "Create a new user account with email, password, and name",
@@ -3443,6 +3696,37 @@ const docTemplate = `{
                             "type": "object",
                             "additionalProperties": {
                                 "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/me/oidc/identities": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the linked OIDC identities for the current user (profile connected accounts)",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Auth"
+                ],
+                "summary": "List my OIDC identities",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "array",
+                                "items": {
+                                    "$ref": "#/definitions/internal_handlers.oidcIdentityResponse"
+                                }
                             }
                         }
                     }
@@ -4570,6 +4854,17 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_handlers.adminOIDCAutoProvisionRequest": {
+            "type": "object",
+            "properties": {
+                "auto_provision": {
+                    "type": "boolean"
+                },
+                "default_group_id": {
+                    "type": "integer"
+                }
+            }
+        },
         "internal_handlers.adminUserResponse": {
             "type": "object",
             "properties": {
@@ -4905,14 +5200,40 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_handlers.oidcIdentityResponse": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "provider_id": {
+                    "type": "integer"
+                },
+                "provider_name": {
+                    "type": "string"
+                },
+                "subject": {
+                    "type": "string"
+                }
+            }
+        },
         "internal_handlers.oidcProviderResponse": {
             "type": "object",
             "properties": {
+                "auto_provision": {
+                    "type": "boolean"
+                },
                 "client_id": {
                     "type": "string"
                 },
                 "created_at": {
                     "type": "string"
+                },
+                "default_group_id": {
+                    "type": "integer"
                 },
                 "display_name": {
                     "type": "string"
@@ -4933,6 +5254,20 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_handlers.publicOIDCProvider": {
+            "type": "object",
+            "properties": {
+                "display_name": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "name": {
                     "type": "string"
                 }
             }
