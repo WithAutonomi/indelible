@@ -147,11 +147,9 @@ Navigate to `/login` and enter your email and password. Login is rate-limited to
 ### Password Reset
 
 1. Click "Forgot password?" on the login page
-2. Enter your email address — a reset link is sent if SMTP is configured
+2. Enter your email address — a reset link is sent via the configured notifier (see [Email Delivery](#email-delivery))
 3. Click the link in your email and set a new password
 4. The response is always the same regardless of whether the email exists (prevents email enumeration)
-
-**Note:** Password reset requires SMTP configuration. Without it, reset tokens are logged to server output.
 
 ### Email Verification
 
@@ -159,7 +157,45 @@ A verification email is sent automatically on registration. Click the link to ve
 
 - Verification tokens expire after **24 hours**
 - To resend: call `POST /api/v2/me/resend-verification` (requires authentication)
-- Verification requires SMTP configuration. Without it, tokens are logged to server output.
+- Delivery uses the configured notifier — see [Email Delivery](#email-delivery)
+
+### Email Delivery
+
+Password resets and email verification go through a configurable notifier with three possible channels:
+
+| Channel | When to use | Requirements |
+|---|---|---|
+| **SMTP** | You have an existing mail server | `SMTP_HOST` + `SMTP_FROM` set in config |
+| **Webhook** | You want delivery via Slack / Postmark / SendGrid / a custom relay | At least one enabled webhook subscribed to `auth.password_reset_requested` and/or `auth.email_verification_requested` |
+| **Disabled** | Local dev / pre-launch staging | Nothing — tokens are logged to server output |
+
+**Pick the channel** in **Admin → Settings → Operations → Email Notifier**. The default is `auto`: SMTP if configured, else webhook if an `auth.*`-subscribed webhook exists, else disabled.
+
+**Check the active channel** on `GET /health` — the `notifier` field returns `smtp`, `webhook`, or `noop`. If it returns `noop` in production, server logs will contain an ERROR at boot:
+
+```
+notifier is NOOP — password reset and email verification will not be delivered.
+Configure SMTP, or enable a webhook subscribed to auth.* events, or set notifier_method explicitly.
+```
+
+#### Webhook payload
+
+When the webhook channel is active, each event POSTs JSON to every subscribed webhook URL with the standard signature pipeline (HMAC-SHA256, 3 retries, exponential backoff):
+
+```json
+{
+  "event_type": "auth.password_reset_requested",
+  "timestamp": "2026-05-18T12:00:00Z",
+  "auth": {
+    "to": "alice@example.com",
+    "url": "https://indelible.example.com/reset-password?token=abc123..."
+  }
+}
+```
+
+Your webhook handler is responsible for delivering `auth.url` to `auth.to` through whatever channel makes sense (transactional email API, Slack DM, Discord webhook, an internal mail queue). The `X-Signature-256` header is `sha256=<hmac>` over the raw request body using the webhook secret.
+
+Same shape applies to `auth.email_verification_requested`.
 
 ### Changing Password
 

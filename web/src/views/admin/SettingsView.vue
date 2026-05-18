@@ -68,6 +68,23 @@ watch(ops, () => {
     ops.log_retention_days !== opsSaved.value.log_retention_days
 }, { deep: true })
 
+// Notifier card — drives password reset + email verification delivery.
+const notifierSaved = ref({ notifier_method: 'auto' })
+const notifier = reactive({ notifier_method: 'auto' })
+const notifierDirty = ref(false)
+const notifierSaving = ref(false)
+
+const notifierOptions = [
+  { label: 'Auto (SMTP if configured, else webhook, else off)', value: 'auto' },
+  { label: 'SMTP', value: 'smtp' },
+  { label: 'Webhook', value: 'webhook' },
+  { label: 'Disabled (no delivery)', value: 'noop' },
+]
+
+watch(notifier, () => {
+  notifierDirty.value = notifier.notifier_method !== notifierSaved.value.notifier_method
+}, { deep: true })
+
 // --- Helpers ---
 
 function bytesToGB(bytes: string): string {
@@ -106,6 +123,10 @@ async function fetchSettings() {
     ops.maintenance_mode = s.maintenance_mode || 'false'
     ops.log_retention_days = s.log_retention_days || ''
     opsSaved.value = { ...ops }
+
+    // Notifier
+    notifier.notifier_method = s.notifier_method || 'auto'
+    notifierSaved.value = { ...notifier }
   } catch {
     // ignore
   } finally {
@@ -138,6 +159,9 @@ async function saveCard(card: string) {
       maintenance_mode: ops.maintenance_mode,
       log_retention_days: ops.log_retention_days,
     }
+  } else if (card === 'notifier') {
+    notifierSaving.value = true
+    patch = { notifier_method: notifier.notifier_method }
   }
 
   try {
@@ -153,6 +177,9 @@ async function saveCard(card: string) {
     } else if (card === 'ops') {
       opsSaved.value = { ...ops }
       opsDirty.value = false
+    } else if (card === 'notifier') {
+      notifierSaved.value = { ...notifier }
+      notifierDirty.value = false
     }
 
     toast.add({ severity: 'success', summary: 'Saved', detail: 'Settings saved', life: 3000 })
@@ -162,6 +189,7 @@ async function saveCard(card: string) {
     generalSaving.value = false
     uploadsSaving.value = false
     opsSaving.value = false
+    notifierSaving.value = false
   }
 }
 
@@ -174,6 +202,8 @@ function discardCard(card: string) {
     Object.assign(uploads, uploadsSaved.value)
   } else if (card === 'ops') {
     Object.assign(ops, opsSaved.value)
+  } else if (card === 'notifier') {
+    Object.assign(notifier, notifierSaved.value)
   }
 }
 
@@ -373,6 +403,38 @@ onMounted(async () => {
             <div class="flex gap-2">
               <Button label="Discard" severity="secondary" outlined @click="discardCard('ops')" />
               <Button :label="opsSaving ? 'Saving...' : 'Save'" :loading="opsSaving" @click="saveCard('ops')" />
+            </div>
+          </div>
+
+          <div class="mt-8 divide-y divide-surface-100">
+            <div class="grid grid-cols-3 gap-6 py-5">
+              <div>
+                <label class="text-sm font-medium">Email Notifier</label>
+                <p class="text-xs text-surface-400 mt-1">
+                  How password resets and email verification are delivered.
+                  <span class="block mt-1">SMTP requires <code>SMTP_HOST</code> + <code>SMTP_FROM</code>;
+                  Webhook requires at least one enabled webhook subscribed to
+                  <code>auth.password_reset_requested</code> or
+                  <code>auth.email_verification_requested</code>.</span>
+                </p>
+              </div>
+              <div class="col-span-2">
+                <Select v-model="notifier.notifier_method"
+                  :options="notifierOptions"
+                  optionLabel="label"
+                  optionValue="value"
+                  class="w-full max-w-md" />
+                <p v-if="notifier.notifier_method === 'noop'" class="text-xs text-orange-500 mt-2">
+                  &#9888; With "Disabled", users will never receive password-reset or verification emails.
+                </p>
+              </div>
+            </div>
+          </div>
+          <div v-if="notifierDirty" class="py-4 border-t border-surface-200 flex items-center justify-between">
+            <p class="text-xs text-surface-500">You have unsaved changes</p>
+            <div class="flex gap-2">
+              <Button label="Discard" severity="secondary" outlined @click="discardCard('notifier')" />
+              <Button :label="notifierSaving ? 'Saving...' : 'Save'" :loading="notifierSaving" @click="saveCard('notifier')" />
             </div>
           </div>
         </TabPanel>

@@ -26,6 +26,19 @@ func (e *ValidationError) Error() string {
 var typedValidators = map[string]func(string) error{
 	"antd_quote_timeout_secs":        intInRange(1, 3600),
 	"antd_health_probe_timeout_secs": intInRange(1, 120),
+	"notifier_method":                oneOf("auto", "smtp", "webhook", "noop"),
+}
+
+// oneOf builds a validator that requires the value to be in the allowed set.
+func oneOf(allowed ...string) func(string) error {
+	return func(s string) error {
+		for _, a := range allowed {
+			if s == a {
+				return nil
+			}
+		}
+		return fmt.Errorf("must be one of: %v", allowed)
+	}
 }
 
 // intInRange builds a validator that requires the value to parse as an int in [min,max].

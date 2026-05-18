@@ -23,6 +23,15 @@ type WebhookPayload struct {
 	System     *WebhookSystemData     `json:"system,omitempty"`
 	Tags       *WebhookTagData        `json:"tags,omitempty"`
 	Collection *WebhookCollectionData `json:"collection,omitempty"`
+	Auth       *WebhookAuthData       `json:"auth,omitempty"`
+}
+
+// WebhookAuthData carries the link the recipient must click for password reset
+// or email verification. Receiving systems are expected to deliver `url` to
+// `to` via their preferred channel (Slack DM, transactional email API, etc.).
+type WebhookAuthData struct {
+	To  string `json:"to"`
+	URL string `json:"url"`
 }
 
 // WebhookTagData contains tag change details in webhook payloads.
@@ -206,6 +215,38 @@ func (s *WebhookDeliveryService) FireCollectionEvent(eventType string, uploadUUI
 			continue
 		}
 		go s.deliver(wh, payload)
+	}
+}
+
+// FireAuthEvent dispatches an auth.* notification (password reset, email
+// verification) to every enabled webhook subscribed to the event. The handler
+// for each webhook is responsible for actually delivering the link to the user
+// — we just relay the request through the signed webhook pipeline.
+func (s *WebhookDeliveryService) FireAuthEvent(eventType string, data *WebhookAuthData) {
+	webhooks, err := s.webhookSvc.GetEnabled()
+	if err != nil || len(webhooks) == 0 {
+		slog.Warn("no enabled webhooks to deliver auth event",
+			"event", eventType, "to", data.To)
+		return
+	}
+
+	payload := WebhookPayload{
+		EventType: eventType,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Auth:      data,
+	}
+
+	delivered := 0
+	for _, wh := range webhooks {
+		if !webhookSubscribedTo(wh, eventType) {
+			continue
+		}
+		go s.deliver(wh, payload)
+		delivered++
+	}
+	if delivered == 0 {
+		slog.Warn("no webhook subscribed to auth event; user will not receive their link",
+			"event", eventType, "to", data.To)
 	}
 }
 
