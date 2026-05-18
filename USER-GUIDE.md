@@ -929,27 +929,20 @@ server {
 
 ### Docker Compose
 
-```yaml
-services:
-  indelible:
-    image: autonomi/indelible:latest
-    ports:
-      - "8080:8080"
-    volumes:
-      - indelible-data:/data
-    environment:
-      INDELIBLE_JWT_SECRET: "your-secret-key"
-      INDELIBLE_ANTD_URL: http://antd:8082
-      INDELIBLE_WALLET_ENCRYPTION_KEY: "your-64-char-hex-key"
-      INDELIBLE_CORS_ORIGINS: https://files.acme.com
+The repo ships a canonical [`docker-compose.yml`](./docker-compose.yml) at the root with `indelible` + `antd` + Postgres pre-wired. To run the stack:
 
-  antd:
-    image: autonomi/antd:latest
-    ports:
-      - "8082:8082"
+```bash
+export INDELIBLE_JWT_SECRET=$(openssl rand -hex 32)
+export INDELIBLE_WALLET_ENCRYPTION_KEY=$(openssl rand -hex 32)
+docker compose up -d
+```
 
-volumes:
-  indelible-data:
+The compose file's volumes mount data at the container's `/var/lib/indelible` (matches the in-image default). Add `CORS_ORIGINS`, trusted-proxy ranges, or SMTP credentials by extending the `environment:` block — see the comments at the top of the file for the full list. A simpler SQLite-only variant (no Postgres service) is in the comment block at the bottom of `docker-compose.yml`.
+
+To build from local source instead of pulling a published image:
+
+```bash
+docker compose up --build
 ```
 
 ### Trusted Proxies

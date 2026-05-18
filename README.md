@@ -85,35 +85,25 @@ export INDELIBLE_ANTD_URL="http://localhost:8082"
 
 ### Docker Compose
 
-```yaml
-services:
-  indelible:
-    image: autonomi/indelible:latest
-    ports:
-      - "8080:8080"
-    volumes:
-      - indelible-data:/data
-    environment:
-      INDELIBLE_JWT_SECRET: "your-secret-key"
-      INDELIBLE_ANTD_URL: http://antd:8082   # external antd container, not managed
-      INDELIBLE_DB_URL: postgres://indelible:password@db/indelible
-    depends_on:
-      - db
-      - antd
+A canonical [`docker-compose.yml`](./docker-compose.yml) is shipped at the repo root with `indelible` + `antd` + Postgres pre-wired. Quick start:
 
-  db:
-    image: postgres:16
-    environment:
-      POSTGRES_DB: indelible
-      POSTGRES_USER: indelible
-      POSTGRES_PASSWORD: password
-    volumes:
-      - pgdata:/var/lib/postgresql/data
+```bash
+git clone https://github.com/WithAutonomi/indelible.git
+cd indelible
 
-volumes:
-  indelible-data:
-  pgdata:
+# Required secrets — both 32 bytes / 64 hex chars.
+# Lose the wallet key and stored EVM wallets are unrecoverable.
+export INDELIBLE_JWT_SECRET=$(openssl rand -hex 32)
+export INDELIBLE_WALLET_ENCRYPTION_KEY=$(openssl rand -hex 32)
+
+# Pull and run (when the published image is available; tracked as V2-298).
+docker compose up -d
+
+# Or build locally from source:
+docker compose up --build
 ```
+
+The compose file's `volumes:` section uses the correct `/var/lib/indelible` data path inside the container; an SQLite-only single-service variant is documented in the comment block at the bottom of the file.
 
 ## Key features
 
@@ -160,8 +150,8 @@ curl -X POST /api/v2/tokens \
 | `INDELIBLE_ANTD_MANAGED` | Spawn and manage antd as child process | `false` |
 | `INDELIBLE_ANTD_BIN` | Path to antd binary | `antd` (searches PATH) |
 | `INDELIBLE_PORT` | HTTP listen port | `8080` |
-| `INDELIBLE_DB_URL` | Database connection string | `sqlite://data.db` |
-| `INDELIBLE_DATA_DIR` | Directory for temp files | `./data` |
+| `INDELIBLE_DB_URL` | Database connection string | `sqlite:///var/lib/indelible/data.db` |
+| `INDELIBLE_DATA_DIR` | Directory for temp files | `/var/lib/indelible` |
 | `INDELIBLE_WALLET_ENCRYPTION_KEY` | 64-char hex key for wallet encryption | -- |
 | `INDELIBLE_BASE_URL` | External URL for email links | -- |
 | `INDELIBLE_CORS_ORIGINS` | Comma-separated allowed origins | -- |
