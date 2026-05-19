@@ -1,4 +1,4 @@
-.PHONY: build dev test clean frontend backend all security fuzz bench check
+.PHONY: build dev test clean frontend backend all security fuzz bench check ci-local ci-dev1
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 
@@ -74,3 +74,17 @@ check: test
 # Docker build
 docker:
 	docker build -t indelible:$(VERSION) .
+
+# Run the PR-gate CI subset locally (lint, vet, mod verify, swag drift,
+# frontend build/test, sqlite Go tests). Mirrors what we still run in CI on
+# every PR after the May 2026 trim.
+ci-local:
+	bash scripts/ci-local.sh
+
+# Run the heavyweight CI matrix (race detection, postgres tests, docker
+# build/smoke, Playwright E2E) on the dev1 Linux test box via SSH. CI on
+# master picks these up post-merge, but use this before pushing if you've
+# touched the Dockerfile, dialect-sensitive SQL, or anything race-prone.
+# Pass flags with ARGS=... e.g. `make ci-dev1 ARGS="--only e2e"`.
+ci-dev1:
+	bash scripts/ci-dev1.sh $(ARGS)

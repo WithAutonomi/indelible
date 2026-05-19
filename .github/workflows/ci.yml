@@ -9,6 +9,14 @@ on:
 permissions:
   contents: read
 
+# Cancel in-flight PR runs when a new push lands on the same PR — force-push
+# rebases used to leave the prior run racing to completion, burning minutes
+# we can't use. Master pushes never cancel (each commit needs full coverage
+# for the post-merge race/docker/security signals).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   lint:
     name: Lint
@@ -77,9 +85,14 @@ jobs:
           INDELIBLE_TEST_DB_URL: ${{ matrix.db == 'postgres' && 'postgres://postgres:ci@localhost:5432/postgres?sslmode=disable' || '' }}
         run: go test -count=1 -timeout 5m ./...
 
+  # Race detection is master-only — runs after a PR merges to catch races we
+  # can't afford to run on every push. Local pre-push checks (scripts/ci-local.sh
+  # for simple cases, scripts/ci-dev1.sh for the full matrix) are how
+  # branch-level coverage happens.
   race:
     name: Race detection (${{ matrix.db }})
     runs-on: ubuntu-latest
+    if: github.event_name == 'push'
     strategy:
       fail-fast: false
       matrix:
@@ -110,9 +123,14 @@ jobs:
           INDELIBLE_TEST_DB_URL: ${{ matrix.db == 'postgres' && 'postgres://postgres:ci@localhost:5432/postgres?sslmode=disable' || '' }}
         run: go test -race -count=1 -timeout 15m ./...
 
+  # Security scanning is master-only — supply-chain results (govulncheck +
+  # npm audit) don't typically change PR-by-PR, and the scanners hit external
+  # registries which is also a bandwidth/rate-limit hazard if we run them
+  # every push. Use `make security` locally if you need a check before pushing.
   security:
     name: Security Scanning
     runs-on: ubuntu-latest
+    if: github.event_name == 'push'
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -176,9 +194,14 @@ jobs:
   # and also runs the multi-arch (amd64+arm64) build without loading, just to
   # confirm the arm64 cross-compile still succeeds. No image is pushed here —
   # publishing is handled in release.yml + V2-298.
+  # Docker build is master-only — multi-arch buildx + amd64 smoke test is
+  # ~5min and runs against ghcr's cache. We don't need it on every PR; use
+  # `make docker` locally or run scripts/ci-dev1.sh for full coverage before
+  # merging anything that touches Dockerfile/deploy/.
   docker:
     name: Docker (build + smoke test)
     runs-on: ubuntu-latest
+    if: github.event_name == 'push'
     steps:
       - uses: actions/checkout@v4
 

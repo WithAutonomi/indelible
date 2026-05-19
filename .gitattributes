@@ -1,0 +1,8 @@
+# Shell scripts must stay LF — Windows checkouts with core.autocrlf=true
+# would otherwise convert them to CRLF, breaking `#!/usr/bin/env bash`
+# shebangs on Linux (the CR makes the interpreter "bash\r" which doesn't
+# exist). Same applies to anything we expect Linux to execute.
+*.sh text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+Dockerfile text eol=lf
