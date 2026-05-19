@@ -1,4 +1,4 @@
-.PHONY: build dev test clean frontend backend all security fuzz bench check ci-local ci-dev1
+.PHONY: build dev test clean frontend backend all security fuzz bench check ci-local ci-dev1 setup-dev1
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 
@@ -88,3 +88,10 @@ ci-local:
 # Pass flags with ARGS=... e.g. `make ci-dev1 ARGS="--only e2e"`.
 ci-dev1:
 	bash scripts/ci-dev1.sh $(ARGS)
+
+# One-shot bootstrap for a Linux test box that ci-dev1.sh can target.
+# Idempotent — safe to re-run; each phase skips if already in place.
+# Use `make setup-dev1 ARGS="--check"` to report state without installing.
+# Default targets HOST=prodesk CONTAINER=dev1; override via env or ARGS.
+setup-dev1:
+	bash scripts/setup-dev1.sh $(ARGS)
