@@ -460,14 +460,6 @@ func TestHandleCallback_EmailCollisionWhenAutoProvisionOn(t *testing.T) {
 }
 
 func TestHandleCallback_AutoProvisionsNewUserWithDefaultGroup(t *testing.T) {
-	// V2-272 auto-provision passes addedBy=0 to GroupService.AddMember to
-	// signal "no acting user". On master, AddMember writes 0 directly to
-	// group_members.added_by, which is a FK to users(id) and trips a
-	// constraint violation. V2-273 (PR #27) adds nullableAddedBy() to map
-	// 0 → SQL NULL; this test passes automatically once that lands. Drop
-	// the t.Skip then.
-	t.Skip("blocked on V2-273 nullableAddedBy fix (PR #27); see comment")
-
 	db := setupTestDB(t)
 	providerSvc := NewOIDCProviderService(db, testCookieKey)
 	loginSvc := NewOIDCLoginService(db, providerSvc, testCookieKey)
