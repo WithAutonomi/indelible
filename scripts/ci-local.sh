@@ -2,16 +2,18 @@
 # scripts/ci-local.sh — runs the PR-gate subset of CI on your local machine.
 #
 # Mirrors the lightweight jobs we still run on every PR (lint + frontend +
-# test-sqlite + test-postgres optional) so you can catch obvious failures
-# without burning GitHub Actions minutes. The heavyweight jobs (race
-# detection, docker build, security scanning, Playwright E2E) live in
-# scripts/ci-dev1.sh — run that against the Linux test box before pushing
-# anything that risks dialect/race/E2E regressions.
+# test-sqlite + test-postgres optional) plus the security scanning that's
+# now master-only in CI (govulncheck + npm audit; cheap enough that running
+# it locally is worth catching dep CVEs before merge). The truly heavy jobs
+# (race detection, docker build, Playwright E2E) live in scripts/ci-dev1.sh
+# — run that against the Linux test box before pushing anything that risks
+# dialect/race/E2E regressions.
 #
 # Usage:
 #   scripts/ci-local.sh                      # run everything we can locally
 #   scripts/ci-local.sh --no-frontend        # skip web build/tests
 #   scripts/ci-local.sh --no-postgres        # skip postgres leg
+#   scripts/ci-local.sh --no-security        # skip govulncheck + npm audit
 #   SKIP_NPM_INSTALL=1 scripts/ci-local.sh   # reuse existing node_modules
 #
 # Exit codes:
@@ -25,12 +27,14 @@ cd "$(dirname "$0")/.."
 
 SKIP_FRONTEND=false
 SKIP_POSTGRES=false
+SKIP_SECURITY=false
 for arg in "$@"; do
   case $arg in
     --no-frontend) SKIP_FRONTEND=true ;;
     --no-postgres) SKIP_POSTGRES=true ;;
+    --no-security) SKIP_SECURITY=true ;;
     -h|--help)
-      sed -n '2,20p' "$0"
+      sed -n '2,22p' "$0"
       exit 0
       ;;
     *) echo "unknown flag: $arg" >&2; exit 2 ;;
@@ -105,6 +109,29 @@ elif [ -n "${INDELIBLE_TEST_DB_URL:-}" ]; then
   run "go test (postgres)" go test -count=1 -timeout 5m ./...
 else
   skipped+=("postgres tests (set INDELIBLE_TEST_DB_URL=postgres://... or use scripts/ci-dev1.sh)")
+fi
+
+# --- Security scanning --------------------------------------------------------
+# Mirrors the master-only `security` CI job. Cheap to run (~1-2min), and
+# catches dep CVEs / known-vulnerable function calls before they land on master.
+
+if [ "$SKIP_SECURITY" = "true" ]; then
+  skipped+=("security scanning (--no-security)")
+else
+  if have govulncheck; then
+    run "govulncheck" govulncheck ./...
+  else
+    skipped+=("govulncheck (not installed — go install golang.org/x/vuln/cmd/govulncheck@latest)")
+  fi
+
+  # `npm audit` only makes sense if node_modules exists; otherwise the registry
+  # call still works but the diagnostic is less useful. Skip when frontend was
+  # explicitly skipped (no install ran).
+  if [ "$SKIP_FRONTEND" = "true" ]; then
+    skipped+=("npm audit (frontend skipped)")
+  else
+    run "npm audit (web)" bash -c 'cd web && npm audit --audit-level=high'
+  fi
 fi
 
 # --- Summary ------------------------------------------------------------------
