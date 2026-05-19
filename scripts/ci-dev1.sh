@@ -120,6 +120,7 @@ git checkout -B "$BRANCH" "origin/$BRANCH"
 git reset --hard "$SHA"
 
 failed=()
+skipped=()
 have_step() { [[ " $STEPS " == *" $1 "* ]]; }
 
 run() {
@@ -128,9 +129,11 @@ run() {
   echo "=== $name ==="
   if "$@"; then
     echo "[ok] $name"
+    return 0
   else
     echo "[fail] $name"
     failed+=("$name")
+    return 1
   fi
 }
 
@@ -187,10 +190,13 @@ if have_step race; then
   fi
 fi
 
-# Docker build + smoke
+# Docker build + smoke. Build uses the `docker buildx` plugin (auto-selected
+# by Docker 23+ if the plugin is present) — required because the Dockerfile
+# references $BUILDPLATFORM, which is buildx-only and silently expands to ""
+# under the legacy builder.
 if have_step docker; then
-  run "Docker build" docker build -t indelible:dev1-ci .
-  run "Docker smoke (container starts + /health 200 + non-root)" bash -c '
+  if run "Docker build" docker build -t indelible:dev1-ci .; then
+    run "Docker smoke (container starts + /health 200 + non-root)" bash -c '
     docker rm -f '"$SMOKE_CONTAINER"' >/dev/null 2>&1 || true
     JWT_SECRET=$(openssl rand -hex 32)
     WALLET_KEY=$(openssl rand -hex 32)
@@ -211,6 +217,9 @@ if have_step docker; then
     uid=$(docker exec '"$SMOKE_CONTAINER"' id -u)
     [ "$uid" = "65532" ] || { echo "expected uid 65532, got $uid"; exit 1; }
   '
+  else
+    skipped+=("Docker smoke (build failed)")
+  fi
 fi
 
 # Browser smoke suite (smoke/) — same as CI's Smoke job. Optional on dev1
@@ -250,6 +259,10 @@ fi
 
 echo ""
 echo "======================="
+if [ ${#skipped[@]} -gt 0 ]; then
+  echo "Skipped:"
+  for s in "${skipped[@]}"; do echo "  - $s"; done
+fi
 if [ ${#failed[@]} -eq 0 ]; then
   echo "[ok] All requested heavy checks passed on dev1."
   exit 0
