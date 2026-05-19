@@ -30,7 +30,7 @@
 set -uo pipefail
 
 DEV1_HOST="${DEV1_HOST:-dev1}"
-DEV1_PATH="${DEV1_PATH:-~/work/indelible}"
+DEV1_PATH="${DEV1_PATH:-~/dev/indelible}"
 
 # Steps: postgres (test only), race (sqlite + postgres), docker (build +
 # smoke), e2e (playwright). Default = all.
@@ -100,6 +100,12 @@ echo ""
 ssh "$DEV1_HOST" bash -s -- "$DEV1_PATH" "$BRANCH" "$SHA" "$STEPS" <<'REMOTE'
 set -uo pipefail
 DEV1_PATH=$1; BRANCH=$2; SHA=$3; STEPS=$4
+
+# Non-interactive SSH skips ~/.profile and ~/.bashrc by default, so Go (and
+# anything else dropped in ~/.local/go/bin or ~/go/bin) isn't on PATH yet.
+# Source .profile if it exists, then defensively add the usual locations.
+[ -f "$HOME/.profile" ] && . "$HOME/.profile"
+export PATH="$HOME/.local/go/bin:$HOME/go/bin:$PATH"
 
 cd "$(eval echo "$DEV1_PATH")" || {
   echo "Cannot cd to $DEV1_PATH — does the repo exist there?" >&2
