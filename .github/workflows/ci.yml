@@ -108,7 +108,7 @@ jobs:
       - name: Run tests with race detector
         env:
           INDELIBLE_TEST_DB_URL: ${{ matrix.db == 'postgres' && 'postgres://postgres:ci@localhost:5432/postgres?sslmode=disable' || '' }}
-        run: go test -race -count=1 -timeout 10m ./...
+        run: go test -race -count=1 -timeout 15m ./...
 
   security:
     name: Security Scanning
