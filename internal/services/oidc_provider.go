@@ -23,8 +23,14 @@ type OIDCProvider struct {
 	EncryptedSecret string
 	Scopes          string
 	IsEnabled       bool
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	// DefaultGroupID is the group new users join when auto-provisioned via this
+	// provider. NULL = no automatic group assignment.
+	DefaultGroupID sql.NullInt64
+	// AutoProvision controls whether an unknown (sub, email) pair creates a new
+	// local user on first login (true) or is rejected with no_account (false).
+	AutoProvision bool
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 // OIDCProviderService handles OIDC provider configuration.
@@ -64,8 +70,8 @@ func (s *OIDCProviderService) Create(name, displayName, issuerURL, clientID, cli
 func (s *OIDCProviderService) GetByID(id int64) (*OIDCProvider, error) {
 	p := &OIDCProvider{}
 	err := s.db.QueryRow(
-		`SELECT id, name, display_name, issuer_url, client_id, client_secret, scopes, is_enabled, created_at, updated_at FROM oidc_providers WHERE id = ?`, id,
-	).Scan(&p.ID, &p.Name, &p.DisplayName, &p.IssuerURL, &p.ClientID, &p.EncryptedSecret, &p.Scopes, &p.IsEnabled, &p.CreatedAt, &p.UpdatedAt)
+		`SELECT id, name, display_name, issuer_url, client_id, client_secret, scopes, is_enabled, default_group_id, auto_provision, created_at, updated_at FROM oidc_providers WHERE id = ?`, id,
+	).Scan(&p.ID, &p.Name, &p.DisplayName, &p.IssuerURL, &p.ClientID, &p.EncryptedSecret, &p.Scopes, &p.IsEnabled, &p.DefaultGroupID, &p.AutoProvision, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrOIDCProviderNotFound
@@ -78,7 +84,7 @@ func (s *OIDCProviderService) GetByID(id int64) (*OIDCProvider, error) {
 // List returns all OIDC providers.
 func (s *OIDCProviderService) List() ([]*OIDCProvider, error) {
 	rows, err := s.db.Query(
-		`SELECT id, name, display_name, issuer_url, client_id, client_secret, scopes, is_enabled, created_at, updated_at FROM oidc_providers ORDER BY name`,
+		`SELECT id, name, display_name, issuer_url, client_id, client_secret, scopes, is_enabled, default_group_id, auto_provision, created_at, updated_at FROM oidc_providers ORDER BY name`,
 	)
 	if err != nil {
 		return nil, err
@@ -88,7 +94,7 @@ func (s *OIDCProviderService) List() ([]*OIDCProvider, error) {
 	var providers []*OIDCProvider
 	for rows.Next() {
 		p := &OIDCProvider{}
-		if err := rows.Scan(&p.ID, &p.Name, &p.DisplayName, &p.IssuerURL, &p.ClientID, &p.EncryptedSecret, &p.Scopes, &p.IsEnabled, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.DisplayName, &p.IssuerURL, &p.ClientID, &p.EncryptedSecret, &p.Scopes, &p.IsEnabled, &p.DefaultGroupID, &p.AutoProvision, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
 		providers = append(providers, p)
@@ -120,6 +126,21 @@ func (s *OIDCProviderService) Update(id int64, name, displayName, issuerURL, cli
 		}
 	}
 	return s.GetByID(id)
+}
+
+// SetAutoProvision updates the auto_provision + default_group_id columns
+// independently of the main Update method so admin UI can toggle them without
+// re-supplying every other field. Pass defaultGroupID = 0 to clear it.
+func (s *OIDCProviderService) SetAutoProvision(id int64, autoProvision bool, defaultGroupID int64) error {
+	var gid sql.NullInt64
+	if defaultGroupID > 0 {
+		gid = sql.NullInt64{Int64: defaultGroupID, Valid: true}
+	}
+	_, err := s.db.Exec(
+		`UPDATE oidc_providers SET auto_provision = ?, default_group_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		autoProvision, gid, id,
+	)
+	return err
 }
 
 // Delete removes an OIDC provider and its linked identities.
