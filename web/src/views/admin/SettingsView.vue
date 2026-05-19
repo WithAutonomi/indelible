@@ -20,6 +20,8 @@ const loading = ref(true)
 
 // OIDC state
 const oidcProviders = ref<any[]>([])
+const adminGroups = ref<{ id: number; name: string }[]>([])
+const savingProviderID = ref<number | null>(null)
 
 // --- Per-card dirty tracking ---
 // We store the "saved" snapshot and the "draft" for each card.
@@ -248,8 +250,33 @@ async function fetchOIDC() {
   }
 }
 
+async function fetchGroups() {
+  try {
+    const res = await api.get('/api/v2/admin/groups')
+    adminGroups.value = (res.data.groups || []).map((g: any) => ({ id: g.id, name: g.name }))
+  } catch {
+    // ignore — auto-provision dropdown will fall back to "None" only.
+  }
+}
+
+async function saveProviderAutoProvision(p: any) {
+  savingProviderID.value = p.id
+  try {
+    await api.put(`/api/v2/admin/oidc/providers/${p.id}/auto-provision`, {
+      auto_provision: !!p.auto_provision,
+      default_group_id: p.default_group_id || 0,
+    })
+    toast.add({ severity: 'success', summary: 'Saved', detail: `${p.display_name} provisioning updated`, life: 3000 })
+  } catch (e: any) {
+    toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to save', life: 5000 })
+    await fetchOIDC() // re-sync to backend truth
+  } finally {
+    savingProviderID.value = null
+  }
+}
+
 onMounted(async () => {
-  await Promise.all([fetchSettings(), fetchOIDC()])
+  await Promise.all([fetchSettings(), fetchOIDC(), fetchGroups()])
 })
 </script>
 
@@ -443,10 +470,54 @@ onMounted(async () => {
         <TabPanel value="3">
           <div v-if="oidcProviders.length === 0" class="py-6 text-sm text-surface-400">No OIDC providers configured.</div>
           <div v-else class="divide-y divide-surface-100">
-            <div v-for="p in oidcProviders" :key="p.id" class="flex items-center justify-between py-4">
-              <div>
-                <p class="text-sm font-medium">{{ p.display_name }}</p>
-                <p class="text-xs text-surface-400">{{ p.issuer_url }} &middot; {{ p.is_enabled ? 'Enabled' : 'Disabled' }}</p>
+            <div v-for="p in oidcProviders" :key="p.id" class="py-5">
+              <div class="flex items-center justify-between mb-4">
+                <div>
+                  <p class="text-sm font-medium">{{ p.display_name }}</p>
+                  <p class="text-xs text-surface-400">{{ p.issuer_url }} &middot; {{ p.is_enabled ? 'Enabled' : 'Disabled' }}</p>
+                </div>
+              </div>
+
+              <div class="grid grid-cols-3 gap-6 py-3 pl-4">
+                <div>
+                  <label class="text-sm font-medium">Auto-provision</label>
+                  <p class="text-xs text-surface-400 mt-1">
+                    When on, an unknown sub or email pair signs in by creating a new local user.
+                    When off, the same login is rejected with <code>no_account</code>.
+                    <span class="block mt-1 text-orange-500">
+                      Email-collision is always blocked — never auto-link by email alone.
+                    </span>
+                  </p>
+                </div>
+                <div class="col-span-2 flex items-center gap-3">
+                  <ToggleSwitch v-model="p.auto_provision" />
+                  <span class="text-sm text-surface-500">{{ p.auto_provision ? 'Enabled' : 'Disabled' }}</span>
+                </div>
+              </div>
+
+              <div class="grid grid-cols-3 gap-6 py-3 pl-4">
+                <div>
+                  <label class="text-sm font-medium">Default group</label>
+                  <p class="text-xs text-surface-400 mt-1">Auto-provisioned users join this group. Leave at <em>None</em> for no group assignment.</p>
+                </div>
+                <div class="col-span-2">
+                  <Select
+                    v-model="p.default_group_id"
+                    :options="[{ id: 0, name: 'None' }, ...adminGroups]"
+                    optionLabel="name"
+                    optionValue="id"
+                    class="w-full max-w-md"
+                  />
+                </div>
+              </div>
+
+              <div class="flex justify-end mt-3">
+                <Button
+                  :label="savingProviderID === p.id ? 'Saving...' : 'Save provisioning'"
+                  :loading="savingProviderID === p.id"
+                  size="small"
+                  @click="saveProviderAutoProvision(p)"
+                />
               </div>
             </div>
           </div>

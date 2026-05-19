@@ -273,10 +273,14 @@ definitions:
     type: object
   internal_handlers.oidcProviderResponse:
     properties:
+      auto_provision:
+        type: boolean
       client_id:
         type: string
       created_at:
         type: string
+      default_group_id:
+        type: integer
       display_name:
         type: string
       id:

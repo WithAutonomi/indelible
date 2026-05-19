@@ -5223,11 +5223,17 @@ const docTemplate = `{
         "internal_handlers.oidcProviderResponse": {
             "type": "object",
             "properties": {
+                "auto_provision": {
+                    "type": "boolean"
+                },
                 "client_id": {
                     "type": "string"
                 },
                 "created_at": {
                     "type": "string"
+                },
+                "default_group_id": {
+                    "type": "integer"
                 },
                 "display_name": {
                     "type": "string"
