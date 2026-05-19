@@ -1,4 +1,4 @@
-.PHONY: build dev test clean frontend backend all security fuzz bench check
+.PHONY: build dev test clean frontend backend all security fuzz bench check ci-local ci-dev1 setup-dev1
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 
@@ -33,7 +33,7 @@ test:
 
 # Clean build artifacts
 clean:
-	rm -rf bin/ web/dist/ web/node_modules/
+	rm -rf bin/ web/dist/ web/node_modules/ smoke/node_modules/ smoke/playwright-report/ smoke/test-results/ e2e/node_modules/ e2e/playwright-report/ e2e/test-results/
 
 # Run database migrations only (useful for dev)
 migrate:
@@ -74,3 +74,24 @@ check: test
 # Docker build
 docker:
 	docker build -t indelible:$(VERSION) .
+
+# Run the PR-gate CI subset locally (lint, vet, mod verify, swag drift,
+# frontend build/test, sqlite Go tests). Mirrors what we still run in CI on
+# every PR after the May 2026 trim.
+ci-local:
+	bash scripts/ci-local.sh
+
+# Run the heavyweight CI matrix (race detection, postgres tests, docker
+# build/smoke, Playwright E2E) on the dev1 Linux test box via SSH. CI on
+# master picks these up post-merge, but use this before pushing if you've
+# touched the Dockerfile, dialect-sensitive SQL, or anything race-prone.
+# Pass flags with ARGS=... e.g. `make ci-dev1 ARGS="--only e2e"`.
+ci-dev1:
+	bash scripts/ci-dev1.sh $(ARGS)
+
+# One-shot bootstrap for a Linux test box that ci-dev1.sh can target.
+# Idempotent — safe to re-run; each phase skips if already in place.
+# Use `make setup-dev1 ARGS="--check"` to report state without installing.
+# Default targets HOST=prodesk CONTAINER=dev1; override via env or ARGS.
+setup-dev1:
+	bash scripts/setup-dev1.sh $(ARGS)
