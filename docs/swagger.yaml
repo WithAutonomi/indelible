@@ -32,6 +32,13 @@ definitions:
           $ref: '#/definitions/internal_handlers.adminUserResponse'
         type: array
     type: object
+  internal_handlers.adminOIDCAutoProvisionRequest:
+    properties:
+      auto_provision:
+        type: boolean
+      default_group_id:
+        type: integer
+    type: object
   internal_handlers.adminUserResponse:
     properties:
       created_at:
@@ -251,6 +258,19 @@ definitions:
       webhook_url:
         type: string
     type: object
+  internal_handlers.oidcIdentityResponse:
+    properties:
+      created_at:
+        type: string
+      id:
+        type: integer
+      provider_id:
+        type: integer
+      provider_name:
+        type: string
+      subject:
+        type: string
+    type: object
   internal_handlers.oidcProviderResponse:
     properties:
       client_id:
@@ -270,6 +290,15 @@ definitions:
       scopes:
         type: string
       updated_at:
+        type: string
+    type: object
+  internal_handlers.publicOIDCProvider:
+    properties:
+      display_name:
+        type: string
+      id:
+        type: integer
+      name:
         type: string
     type: object
   internal_handlers.quotaResponse:
@@ -1136,6 +1165,44 @@ paths:
       security:
       - BearerAuth: []
       summary: Update an OIDC provider
+      tags:
+      - 'Admin: OIDC'
+  /admin/oidc/providers/{id}/auto-provision:
+    put:
+      consumes:
+      - application/json
+      description: Configure whether unknown sub/email pairs create new local users
+        (off by default), and which group new users join
+      parameters:
+      - description: Provider ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: auto_provision + default_group_id (0 to clear)
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handlers.adminOIDCAutoProvisionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: boolean
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Toggle OIDC auto-provisioning
       tags:
       - 'Admin: OIDC'
   /admin/quotas:
@@ -2365,6 +2432,136 @@ paths:
       summary: Log in with email and password
       tags:
       - Auth
+  /auth/oidc/authorize/{providerId}:
+    get:
+      description: Generates state/nonce/PKCE, sets an encrypted cookie, and 302's
+        to the IdP authorize endpoint
+      parameters:
+      - description: OIDC provider ID
+        in: path
+        name: providerId
+        required: true
+        type: integer
+      responses:
+        "302":
+          description: Found
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Start OIDC login flow
+      tags:
+      - Auth
+  /auth/oidc/callback:
+    get:
+      description: Validates the IdP response, resolves or provisions the user, issues
+        a session JWT, and redirects to /
+      parameters:
+      - description: OIDC authorization code
+        in: query
+        name: code
+        required: true
+        type: string
+      - description: Opaque state token (matches encrypted cookie)
+        in: query
+        name: state
+        required: true
+        type: string
+      responses:
+        "302":
+          description: Found
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Complete OIDC login flow
+      tags:
+      - Auth
+  /auth/oidc/identities/{identityId}:
+    delete:
+      description: Remove an OIDC login method from the current user
+      parameters:
+      - description: OIDC identity ID
+        in: path
+        name: identityId
+        required: true
+        type: integer
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Unlink an OIDC identity
+      tags:
+      - Auth
+  /auth/oidc/link/{providerId}:
+    post:
+      description: Authenticated user kicks off an OIDC flow that adds a new identity
+        to their account on callback
+      parameters:
+      - description: OIDC provider ID
+        in: path
+        name: providerId
+        required: true
+        type: integer
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Start OIDC linking flow
+      tags:
+      - Auth
+  /auth/oidc/providers:
+    get:
+      description: Returns enabled OIDC providers for the login page (no secrets,
+        no client_id)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              items:
+                $ref: '#/definitions/internal_handlers.publicOIDCProvider'
+              type: array
+            type: object
+      summary: List OIDC providers
+      tags:
+      - Auth
   /auth/register:
     post:
       consumes:
@@ -2731,6 +2928,26 @@ paths:
       summary: Update current user profile
       tags:
       - Profile
+  /me/oidc/identities:
+    get:
+      description: Returns the linked OIDC identities for the current user (profile
+        connected accounts)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              items:
+                $ref: '#/definitions/internal_handlers.oidcIdentityResponse'
+              type: array
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List my OIDC identities
+      tags:
+      - Auth
   /me/password:
     put:
       consumes:
