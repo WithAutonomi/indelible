@@ -1022,6 +1022,64 @@ const docTemplate = `{
                 }
             }
         },
+        "/admin/oidc/providers/{id}/extra-params": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Replace the IdP-specific params map appended to the authorize URL. Used to set Google Workspace hd=, Microsoft prompt=, AAD domain_hint, etc. Send an empty object to clear.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin: OIDC"
+                ],
+                "summary": "Set OIDC extra authorize-URL params",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Provider ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "extra_authorize_params map (empty {} to clear)",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handlers.adminOIDCExtraAuthorizeParamsRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "boolean"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/admin/quotas": {
             "get": {
                 "security": [
@@ -4865,6 +4923,17 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_handlers.adminOIDCExtraAuthorizeParamsRequest": {
+            "type": "object",
+            "properties": {
+                "extra_authorize_params": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "internal_handlers.adminUserResponse": {
             "type": "object",
             "properties": {
@@ -5237,6 +5306,12 @@ const docTemplate = `{
                 },
                 "display_name": {
                     "type": "string"
+                },
+                "extra_authorize_params": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
                 },
                 "id": {
                     "type": "integer"

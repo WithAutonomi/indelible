@@ -22,6 +22,22 @@ const loading = ref(true)
 const oidcProviders = ref<any[]>([])
 const adminGroups = ref<{ id: number; name: string }[]>([])
 const savingProviderID = ref<number | null>(null)
+const savingExtraParamsID = ref<number | null>(null)
+
+// Extra-authorize-params editor uses an array of {key, value} rows per provider
+// for ergonomic add/remove; we convert back to the API's object shape on save.
+function rowsFromExtraParams(obj: Record<string, string> | null | undefined): { key: string; value: string }[] {
+  if (!obj) return []
+  return Object.entries(obj).map(([key, value]) => ({ key, value }))
+}
+function rowsToExtraParams(rows: { key: string; value: string }[]): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const row of rows) {
+    const k = row.key.trim()
+    if (k) out[k] = row.value
+  }
+  return out
+}
 
 // --- Per-card dirty tracking ---
 // We store the "saved" snapshot and the "draft" for each card.
@@ -244,9 +260,29 @@ async function importSettings(e: Event) {
 async function fetchOIDC() {
   try {
     const res = await api.get('/api/v2/admin/oidc/providers')
-    oidcProviders.value = res.data.providers || []
+    const providers = res.data.providers || []
+    // Attach the editable rows view of extra_authorize_params for the inline editor.
+    providers.forEach((p: any) => {
+      p._extraParamsRows = rowsFromExtraParams(p.extra_authorize_params)
+    })
+    oidcProviders.value = providers
   } catch {
     // ignore
+  }
+}
+
+async function saveExtraParams(p: any) {
+  savingExtraParamsID.value = p.id
+  try {
+    await api.put(`/api/v2/admin/oidc/providers/${p.id}/extra-params`, {
+      extra_authorize_params: rowsToExtraParams(p._extraParamsRows),
+    })
+    toast.add({ severity: 'success', summary: 'Saved', detail: `${p.display_name} params updated`, life: 3000 })
+  } catch (e: any) {
+    toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to save', life: 5000 })
+    await fetchOIDC()
+  } finally {
+    savingExtraParamsID.value = null
   }
 }
 
@@ -517,6 +553,53 @@ onMounted(async () => {
                   :loading="savingProviderID === p.id"
                   size="small"
                   @click="saveProviderAutoProvision(p)"
+                />
+              </div>
+
+              <div class="grid grid-cols-3 gap-6 py-3 pl-4 border-t border-surface-100 mt-3">
+                <div>
+                  <label class="text-sm font-medium">Extra authorize params</label>
+                  <p class="text-xs text-surface-400 mt-1">
+                    Extra query parameters appended to the IdP authorize URL. Most providers need none.
+                    <span class="block mt-1">
+                      <strong>Google Workspace:</strong> set <code>hd</code> = <code>your-domain.com</code> to restrict signin to your tenant
+                      (without this, an "External" OAuth client accepts any personal <code>@gmail.com</code> account).
+                    </span>
+                    <span class="block mt-1"><strong>Microsoft / AAD:</strong> e.g. <code>prompt</code> = <code>select_account</code>, <code>domain_hint</code> = <code>your-domain.com</code>.</span>
+                  </p>
+                </div>
+                <div class="col-span-2 space-y-2">
+                  <div v-for="(row, i) in p._extraParamsRows" :key="i" class="flex gap-2 items-center">
+                    <InputText v-model="row.key" placeholder="key (e.g. hd)" class="flex-1 max-w-xs" />
+                    <InputText v-model="row.value" placeholder="value (e.g. company.com)" class="flex-1 max-w-xs" />
+                    <Button
+                      icon="pi pi-times"
+                      severity="secondary"
+                      outlined
+                      size="small"
+                      aria-label="Remove param"
+                      @click="p._extraParamsRows.splice(i, 1)"
+                    />
+                  </div>
+                  <Button
+                    label="Add param"
+                    icon="pi pi-plus"
+                    severity="secondary"
+                    outlined
+                    size="small"
+                    @click="p._extraParamsRows.push({ key: '', value: '' })"
+                  />
+                </div>
+              </div>
+
+              <div class="flex justify-end mt-3">
+                <Button
+                  :label="savingExtraParamsID === p.id ? 'Saving...' : 'Save params'"
+                  :loading="savingExtraParamsID === p.id"
+                  size="small"
+                  severity="secondary"
+                  outlined
+                  @click="saveExtraParams(p)"
                 />
               </div>
             </div>

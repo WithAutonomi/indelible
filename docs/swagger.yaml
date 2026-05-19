@@ -39,6 +39,13 @@ definitions:
       default_group_id:
         type: integer
     type: object
+  internal_handlers.adminOIDCExtraAuthorizeParamsRequest:
+    properties:
+      extra_authorize_params:
+        additionalProperties:
+          type: string
+        type: object
+    type: object
   internal_handlers.adminUserResponse:
     properties:
       created_at:
@@ -283,6 +290,10 @@ definitions:
         type: integer
       display_name:
         type: string
+      extra_authorize_params:
+        additionalProperties:
+          type: string
+        type: object
       id:
         type: integer
       is_enabled:
@@ -1207,6 +1218,45 @@ paths:
       security:
       - BearerAuth: []
       summary: Toggle OIDC auto-provisioning
+      tags:
+      - 'Admin: OIDC'
+  /admin/oidc/providers/{id}/extra-params:
+    put:
+      consumes:
+      - application/json
+      description: Replace the IdP-specific params map appended to the authorize URL.
+        Used to set Google Workspace hd=, Microsoft prompt=, AAD domain_hint, etc.
+        Send an empty object to clear.
+      parameters:
+      - description: Provider ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: extra_authorize_params map (empty {} to clear)
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handlers.adminOIDCExtraAuthorizeParamsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: boolean
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Set OIDC extra authorize-URL params
       tags:
       - 'Admin: OIDC'
   /admin/quotas:

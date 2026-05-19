@@ -204,6 +204,7 @@ func NewRouter(cfg *config.Config, db *database.DB, antdInfo AntdInfoProvider) h
 			r.Put("/admin/oidc/providers/{id}", AdminUpdateOIDCProvider(db, cfg))
 			r.Delete("/admin/oidc/providers/{id}", AdminDeleteOIDCProvider(db, cfg))
 			r.Put("/admin/oidc/providers/{id}/auto-provision", AdminSetOIDCAutoProvision(db, cfg))
+			r.Put("/admin/oidc/providers/{id}/extra-params", AdminSetOIDCExtraAuthorizeParams(db, cfg))
 
 			// Analytics
 			r.Get("/admin/analytics/uploads", AdminUploadAnalytics(db))
