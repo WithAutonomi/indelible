@@ -137,10 +137,15 @@ SMOKE_CONTAINER=indelible-dev1-smoke
 
 start_pg() {
   docker rm -f "$PG_CONTAINER" >/dev/null 2>&1 || true
-  docker run -d --name "$PG_CONTAINER" -p 5433:5432 \
-    -e POSTGRES_PASSWORD=ci postgres:16-alpine >/dev/null
+  # --network=host avoids Docker's userland-proxy/iptables NAT setup, which
+  # fails to write to /proc/sys/net/ipv4/ip_unprivileged_port_start in
+  # idmapped (unprivileged) Incus containers. Postgres listens on 5433
+  # directly on the dev1 host (not 5432, to dodge any system pg install).
+  docker run -d --name "$PG_CONTAINER" --network=host \
+    -e POSTGRES_PASSWORD=ci postgres:16-alpine \
+    postgres -p 5433 >/dev/null
   for _ in $(seq 1 30); do
-    if docker exec "$PG_CONTAINER" pg_isready -U postgres >/dev/null 2>&1; then
+    if docker exec "$PG_CONTAINER" pg_isready -p 5433 -U postgres >/dev/null 2>&1; then
       return 0
     fi
     sleep 1
@@ -187,7 +192,10 @@ if have_step docker; then
     docker rm -f '"$SMOKE_CONTAINER"' >/dev/null 2>&1 || true
     JWT_SECRET=$(openssl rand -hex 32)
     WALLET_KEY=$(openssl rand -hex 32)
-    docker run --rm -d --name '"$SMOKE_CONTAINER"' -p 18080:8080 \
+    # --network=host (same reason as postgres). Default port 8080 — the
+    # Dockerfile HEALTHCHECK is hardcoded to :8080 so changing it would just
+    # mean a separate poll loop here. Assumes nothing else on dev1 is on 8080.
+    docker run --rm -d --name '"$SMOKE_CONTAINER"' --network=host \
       -e INDELIBLE_JWT_SECRET="$JWT_SECRET" \
       -e INDELIBLE_WALLET_ENCRYPTION_KEY="$WALLET_KEY" \
       indelible:dev1-ci >/dev/null
@@ -197,7 +205,7 @@ if have_step docker; then
       if [ "$status" = "unhealthy" ]; then echo "unhealthy"; exit 1; fi
       sleep 2
     done
-    curl -fsS http://localhost:18080/health >/dev/null
+    curl -fsS http://localhost:8080/health >/dev/null
     uid=$(docker exec '"$SMOKE_CONTAINER"' id -u)
     [ "$uid" = "65532" ] || { echo "expected uid 65532, got $uid"; exit 1; }
   '
