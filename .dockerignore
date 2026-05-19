@@ -1,0 +1,56 @@
+# Anything not needed by `go build` or `npm run build` should be excluded so
+# `docker build` doesn't ship huge contexts (and so the cache stays warm).
+
+# VCS / tooling
+.git
+.github
+.gitignore
+.gitattributes
+.editorconfig
+.vscode
+.idea
+.bin
+.claude
+
+# Build outputs
+web/node_modules
+web/dist
+web/.vite
+dist/
+build/
+*.exe
+indelible
+indelible-*
+
+# Test / coverage artifacts
+*.test
+*.out
+coverage.*
+testdata/local-*
+
+# Local state that should never enter an image
+*.db
+*.sqlite
+*.sqlite-journal
+data/
+data.db
+.env
+.env.*
+indelible.toml.local
+*.log
+
+# Editor + OS junk
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# Docs and planning content — image doesn't need them
+*.md
+!web/README.md
+LICENSE*
+CHANGELOG*
+
+# Re-include things we DO need despite the broad excludes above
+!Dockerfile
+!.dockerignore

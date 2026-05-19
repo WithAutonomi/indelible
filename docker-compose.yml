@@ -1,0 +1,115 @@
+# Canonical Indelible stack: Postgres + antd + indelible.
+#
+# Quick start:
+#
+#   1. Generate the two required secrets:
+#        export INDELIBLE_JWT_SECRET=$(openssl rand -hex 32)
+#        export INDELIBLE_WALLET_ENCRYPTION_KEY=$(openssl rand -hex 32)
+#      (Both must be 32 bytes / 64 hex chars. Lose the wallet key and every
+#      stored EVM wallet is permanently unrecoverable.)
+#
+#   2. Start the stack:
+#        docker compose up -d
+#
+#   3. Register the first user (auto-promoted to admin):
+#        curl -X POST http://localhost:8080/api/v2/auth/register \
+#          -H 'Content-Type: application/json' \
+#          -d '{"email":"you@example.com","password":"...","first_name":"You","last_name":"Admin"}'
+#
+# Building locally (no published image yet, or you want unreleased changes):
+#   docker compose up --build
+#
+# A simpler SQLite-only variant (no Postgres service) is in the comment block
+# at the bottom of this file.
+
+services:
+  indelible:
+    image: ghcr.io/withautonomi/indelible:latest
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - indelible-data:/var/lib/indelible
+    environment:
+      # --- required ---
+      # Sign and verify JWT session tokens. Rotate to force-logout every user.
+      INDELIBLE_JWT_SECRET: ${INDELIBLE_JWT_SECRET:?must be set, e.g. via `openssl rand -hex 32`}
+      # AES-256-GCM key for at-rest encryption of stored EVM wallet private keys.
+      # Lose this and stored wallets are unrecoverable. Back it up out-of-band.
+      INDELIBLE_WALLET_ENCRYPTION_KEY: ${INDELIBLE_WALLET_ENCRYPTION_KEY:?must be set, 64-char hex}
+      # --- networking ---
+      INDELIBLE_DB_URL: postgres://indelible:indelible@db:5432/indelible?sslmode=disable
+      INDELIBLE_ANTD_URL: http://antd:8082
+      # --- optional ---
+      # INDELIBLE_CORS_ORIGINS: https://files.acme.com
+      # INDELIBLE_TRUSTED_PROXIES: 10.0.0.0/8,172.16.0.0/12
+      # INDELIBLE_SMTP_HOST: smtp.acme.com
+      # INDELIBLE_SMTP_FROM: no-reply@acme.com
+    depends_on:
+      db:
+        condition: service_healthy
+      antd:
+        condition: service_started
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+  antd:
+    image: ghcr.io/withautonomi/antd:latest
+    build: ./deploy/antd
+    ports:
+      - "8082:8082"
+    volumes:
+      - antd-data:/var/lib/antd
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: indelible
+      POSTGRES_USER: indelible
+      POSTGRES_PASSWORD: indelible
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U indelible -d indelible"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  indelible-data:
+  antd-data:
+  pg-data:
+
+# --- SQLite-only variant (smaller, single-host deployments) ----------------
+#
+# Drop the `db` service and replace `indelible`'s INDELIBLE_DB_URL with a
+# file path inside the data volume:
+#
+#   services:
+#     indelible:
+#       image: ghcr.io/withautonomi/indelible:latest
+#       ports:
+#         - "8080:8080"
+#       volumes:
+#         - indelible-data:/var/lib/indelible
+#       environment:
+#         INDELIBLE_JWT_SECRET: ${INDELIBLE_JWT_SECRET}
+#         INDELIBLE_WALLET_ENCRYPTION_KEY: ${INDELIBLE_WALLET_ENCRYPTION_KEY}
+#         INDELIBLE_DB_URL: sqlite:///var/lib/indelible/data.db
+#         INDELIBLE_ANTD_URL: http://antd:8082
+#       depends_on:
+#         - antd
+#     antd:
+#       image: ghcr.io/withautonomi/antd:latest
+#       ports: ["8082:8082"]
+#       volumes: ["antd-data:/var/lib/antd"]
+#   volumes:
+#     indelible-data:
+#     antd-data:

@@ -171,6 +171,86 @@ jobs:
           path: web/dist/
           retention-days: 1
 
+  # Validates the Dockerfile + .dockerignore + buildx cross-compile path on
+  # every PR. Builds amd64 locally for a smoke test (start → /health → uid 65532)
+  # and also runs the multi-arch (amd64+arm64) build without loading, just to
+  # confirm the arm64 cross-compile still succeeds. No image is pushed here —
+  # publishing is handled in release.yml + V2-298.
+  docker:
+    name: Docker (build + smoke test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build indelible image (amd64, load for smoke test)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          push: false
+          tags: indelible:ci
+          platforms: linux/amd64
+          build-args: |
+            VERSION=ci
+          cache-from: type=gha,scope=docker-ci
+          cache-to: type=gha,scope=docker-ci,mode=max
+
+      - name: Smoke test — container starts, /health responds, runs as non-root
+        run: |
+          set -euo pipefail
+          JWT_SECRET=$(openssl rand -hex 32)
+          WALLET_KEY=$(openssl rand -hex 32)
+          docker run --rm -d \
+            --name indelible-smoke \
+            -p 8080:8080 \
+            -e INDELIBLE_JWT_SECRET="$JWT_SECRET" \
+            -e INDELIBLE_WALLET_ENCRYPTION_KEY="$WALLET_KEY" \
+            indelible:ci
+          trap 'docker logs indelible-smoke || true; docker stop indelible-smoke || true' EXIT
+          for i in $(seq 1 30); do
+            status=$(docker inspect -f '{{.State.Health.Status}}' indelible-smoke 2>/dev/null || echo starting)
+            if [ "$status" = "healthy" ]; then
+              echo "container healthy after ${i} attempts"
+              break
+            fi
+            if [ "$status" = "unhealthy" ]; then
+              echo "container went unhealthy" >&2; exit 1
+            fi
+            sleep 2
+          done
+          curl -fsS http://localhost:8080/health
+          uid=$(docker exec indelible-smoke id -u)
+          if [ "$uid" != "65532" ]; then
+            echo "expected uid 65532 (non-root indelible), got $uid" >&2
+            exit 1
+          fi
+          echo "non-root verified (uid=$uid)"
+
+      - name: Verify multi-arch build (linux/amd64 + linux/arm64, no load/push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: indelible:multi
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            VERSION=ci-multiarch
+          cache-from: type=gha,scope=docker-ci
+
+      - name: Verify antd companion image builds (amd64 only until V2-275)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./deploy/antd
+          push: false
+          tags: antd:ci
+          platforms: linux/amd64
+          cache-from: type=gha,scope=docker-ci-antd
+          cache-to: type=gha,scope=docker-ci-antd,mode=max
+
   e2e:
     name: E2E
     runs-on: ubuntu-latest
