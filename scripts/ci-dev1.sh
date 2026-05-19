@@ -32,8 +32,10 @@ set -uo pipefail
 DEV1_HOST="${DEV1_HOST:-dev1}"
 DEV1_PATH="${DEV1_PATH:-~/dev/indelible}"
 
-# Steps: postgres (test only), race (sqlite + postgres), docker (build +
-# smoke), e2e (playwright). Default = all.
+# Steps: postgres (Go tests vs postgres), race (sqlite ± postgres), docker
+# (image build + container smoke), e2e (full upload-journey suite), smoke
+# (browser smoke from smoke/ — opt-in; CI already runs this on every PR).
+# Default = the heavy bits CI doesn't cover anymore + real e2e.
 STEPS="postgres race docker e2e"
 MODE="all"
 
@@ -211,10 +213,30 @@ if have_step docker; then
   '
 fi
 
-# Playwright E2E (sqlite in-memory)
-if have_step e2e; then
+# Browser smoke suite (smoke/) — same as CI's Smoke job. Optional on dev1
+# since CI already runs it on every PR, but useful when you want a single
+# pre-push command that exercises everything (smoke + heavy stuff).
+if have_step smoke; then
   run "Frontend build" bash -c 'cd web && npm ci --silent && npm run build'
   run "Server build" go build -o bin/indelible-test ./cmd/indelible
+  run "Playwright Smoke" bash -c '
+    cd smoke && npm ci --silent
+    npx playwright install --with-deps chromium >/dev/null
+    INDELIBLE_DB_URL="sqlite://:memory:" \
+    INDELIBLE_JWT_SECRET="smoke-ci-test-secret-minimum-32-characters" \
+    INDELIBLE_WALLET_ENCRYPTION_KEY="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab" \
+    INDELIBLE_DATA_DIR="/tmp/indelible-dev1-smoke" \
+    npx playwright test
+  '
+fi
+
+# Real E2E suite (e2e/) — full user-journey tests (upload → list → download
+# → verify content, etc). Not run in CI at all. Requires a working antd
+# binary on PATH (or in /usr/local/bin); tests will t.skip themselves if
+# antd is missing.
+if have_step e2e; then
+  run "Frontend build (for e2e)" bash -c 'cd web && (test -d node_modules || npm ci --silent) && npm run build'
+  run "Server build (for e2e)" go build -o bin/indelible-test ./cmd/indelible
   run "Playwright E2E" bash -c '
     cd e2e && npm ci --silent
     npx playwright install --with-deps chromium >/dev/null

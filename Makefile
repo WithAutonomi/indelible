@@ -33,7 +33,7 @@ test:
 
 # Clean build artifacts
 clean:
-	rm -rf bin/ web/dist/ web/node_modules/
+	rm -rf bin/ web/dist/ web/node_modules/ smoke/node_modules/ smoke/playwright-report/ smoke/test-results/ e2e/node_modules/ e2e/playwright-report/ e2e/test-results/
 
 # Run database migrations only (useful for dev)
 migrate:

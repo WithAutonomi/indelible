@@ -274,8 +274,14 @@ jobs:
           cache-from: type=gha,scope=docker-ci-antd
           cache-to: type=gha,scope=docker-ci-antd,mode=max
 
-  e2e:
-    name: E2E
+  # Browser-level smoke suite — verifies server boots, frontend renders,
+  # auth/admin round-trips work via Playwright. Despite the directory living
+  # under smoke/, the SSO Dex round-trip on PR #34 (when it merges) is a
+  # genuine end-to-end test and stays here too because Dex is cheap to set
+  # up in CI. Real upload-and-retrieve E2E (requires antd + wallet + devnet)
+  # lives under e2e/ and runs only via scripts/ci-dev1.sh, not in CI.
+  smoke:
+    name: Smoke
     runs-on: ubuntu-latest
     needs: [test, frontend]
     steps:
@@ -306,9 +312,9 @@ jobs:
       - name: Smoke test server
         run: |
           export INDELIBLE_DB_URL="sqlite://:memory:"
-          export INDELIBLE_JWT_SECRET="e2e-ci-test-secret-minimum-32-characters"
+          export INDELIBLE_JWT_SECRET="smoke-ci-test-secret-minimum-32-characters"
           export INDELIBLE_WALLET_ENCRYPTION_KEY="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab"
-          export INDELIBLE_DATA_DIR="/tmp/indelible-e2e"
+          export INDELIBLE_DATA_DIR="/tmp/indelible-smoke"
           bin/indelible-test &
           SERVER_PID=$!
           sleep 2
@@ -326,23 +332,23 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: e2e/package-lock.json
+          cache-dependency-path: smoke/package-lock.json
 
       - name: Install Playwright
-        run: cd e2e && npm ci && npx playwright install --with-deps chromium
+        run: cd smoke && npm ci && npx playwright install --with-deps chromium
 
-      - name: Run E2E tests
-        run: cd e2e && npx playwright test
+      - name: Run smoke tests
+        run: cd smoke && npx playwright test
         env:
           INDELIBLE_DB_URL: "sqlite://:memory:"
-          INDELIBLE_JWT_SECRET: e2e-ci-test-secret-minimum-32-characters
+          INDELIBLE_JWT_SECRET: smoke-ci-test-secret-minimum-32-characters
           INDELIBLE_WALLET_ENCRYPTION_KEY: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab
-          INDELIBLE_DATA_DIR: /tmp/indelible-e2e
+          INDELIBLE_DATA_DIR: /tmp/indelible-smoke
 
       - name: Upload Playwright report
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: playwright-report
-          path: e2e/playwright-report/
+          path: smoke/playwright-report/
           retention-days: 7
