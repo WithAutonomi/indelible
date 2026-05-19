@@ -170,7 +170,7 @@ func Register(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	permSvc := services.NewPermissionService(db)
 	settingsSvc := services.NewSettingsService(db)
 	verifySvc := services.NewEmailVerificationService(db)
-	notifier := services.NewNotifier(cfg)
+	notifier := services.NewNotifier(cfg, db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req registerRequest
@@ -411,7 +411,7 @@ type resetPasswordRequest struct {
 func ForgotPassword(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	userSvc := services.NewUserService(db)
 	resetSvc := services.NewResetTokenService(db)
-	notifier := services.NewNotifier(cfg)
+	notifier := services.NewNotifier(cfg, db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req forgotPasswordRequest
@@ -546,7 +546,7 @@ func VerifyEmail(db *database.DB) http.HandlerFunc {
 func ResendVerification(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	userSvc := services.NewUserService(db)
 	verifySvc := services.NewEmailVerificationService(db)
-	notifier := services.NewNotifier(cfg)
+	notifier := services.NewNotifier(cfg, db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID := middleware.GetUserID(r.Context())

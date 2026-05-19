@@ -17,6 +17,7 @@ import (
 	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/handlers"
 	"github.com/WithAutonomi/indelible/internal/middleware"
+	"github.com/WithAutonomi/indelible/internal/services"
 	"github.com/WithAutonomi/indelible/internal/worker"
 
 	sdk "github.com/WithAutonomi/ant-sdk/antd-go"
@@ -123,6 +124,11 @@ func main() {
 		antdInfo = antdMgr
 	}
 	router := handlers.NewRouter(cfg, db, antdInfo)
+
+	// Surface notifier status. NoopNotifier means password reset and email
+	// verification silently drop on the floor — ERROR-log it at boot so it
+	// can't slip past production triage.
+	services.LogStartupNotifierStatus(services.NewNotifier(cfg, db))
 
 	// Start background workers
 	uploadWorker := worker.NewUploadWorker(db, cfg)

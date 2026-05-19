@@ -34,6 +34,11 @@ type AntdInfoProvider interface {
 func Health(db *database.DB, cfg *config.Config, antdInfo AntdInfoProvider) http.HandlerFunc {
 	uploadSvc := services.NewUploadService(db)
 	settingsSvc := services.NewCachedSettingsService(services.NewSettingsService(db))
+	// The active notifier method is recomputed per request rather than cached
+	// because it can change at runtime via the admin "notifier_method" setting.
+	notifierFor := func() services.NotifierMethodName {
+		return services.NewNotifier(cfg, db).Method()
+	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -84,6 +89,7 @@ func Health(db *database.DB, cfg *config.Config, antdInfo AntdInfoProvider) http
 			"antd_url":   cfg.AntdURL,
 			"queued":     queued,
 			"processing": processing,
+			"notifier":   string(notifierFor()),
 		}
 
 		// Surface the antd /health snapshot when the daemon is managed and has
