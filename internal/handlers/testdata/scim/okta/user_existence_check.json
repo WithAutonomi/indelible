@@ -1,0 +1,40 @@
+{
+  "request": {
+    "method": "GET",
+    "path": "/scim/v2/Users?filter=userName%20eq%20%22fixture.user%40maidsafe.net%22&startIndex=1&count=100",
+    "headers": {
+      "User-Agent": "Okta SCIM Client 1.0.0",
+      "Accept": "application/scim+json"
+    },
+    "query": [
+      [
+        "filter",
+        "userName eq \"fixture.user@maidsafe.net\""
+      ],
+      [
+        "startIndex",
+        "1"
+      ],
+      [
+        "count",
+        "100"
+      ]
+    ],
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/scim+json"
+    },
+    "body": {
+      "Resources": [],
+      "itemsPerPage": 100,
+      "schemas": [
+        "urn:ietf:params:scim:api:messages:2.0:ListResponse"
+      ],
+      "startIndex": 1,
+      "totalResults": 0
+    }
+  }
+}
