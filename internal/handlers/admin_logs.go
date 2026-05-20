@@ -39,6 +39,7 @@ type auditLogResponse struct {
 	Detail    string  `json:"detail"`
 	IPAddress *string `json:"ip_address"`
 	UserAgent *string `json:"user_agent"`
+	RequestID string  `json:"request_id"` // V2-317; "" for worker-emitted rows
 	CreatedAt string  `json:"created_at"`
 }
 
@@ -48,6 +49,7 @@ type systemLogResponse struct {
 	Component string  `json:"component"`
 	Message   string  `json:"message"`
 	Detail    *string `json:"detail"`
+	RequestID string  `json:"request_id"`
 	CreatedAt string  `json:"created_at"`
 }
 
@@ -57,6 +59,7 @@ func toAuditLogResponse(e *services.AuditLogEntry) auditLogResponse {
 		EventType: e.EventType,
 		Severity:  e.Severity,
 		Detail:    e.Detail,
+		RequestID: e.RequestID,
 		CreatedAt: e.CreatedAt.Format("2006-01-02T15:04:05Z"),
 	}
 	if e.UserID.Valid {
@@ -77,6 +80,7 @@ func toSystemLogResponse(e *services.SystemLogEntry) systemLogResponse {
 		Level:     e.Level,
 		Component: e.Component,
 		Message:   e.Message,
+		RequestID: e.RequestID,
 		CreatedAt: e.CreatedAt.Format("2006-01-02T15:04:05Z"),
 	}
 	if e.Detail.Valid {
