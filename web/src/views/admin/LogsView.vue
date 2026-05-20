@@ -24,6 +24,7 @@ const page = ref(1)
 // Filters
 const eventType = ref('')
 const level = ref('')
+const settingKey = ref('') // V2-316
 const sinceDate = ref<Date | null>(null)
 const untilDate = ref<Date | null>(null)
 
@@ -58,6 +59,9 @@ async function fetchLogs() {
     } else if (activeTab.value === 'system') {
       endpoint = '/api/v2/admin/logs/system'
       if (level.value) params.level = level.value
+    } else if (activeTab.value === 'config') {
+      endpoint = '/api/v2/admin/logs/config'
+      if (settingKey.value) params.setting_key = settingKey.value
     } else {
       endpoint = '/api/v2/admin/logs/user'
     }
@@ -98,9 +102,10 @@ onMounted(fetchLogs)
         <Tab value="audit">Audit</Tab>
         <Tab value="system">System</Tab>
         <Tab value="user">User</Tab>
+        <Tab value="config">Config</Tab>
       </TabList>
       <TabPanels>
-        <TabPanel v-for="tab in ['audit', 'system', 'user']" :key="tab" :value="tab">
+        <TabPanel v-for="tab in ['audit', 'system', 'user', 'config']" :key="tab" :value="tab">
           <!-- Filters -->
           <div class="flex flex-wrap gap-3 items-end mb-4 mt-2">
             <div v-if="activeTab === 'audit'">
@@ -110,6 +115,10 @@ onMounted(fetchLogs)
             <div v-if="activeTab === 'system'">
               <label class="block text-xs text-surface-500 mb-1">Level</label>
               <Select v-model="level" :options="levelOptions" optionLabel="label" optionValue="value" class="w-32" />
+            </div>
+            <div v-if="activeTab === 'config'">
+              <label class="block text-xs text-surface-500 mb-1">Setting Key</label>
+              <InputText v-model="settingKey" placeholder="e.g. maintenance_mode" class="w-48" size="small" />
             </div>
             <div>
               <label class="block text-xs text-surface-500 mb-1">Since</label>
@@ -131,7 +140,7 @@ onMounted(fetchLogs)
                 <span class="text-xs text-surface-400 whitespace-nowrap">{{ new Date(data.created_at).toLocaleString() }}</span>
               </template>
             </Column>
-            <Column v-if="activeTab !== 'system'" field="event_type" header="Event" sortable>
+            <Column v-if="activeTab === 'audit' || activeTab === 'user'" field="event_type" header="Event" sortable>
               <template #body="{ data }">
                 <span class="text-sm">{{ data.event_type }}</span>
               </template>
@@ -146,17 +155,39 @@ onMounted(fetchLogs)
                 <span class="text-sm text-surface-500">{{ data.component }}</span>
               </template>
             </Column>
-            <Column :field="activeTab === 'system' ? 'message' : 'detail'" :header="activeTab === 'system' ? 'Message' : 'Detail'" sortable>
+            <Column v-if="activeTab === 'config'" field="setting_key" header="Setting" sortable>
+              <template #body="{ data }">
+                <code class="text-xs text-surface-600">{{ data.setting_key }}</code>
+              </template>
+            </Column>
+            <Column v-if="activeTab === 'config'" field="old_value" header="Old" sortable>
+              <template #body="{ data }">
+                <span class="text-xs text-surface-400 max-w-xs truncate block font-mono"
+                  :title="data.old_value || ''">{{ data.old_value || '-' }}</span>
+              </template>
+            </Column>
+            <Column v-if="activeTab === 'config'" field="new_value" header="New" sortable>
+              <template #body="{ data }">
+                <span class="text-xs text-surface-700 max-w-xs truncate block font-mono"
+                  :title="data.new_value || ''">{{ data.new_value || '-' }}</span>
+              </template>
+            </Column>
+            <Column v-if="activeTab === 'config'" field="changed_by" header="Changed by" sortable>
+              <template #body="{ data }">
+                <span class="text-xs text-surface-500">{{ data.changed_by ?? '-' }}</span>
+              </template>
+            </Column>
+            <Column v-if="activeTab !== 'config'" :field="activeTab === 'system' ? 'message' : 'detail'" :header="activeTab === 'system' ? 'Message' : 'Detail'" sortable>
               <template #body="{ data }">
                 <span class="text-sm text-surface-600 max-w-md truncate block">{{ activeTab === 'system' ? data.message : data.detail }}</span>
               </template>
             </Column>
-            <Column v-if="activeTab !== 'system'" field="severity" header="Severity" sortable>
+            <Column v-if="activeTab === 'audit' || activeTab === 'user'" field="severity" header="Severity" sortable>
               <template #body="{ data }">
                 <Tag :value="data.severity" :severity="severitySeverity(data.severity)" />
               </template>
             </Column>
-            <Column v-if="activeTab === 'audit'" field="ip_address" header="IP" sortable>
+            <Column v-if="activeTab === 'audit' || activeTab === 'config'" field="ip_address" header="IP" sortable>
               <template #body="{ data }">
                 <span class="text-xs text-surface-400">{{ data.ip_address || '-' }}</span>
               </template>

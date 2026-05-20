@@ -169,6 +169,83 @@ func AdminSystemLogs(db *database.DB) http.HandlerFunc {
 	}
 }
 
+// configAuditResponse mirrors services.ConfigAuditEntry with JSON tags and
+// nullable handling for the wire format.
+type configAuditResponse struct {
+	ID         int64   `json:"id"`
+	SettingKey string  `json:"setting_key"`
+	OldValue   *string `json:"old_value"`
+	NewValue   string  `json:"new_value"`
+	ChangedBy  *int64  `json:"changed_by"`
+	IPAddress  *string `json:"ip_address"`
+	UserAgent  *string `json:"user_agent"`
+	CreatedAt  string  `json:"created_at"`
+}
+
+func toConfigAuditResponse(e *services.ConfigAuditEntry) configAuditResponse {
+	r := configAuditResponse{
+		ID:         e.ID,
+		SettingKey: e.SettingKey,
+		NewValue:   e.NewValue,
+		CreatedAt:  e.CreatedAt.Format("2006-01-02T15:04:05Z"),
+	}
+	if e.OldValue.Valid {
+		r.OldValue = &e.OldValue.String
+	}
+	if e.ChangedBy.Valid {
+		r.ChangedBy = &e.ChangedBy.Int64
+	}
+	if e.IPAddress.Valid {
+		r.IPAddress = &e.IPAddress.String
+	}
+	if e.UserAgent.Valid {
+		r.UserAgent = &e.UserAgent.String
+	}
+	return r
+}
+
+// @Summary      Query config-audit log
+// @Description  Return setting-change entries (who changed what, when, from where). Permanent — never deleted.
+// @Tags         Admin: Logs
+// @Produce      json
+// @Param        setting_key query string false "Filter by setting key"
+// @Param        user_id     query int    false "Filter by changed_by user ID"
+// @Param        since       query string false "Start date (YYYY-MM-DD)"
+// @Param        until       query string false "End date (YYYY-MM-DD)"
+// @Param        limit       query int    false "Max results"
+// @Param        offset      query int    false "Offset for pagination"
+// @Success      200 {object} map[string]interface{}
+// @Failure      500 {object} map[string]string
+// @Router       /admin/logs/config [get]
+// @Security     BearerAuth
+// AdminConfigAuditLogs returns config_audit entries (V2-316).
+func AdminConfigAuditLogs(db *database.DB) http.HandlerFunc {
+	logSvc := services.NewLogService(db)
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		settingKey := r.URL.Query().Get("setting_key")
+		_, userID, since, until, limit, offset := parseLogFilters(r)
+
+		entries, total, err := logSvc.QueryConfigAudit(settingKey, userID, since, until, limit, offset)
+		if err != nil {
+			jsonError(w, "failed to query config audit", http.StatusInternalServerError)
+			return
+		}
+
+		resp := make([]configAuditResponse, 0, len(entries))
+		for _, e := range entries {
+			resp = append(resp, toConfigAuditResponse(e))
+		}
+
+		jsonResponse(w, http.StatusOK, map[string]any{
+			"entries": resp,
+			"total":   total,
+			"limit":   limit,
+			"offset":  offset,
+		})
+	}
+}
+
 // @Summary      Query user activity logs
 // @Description  Return user activity log entries with optional filtering
 // @Tags         Admin: Logs

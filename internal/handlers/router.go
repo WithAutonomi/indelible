@@ -214,6 +214,7 @@ func NewRouter(cfg *config.Config, db *database.DB, antdInfo AntdInfoProvider) h
 			r.Get("/admin/logs/audit", AdminAuditLogs(db))
 			r.Get("/admin/logs/system", AdminSystemLogs(db))
 			r.Get("/admin/logs/user", AdminUserLogs(db))
+			r.Get("/admin/logs/config", AdminConfigAuditLogs(db))
 
 			// Quotas
 			r.Get("/admin/quotas", AdminListQuotas(db))
