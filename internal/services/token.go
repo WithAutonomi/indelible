@@ -226,12 +226,22 @@ func (s *TokenService) ListAll(limit, offset int) ([]*Token, int64, error) {
 	return tokens, total, err
 }
 
+// nullableRevokedBy translates revokedBy=0 (no acting user — e.g. SCIM-driven
+// deactivation) into SQL NULL so the optional FK to users(id) doesn't trip.
+// Mirrors group.go's nullableAddedBy helper.
+func nullableRevokedBy(revokedBy int64) sql.NullInt64 {
+	if revokedBy == 0 {
+		return sql.NullInt64{}
+	}
+	return sql.NullInt64{Int64: revokedBy, Valid: true}
+}
+
 // Revoke soft-deletes a token by setting revoked_at.
 func (s *TokenService) Revoke(tokenID, revokedBy int64, reason string) error {
 	result, err := s.db.Exec(
 		`UPDATE api_tokens SET revoked_at = CURRENT_TIMESTAMP, revoked_by = ?, revoke_reason = ?
 		 WHERE id = ? AND revoked_at IS NULL`,
-		revokedBy, reason, tokenID,
+		nullableRevokedBy(revokedBy), reason, tokenID,
 	)
 	if err != nil {
 		return err
@@ -248,7 +258,7 @@ func (s *TokenService) RevokeAllByUser(userID, revokedBy int64, reason string) (
 	result, err := s.db.Exec(
 		`UPDATE api_tokens SET revoked_at = CURRENT_TIMESTAMP, revoked_by = ?, revoke_reason = ?
 		 WHERE user_id = ? AND revoked_at IS NULL`,
-		revokedBy, reason, userID,
+		nullableRevokedBy(revokedBy), reason, userID,
 	)
 	if err != nil {
 		return 0, err
@@ -265,7 +275,7 @@ func (s *TokenService) BulkRevoke(tokenIDs []int64, revokedBy int64, reason stri
 	// Build placeholder string
 	placeholders := make([]byte, 0, len(tokenIDs)*2)
 	args := make([]any, 0, len(tokenIDs)+2)
-	args = append(args, revokedBy, reason)
+	args = append(args, nullableRevokedBy(revokedBy), reason)
 	for i, id := range tokenIDs {
 		if i > 0 {
 			placeholders = append(placeholders, ',')

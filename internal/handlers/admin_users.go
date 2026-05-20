@@ -174,6 +174,7 @@ func AdminGetUser(db *database.DB) http.HandlerFunc {
 func AdminUpdateUser(db *database.DB) http.HandlerFunc {
 	userSvc := services.NewUserService(db)
 	permSvc := services.NewPermissionService(db)
+	tokenSvc := services.NewTokenService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
@@ -186,6 +187,15 @@ func AdminUpdateUser(db *database.DB) http.HandlerFunc {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			jsonError(w, "invalid request body", http.StatusBadRequest)
 			return
+		}
+
+		// V2-328: detect transition from active to inactive so we can revoke
+		// all of the user's API tokens after the update succeeds.
+		deactivating := false
+		if req.IsActive != nil && !*req.IsActive {
+			if pre, err := userSvc.GetByID(id); err == nil && pre.IsActive {
+				deactivating = true
+			}
 		}
 
 		firstName := ""
@@ -206,6 +216,11 @@ func AdminUpdateUser(db *database.DB) http.HandlerFunc {
 			return
 		}
 
+		if deactivating {
+			callerID := middleware.GetUserID(r.Context())
+			_, _ = tokenSvc.RevokeAllByUser(id, callerID, "user deactivated")
+		}
+
 		user, _ := userSvc.GetByID(id)
 		perms, _ := permSvc.GetEffective(id)
 		jsonResponse(w, http.StatusOK, toAdminUserResponse(user, perms))
@@ -224,6 +239,7 @@ func AdminUpdateUser(db *database.DB) http.HandlerFunc {
 // @Security     BearerAuth
 func AdminDeleteUser(db *database.DB) http.HandlerFunc {
 	userSvc := services.NewUserService(db)
+	tokenSvc := services.NewTokenService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
@@ -235,6 +251,15 @@ func AdminDeleteUser(db *database.DB) http.HandlerFunc {
 		callerID := middleware.GetUserID(r.Context())
 		if id == callerID {
 			jsonError(w, "cannot delete yourself", http.StatusBadRequest)
+			return
+		}
+
+		// V2-328: revoke before the user record itself goes away so the bulk
+		// update can still match on user_id. If RevokeAllByUser fails the
+		// caller can retry the delete; better to short-circuit than leave
+		// tokens live with a soft-deleted owner.
+		if _, err := tokenSvc.RevokeAllByUser(id, callerID, "user deleted"); err != nil {
+			jsonError(w, "failed to revoke user tokens", http.StatusInternalServerError)
 			return
 		}
 

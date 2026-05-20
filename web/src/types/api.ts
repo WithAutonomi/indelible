@@ -61,6 +61,9 @@ export interface ApiToken {
   request_count: number
   last_used_at?: string
   expires_at: string
+  revoked_at?: string | null
+  revoked_by?: number | null
+  revoke_reason?: string | null
   created_at: string
 }
 

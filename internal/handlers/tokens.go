@@ -25,17 +25,19 @@ type createTokenRequest struct {
 }
 
 type tokenResponse struct {
-	UUID        string  `json:"uuid"`
-	Name        string  `json:"name"`
-	Description string  `json:"description"`
-	Permissions string  `json:"permissions"`
-	Department  *string `json:"department"`
-	UsageCount  int64   `json:"usage_count"`
-	LastUsedAt  *string `json:"last_used_at"`
-	ExpiresAt   *string `json:"expires_at"`
-	RevokedAt   *string `json:"revoked_at"`
-	CreatedAt   string  `json:"created_at"`
-	OwnerID     int64   `json:"owner_id"`
+	UUID         string  `json:"uuid"`
+	Name         string  `json:"name"`
+	Description  string  `json:"description"`
+	Permissions  string  `json:"permissions"`
+	Department   *string `json:"department"`
+	UsageCount   int64   `json:"usage_count"`
+	LastUsedAt   *string `json:"last_used_at"`
+	ExpiresAt    *string `json:"expires_at"`
+	RevokedAt    *string `json:"revoked_at"`
+	RevokedBy    *int64  `json:"revoked_by"`
+	RevokeReason *string `json:"revoke_reason"`
+	CreatedAt    string  `json:"created_at"`
+	OwnerID      int64   `json:"owner_id"`
 }
 
 type createTokenResponse struct {
@@ -76,6 +78,14 @@ func toTokenResponse(t *services.Token) tokenResponse {
 	if t.RevokedAt.Valid {
 		s := t.RevokedAt.Time.Format("2006-01-02T15:04:05Z")
 		r.RevokedAt = &s
+	}
+	if t.RevokedBy.Valid {
+		v := t.RevokedBy.Int64
+		r.RevokedBy = &v
+	}
+	if t.RevokeReason.Valid {
+		v := t.RevokeReason.String
+		r.RevokeReason = &v
 	}
 	return r
 }
