@@ -2,10 +2,15 @@ package services
 
 import (
 	"database/sql"
+	"fmt"
 	"time"
 
 	"github.com/WithAutonomi/indelible/internal/database"
 )
+
+// ExportMaxRows caps streamed log exports. Operators hitting this can
+// narrow the date range and call again.
+const ExportMaxRows int64 = 1_000_000
 
 // AuditLogEntry represents a security/compliance event.
 type AuditLogEntry struct {
@@ -66,12 +71,13 @@ func (s *LogService) WriteSystem(level, component, message, detail string) error
 }
 
 // QueryAuditLogs returns audit log entries with optional filters.
-func (s *LogService) QueryAuditLogs(eventType string, userID *int64, since, until *time.Time, limit, offset int) ([]*AuditLogEntry, int64, error) {
+// `severity` filters on the audit_log.severity column (info|warn|error); empty matches all.
+func (s *LogService) QueryAuditLogs(eventType, severity string, userID *int64, since, until *time.Time, limit, offset int) ([]*AuditLogEntry, int64, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
 
-	where, args := buildLogFilter("audit_log", eventType, userID, since, until)
+	where, args := buildLogFilter("audit_log", eventType, severity, userID, since, until)
 
 	var total int64
 	s.db.QueryRow(`SELECT COUNT(*) FROM audit_log`+where, args...).Scan(&total)
@@ -146,9 +152,9 @@ func (s *LogService) QuerySystemLogs(level, component string, since, until *time
 }
 
 // QueryUserActivity returns audit log entries for user actions (logins, uploads, token ops).
-func (s *LogService) QueryUserActivity(userID *int64, since, until *time.Time, limit, offset int) ([]*AuditLogEntry, int64, error) {
+func (s *LogService) QueryUserActivity(severity string, userID *int64, since, until *time.Time, limit, offset int) ([]*AuditLogEntry, int64, error) {
 	// User logs are audit logs filtered to user-facing event types
-	return s.QueryAuditLogs("", userID, since, until, limit, offset)
+	return s.QueryAuditLogs("", severity, userID, since, until, limit, offset)
 }
 
 // QueryConfigAudit returns config_audit entries with optional filters.
@@ -215,13 +221,17 @@ func (s *LogService) CleanupOldLogs(retentionDays int) (int64, error) {
 	return result.RowsAffected()
 }
 
-func buildLogFilter(table, eventType string, userID *int64, since, until *time.Time) (string, []any) {
+func buildLogFilter(table, eventType, severity string, userID *int64, since, until *time.Time) (string, []any) {
 	where := " WHERE 1=1"
 	args := []any{}
 
 	if eventType != "" {
 		where += " AND event_type = ?"
 		args = append(args, eventType)
+	}
+	if severity != "" {
+		where += " AND severity = ?"
+		args = append(args, severity)
 	}
 	if userID != nil {
 		where += " AND user_id = ?"
@@ -237,4 +247,132 @@ func buildLogFilter(table, eventType string, userID *int64, since, until *time.T
 	}
 
 	return where, args
+}
+
+// ErrExportCapExceeded is returned by Stream* methods when the result set
+// exceeds ExportMaxRows. Callers should narrow the date range and retry.
+var ErrExportCapExceeded = fmt.Errorf("export exceeded cap of %d rows; narrow the date range and retry", ExportMaxRows)
+
+// StreamAuditLogs walks audit_log under the given filter and invokes emit per row.
+// Returns (count, ErrExportCapExceeded) if the cap is hit.
+func (s *LogService) StreamAuditLogs(eventType, severity string, userID *int64, since, until *time.Time, emit func(*AuditLogEntry) error) (int64, error) {
+	where, args := buildLogFilter("audit_log", eventType, severity, userID, since, until)
+	rows, err := s.db.Query(
+		`SELECT id, event_type, severity, user_id, detail, ip_address, user_agent, created_at FROM audit_log`+where+` ORDER BY created_at DESC LIMIT ?`,
+		append(args, ExportMaxRows+1)...,
+	)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	var n int64
+	for rows.Next() {
+		n++
+		if n > ExportMaxRows {
+			return ExportMaxRows, ErrExportCapExceeded
+		}
+		e := &AuditLogEntry{}
+		if err := rows.Scan(&e.ID, &e.EventType, &e.Severity, &e.UserID, &e.Detail, &e.IPAddress, &e.UserAgent, &e.CreatedAt); err != nil {
+			return n, err
+		}
+		if err := emit(e); err != nil {
+			return n, err
+		}
+	}
+	return n, rows.Err()
+}
+
+// StreamSystemLogs walks system_log under the given filter and invokes emit per row.
+func (s *LogService) StreamSystemLogs(level, component string, since, until *time.Time, emit func(*SystemLogEntry) error) (int64, error) {
+	where := " WHERE 1=1"
+	args := []any{}
+	if level != "" {
+		where += " AND level = ?"
+		args = append(args, level)
+	}
+	if component != "" {
+		where += " AND component = ?"
+		args = append(args, component)
+	}
+	if since != nil {
+		where += " AND created_at >= ?"
+		args = append(args, since.Format("2006-01-02T15:04:05"))
+	}
+	if until != nil {
+		where += " AND created_at <= ?"
+		args = append(args, until.Format("2006-01-02T15:04:05"))
+	}
+
+	rows, err := s.db.Query(
+		`SELECT id, level, component, message, detail, created_at FROM system_log`+where+` ORDER BY created_at DESC LIMIT ?`,
+		append(args, ExportMaxRows+1)...,
+	)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	var n int64
+	for rows.Next() {
+		n++
+		if n > ExportMaxRows {
+			return ExportMaxRows, ErrExportCapExceeded
+		}
+		e := &SystemLogEntry{}
+		if err := rows.Scan(&e.ID, &e.Level, &e.Component, &e.Message, &e.Detail, &e.CreatedAt); err != nil {
+			return n, err
+		}
+		if err := emit(e); err != nil {
+			return n, err
+		}
+	}
+	return n, rows.Err()
+}
+
+// StreamConfigAudit walks config_audit under the given filter and invokes emit per row.
+func (s *LogService) StreamConfigAudit(settingKey string, changedBy *int64, since, until *time.Time, emit func(*ConfigAuditEntry) error) (int64, error) {
+	where := " WHERE 1=1"
+	args := []any{}
+	if settingKey != "" {
+		where += " AND setting_key = ?"
+		args = append(args, settingKey)
+	}
+	if changedBy != nil {
+		where += " AND changed_by = ?"
+		args = append(args, *changedBy)
+	}
+	if since != nil {
+		where += " AND created_at >= ?"
+		args = append(args, since.Format("2006-01-02T15:04:05"))
+	}
+	if until != nil {
+		where += " AND created_at <= ?"
+		args = append(args, until.Format("2006-01-02T15:04:05"))
+	}
+
+	rows, err := s.db.Query(
+		`SELECT id, setting_key, old_value, new_value, changed_by, ip_address, user_agent, created_at FROM config_audit`+where+` ORDER BY created_at DESC LIMIT ?`,
+		append(args, ExportMaxRows+1)...,
+	)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	var n int64
+	for rows.Next() {
+		n++
+		if n > ExportMaxRows {
+			return ExportMaxRows, ErrExportCapExceeded
+		}
+		e := &ConfigAuditEntry{}
+		if err := rows.Scan(&e.ID, &e.SettingKey, &e.OldValue, &e.NewValue, &e.ChangedBy, &e.IPAddress, &e.UserAgent, &e.CreatedAt); err != nil {
+			return n, err
+		}
+		if err := emit(e); err != nil {
+			return n, err
+		}
+	}
+	return n, rows.Err()
 }

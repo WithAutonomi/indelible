@@ -24,6 +24,7 @@ const page = ref(1)
 // Filters
 const eventType = ref('')
 const level = ref('')
+const severity = ref('') // V2-318: shared by audit + user tabs
 const settingKey = ref('') // V2-316
 const sinceDate = ref<Date | null>(null)
 const untilDate = ref<Date | null>(null)
@@ -34,6 +35,8 @@ const levelOptions = [
   { label: 'Warn', value: 'warn' },
   { label: 'Error', value: 'error' },
 ]
+
+const severityOptions = levelOptions // audit_log severity uses the same vocab
 
 function formatDateParam(d: Date | null): string {
   if (!d) return ''
@@ -56,6 +59,7 @@ async function fetchLogs() {
     if (activeTab.value === 'audit') {
       endpoint = '/api/v2/admin/logs/audit'
       if (eventType.value) params.event_type = eventType.value
+      if (severity.value) params.severity = severity.value
     } else if (activeTab.value === 'system') {
       endpoint = '/api/v2/admin/logs/system'
       if (level.value) params.level = level.value
@@ -64,6 +68,7 @@ async function fetchLogs() {
       if (settingKey.value) params.setting_key = settingKey.value
     } else {
       endpoint = '/api/v2/admin/logs/user'
+      if (severity.value) params.severity = severity.value
     }
 
     const res = await api.get(endpoint, { params })
@@ -90,6 +95,51 @@ function severitySeverity(sev: string): string {
   }
 }
 
+const exporting = ref(false)
+
+// V2-318: download the current view as JSONL. Fetched via the api client so
+// the Bearer header is attached (window.open wouldn't carry it), then turned
+// into a blob URL and clicked. The server caps at 1M rows.
+async function exportCurrent() {
+  const params: any = {}
+  const sinceStr = formatDateParam(sinceDate.value)
+  const untilStr = formatDateParam(untilDate.value)
+  if (sinceStr) params.since = sinceStr
+  if (untilStr) params.until = untilStr
+  if (activeTab.value === 'audit') {
+    if (eventType.value) params.event_type = eventType.value
+    if (severity.value) params.severity = severity.value
+  } else if (activeTab.value === 'system') {
+    if (level.value) params.level = level.value
+  } else if (activeTab.value === 'config') {
+    if (settingKey.value) params.setting_key = settingKey.value
+  } else if (severity.value) {
+    params.severity = severity.value
+  }
+
+  exporting.value = true
+  try {
+    const res = await api.get(`/api/v2/admin/logs/${activeTab.value}/export`, {
+      params,
+      responseType: 'blob',
+    })
+    const blob = new Blob([res.data], { type: 'application/x-ndjson' })
+    const url = URL.createObjectURL(blob)
+    const filename = `${activeTab.value}-${new Date().toISOString().slice(0, 10)}.jsonl`
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  } catch {
+    // ignore — surface via toast once we wire one in
+  } finally {
+    exporting.value = false
+  }
+}
+
 onMounted(fetchLogs)
 </script>
 
@@ -112,6 +162,10 @@ onMounted(fetchLogs)
               <label class="block text-xs text-surface-500 mb-1">Event Type</label>
               <InputText v-model="eventType" placeholder="e.g. login" class="w-36" size="small" />
             </div>
+            <div v-if="activeTab === 'audit' || activeTab === 'user'">
+              <label class="block text-xs text-surface-500 mb-1">Severity</label>
+              <Select v-model="severity" :options="severityOptions" optionLabel="label" optionValue="value" class="w-32" />
+            </div>
             <div v-if="activeTab === 'system'">
               <label class="block text-xs text-surface-500 mb-1">Level</label>
               <Select v-model="level" :options="levelOptions" optionLabel="label" optionValue="value" class="w-32" />
@@ -129,6 +183,8 @@ onMounted(fetchLogs)
               <DatePicker v-model="untilDate" dateFormat="yy-mm-dd" showIcon class="w-40" />
             </div>
             <Button icon="pi pi-search" label="Filter" severity="secondary" @click="page = 1; fetchLogs()" />
+            <Button icon="pi pi-download" label="Export JSONL" severity="secondary" outlined
+              :loading="exporting" @click="exportCurrent" />
           </div>
 
           <!-- Table -->

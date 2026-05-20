@@ -894,6 +894,10 @@ paths:
         in: query
         name: event_type
         type: string
+      - description: Filter by severity (info|warn|error)
+        in: query
+        name: severity
+        type: string
       - description: Filter by user ID
         in: query
         name: user_id
@@ -931,6 +935,135 @@ paths:
       security:
       - BearerAuth: []
       summary: Query audit logs
+      tags:
+      - 'Admin: Logs'
+  /admin/logs/audit/export:
+    get:
+      description: Stream the audit log under the GET filter as application/x-ndjson
+        with attachment Content-Disposition. Caps at 1M rows; on exceedance a trailing
+        {"error":...} line is appended.
+      parameters:
+      - description: Filter by event type
+        in: query
+        name: event_type
+        type: string
+      - description: Filter by severity (info|warn|error)
+        in: query
+        name: severity
+        type: string
+      - description: Filter by user ID
+        in: query
+        name: user_id
+        type: integer
+      - description: Start date (YYYY-MM-DD)
+        in: query
+        name: since
+        type: string
+      - description: End date (YYYY-MM-DD)
+        in: query
+        name: until
+        type: string
+      produces:
+      - application/x-ndjson
+      responses:
+        "200":
+          description: NDJSON stream
+          schema:
+            type: string
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Export audit logs as JSON Lines
+      tags:
+      - 'Admin: Logs'
+  /admin/logs/config:
+    get:
+      description: Return setting-change entries (who changed what, when, from where).
+        Permanent — never deleted.
+      parameters:
+      - description: Filter by setting key
+        in: query
+        name: setting_key
+        type: string
+      - description: Filter by changed_by user ID
+        in: query
+        name: user_id
+        type: integer
+      - description: Start date (YYYY-MM-DD)
+        in: query
+        name: since
+        type: string
+      - description: End date (YYYY-MM-DD)
+        in: query
+        name: until
+        type: string
+      - description: Max results
+        in: query
+        name: limit
+        type: integer
+      - description: Offset for pagination
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Query config-audit log
+      tags:
+      - 'Admin: Logs'
+  /admin/logs/config/export:
+    get:
+      parameters:
+      - description: Filter by setting key
+        in: query
+        name: setting_key
+        type: string
+      - description: Filter by changed_by user ID
+        in: query
+        name: user_id
+        type: integer
+      - description: Start date (YYYY-MM-DD)
+        in: query
+        name: since
+        type: string
+      - description: End date (YYYY-MM-DD)
+        in: query
+        name: until
+        type: string
+      produces:
+      - application/x-ndjson
+      responses:
+        "200":
+          description: NDJSON stream
+          schema:
+            type: string
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Export config-audit log as JSON Lines
       tags:
       - 'Admin: Logs'
   /admin/logs/system:
@@ -980,6 +1113,43 @@ paths:
       summary: Query system logs
       tags:
       - 'Admin: Logs'
+  /admin/logs/system/export:
+    get:
+      parameters:
+      - description: Filter by log level
+        in: query
+        name: level
+        type: string
+      - description: Filter by component
+        in: query
+        name: component
+        type: string
+      - description: Start date (YYYY-MM-DD)
+        in: query
+        name: since
+        type: string
+      - description: End date (YYYY-MM-DD)
+        in: query
+        name: until
+        type: string
+      produces:
+      - application/x-ndjson
+      responses:
+        "200":
+          description: NDJSON stream
+          schema:
+            type: string
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Export system logs as JSON Lines
+      tags:
+      - 'Admin: Logs'
   /admin/logs/user:
     get:
       description: Return user activity log entries with optional filtering
@@ -988,6 +1158,10 @@ paths:
         in: query
         name: user_id
         type: integer
+      - description: Filter by severity (info|warn|error)
+        in: query
+        name: severity
+        type: string
       - description: Start date (YYYY-MM-DD)
         in: query
         name: since
@@ -1021,6 +1195,43 @@ paths:
       security:
       - BearerAuth: []
       summary: Query user activity logs
+      tags:
+      - 'Admin: Logs'
+  /admin/logs/user/export:
+    get:
+      parameters:
+      - description: Filter by user ID
+        in: query
+        name: user_id
+        type: integer
+      - description: Filter by severity (info|warn|error)
+        in: query
+        name: severity
+        type: string
+      - description: Start date (YYYY-MM-DD)
+        in: query
+        name: since
+        type: string
+      - description: End date (YYYY-MM-DD)
+        in: query
+        name: until
+        type: string
+      produces:
+      - application/x-ndjson
+      responses:
+        "200":
+          description: NDJSON stream
+          schema:
+            type: string
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Export user activity logs as JSON Lines
       tags:
       - 'Admin: Logs'
   /admin/oidc/providers:

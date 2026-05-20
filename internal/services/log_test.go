@@ -17,7 +17,7 @@ func TestLogWriteAudit(t *testing.T) {
 		t.Fatalf("WriteAudit: %v", err)
 	}
 
-	entries, total, err := svc.QueryAuditLogs("", nil, nil, nil, 50, 0)
+	entries, total, err := svc.QueryAuditLogs("", "", nil, nil, nil, 50, 0)
 	if err != nil {
 		t.Fatalf("QueryAuditLogs: %v", err)
 	}
@@ -44,7 +44,7 @@ func TestLogWriteAudit_NilUserID(t *testing.T) {
 		t.Fatalf("WriteAudit with nil userID: %v", err)
 	}
 
-	entries, _, _ := svc.QueryAuditLogs("system_start", nil, nil, nil, 50, 0)
+	entries, _, _ := svc.QueryAuditLogs("system_start", "", nil, nil, nil, 50, 0)
 	if len(entries) != 1 {
 		t.Fatalf("expected 1 entry, got %d", len(entries))
 	}
@@ -103,7 +103,7 @@ func TestLogQueryAuditLogs_FilterByEventType(t *testing.T) {
 	svc.WriteAudit("upload", "info", nil, "uploaded file", "", "")
 	svc.WriteAudit("login", "info", nil, "logged in again", "", "")
 
-	entries, total, _ := svc.QueryAuditLogs("login", nil, nil, nil, 50, 0)
+	entries, total, _ := svc.QueryAuditLogs("login", "", nil, nil, nil, 50, 0)
 	if total != 2 {
 		t.Errorf("total = %d, want 2", total)
 	}
@@ -124,7 +124,7 @@ func TestLogQueryAuditLogs_FilterByUserID(t *testing.T) {
 	svc.WriteAudit("login", "info", &u1id, "u1 login", "", "")
 	svc.WriteAudit("login", "info", &u2id, "u2 login", "", "")
 
-	entries, _, _ := svc.QueryAuditLogs("", &u1id, nil, nil, 50, 0)
+	entries, _, _ := svc.QueryAuditLogs("", "", &u1id, nil, nil, 50, 0)
 	if len(entries) != 1 {
 		t.Errorf("expected 1 entry for u1, got %d", len(entries))
 	}
@@ -137,7 +137,7 @@ func TestLogQueryAuditLogs_FilterByTime(t *testing.T) {
 	svc.WriteAudit("login", "info", nil, "event", "", "")
 
 	future := time.Now().Add(1 * time.Hour)
-	entries, _, _ := svc.QueryAuditLogs("", nil, &future, nil, 50, 0)
+	entries, _, _ := svc.QueryAuditLogs("", "", nil, &future, nil, 50, 0)
 	if len(entries) != 0 {
 		t.Errorf("expected 0 entries in future, got %d", len(entries))
 	}
@@ -214,7 +214,7 @@ func TestLogQueryUserActivity(t *testing.T) {
 	svc.WriteAudit("login", "info", &uid, "logged in", "", "")
 	svc.WriteAudit("upload", "info", &uid, "uploaded file", "", "")
 
-	entries, total, err := svc.QueryUserActivity(&uid, nil, nil, 50, 0)
+	entries, total, err := svc.QueryUserActivity("", &uid, nil, nil, 50, 0)
 	if err != nil {
 		t.Fatalf("QueryUserActivity: %v", err)
 	}
