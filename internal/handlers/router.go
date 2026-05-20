@@ -63,7 +63,7 @@ func NewRouter(cfg *config.Config, db *database.DB, antdInfo AntdInfoProvider) h
 
 			r.With(loginRL).Post("/auth/login", Login(db, cfg))
 			r.Post("/auth/register", Register(db, cfg))
-			r.Post("/auth/logout", Logout())
+			r.Post("/auth/logout", Logout(db))
 			r.With(resetRL).Post("/auth/forgot-password", ForgotPassword(db, cfg))
 			r.With(resetRL).Post("/auth/reset-password", ResetPassword(db, cfg))
 			r.Get("/auth/verify-email", VerifyEmail(db))

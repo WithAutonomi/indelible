@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -73,6 +74,7 @@ func ListOIDCProviders(db *database.DB) http.HandlerFunc {
 func OIDCAuthorize(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	providerSvc := services.NewOIDCProviderService(db, cfg.WalletEncryptionKey)
 	loginSvc := services.NewOIDCLoginService(db, providerSvc, cfg.WalletEncryptionKey)
+	logSvc := services.NewLogService(db)
 	return func(w http.ResponseWriter, r *http.Request) {
 		providerID, err := strconv.ParseInt(chi.URLParam(r, "providerId"), 10, 64)
 		if err != nil {
@@ -95,6 +97,7 @@ func OIDCAuthorize(db *database.DB, cfg *config.Config) http.HandlerFunc {
 			jsonError(w, "failed to build authorize URL: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
+		auditEvent(r, logSvc, "sso_authorize_started", "info", nil, fmt.Sprintf("provider=%d", providerID))
 		setOIDCStateCookie(w, r, cookieValue)
 		http.Redirect(w, r, authURL, http.StatusFound)
 	}
@@ -114,11 +117,13 @@ func OIDCCallback(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	loginSvc := services.NewOIDCLoginService(db, providerSvc, cfg.WalletEncryptionKey)
 	userSvc := services.NewUserService(db)
 	settingsSvc := services.NewSettingsService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Provider-side errors (user clicked Cancel, IdP refused, etc.) are
 		// returned with ?error=...&error_description=...  Just relay to /login.
 		if idpErr := r.URL.Query().Get("error"); idpErr != "" {
+			auditEvent(r, logSvc, "sso_login_failed", "warn", nil, "idp_error: "+idpErr)
 			clearOIDCStateCookie(w, r)
 			http.Redirect(w, r, "/login?error="+idpErr, http.StatusFound)
 			return
@@ -135,12 +140,15 @@ func OIDCCallback(db *database.DB, cfg *config.Config) http.HandlerFunc {
 		outcome, err := loginSvc.HandleCallback(r.Context(), cookieValue,
 			r.URL.Query().Get("state"), r.URL.Query().Get("code"))
 		if err != nil {
+			auditEvent(r, logSvc, "sso_login_failed", "warn", nil, oidcErrorCode(err))
 			http.Redirect(w, r, "/login?error="+oidcErrorCode(err), http.StatusFound)
 			return
 		}
 
 		// Linking flow — already logged in, just redirect to profile.
 		if outcome.LinkedUserID != 0 {
+			lid := outcome.LinkedUserID
+			auditEvent(r, logSvc, "sso_identity_linked", "info", &lid, "")
 			http.Redirect(w, r, "/profile?linked=1", http.StatusFound)
 			return
 		}
@@ -164,6 +172,12 @@ func OIDCCallback(db *database.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 		_ = userSvc.UpdateLastLogin(user.ID)
+
+		detail := "sso"
+		if outcome.IsNewUser {
+			detail = "sso auto-provisioned"
+		}
+		auditEvent(r, logSvc, "sso_login", "info", &user.ID, detail)
 
 		http.SetCookie(w, &http.Cookie{
 			Name:     "session",
@@ -243,6 +257,7 @@ func OIDCLinkStart(db *database.DB, cfg *config.Config) http.HandlerFunc {
 func OIDCUnlinkIdentity(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	providerSvc := services.NewOIDCProviderService(db, cfg.WalletEncryptionKey)
 	loginSvc := services.NewOIDCLoginService(db, providerSvc, cfg.WalletEncryptionKey)
+	logSvc := services.NewLogService(db)
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID := middleware.GetUserID(r.Context())
 		if userID == 0 {
@@ -262,6 +277,7 @@ func OIDCUnlinkIdentity(db *database.DB, cfg *config.Config) http.HandlerFunc {
 			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		auditEvent(r, logSvc, "sso_identity_unlinked", "info", &userID, fmt.Sprintf("identity=%d", identityID))
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
