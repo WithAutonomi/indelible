@@ -149,7 +149,14 @@ start_pg() {
   # fails to write to /proc/sys/net/ipv4/ip_unprivileged_port_start in
   # idmapped (unprivileged) Incus containers. Postgres listens on 5433
   # directly on the dev1 host (not 5432, to dodge any system pg install).
+  # --ulimit nofile bumps the FD ceiling above the rootless-docker default
+  # of 1024 (inherited from dev1's user shell). Pg's max_files_per_process
+  # defaults to 1000, and the full test suite spins up 200+ per-test
+  # databases — crossing the 1024 ceiling causes EMFILE in pg backends and
+  # the postmaster starts refusing connections (manifests as ECONNREFUSED
+  # in tests starting around DB #115). 65536 leaves comfortable headroom.
   docker run -d --name "$PG_CONTAINER" --network=host \
+    --ulimit nofile=65536:65536 \
     -e POSTGRES_PASSWORD=ci postgres:16-alpine \
     postgres -p 5433 >/dev/null
   for _ in $(seq 1 30); do
