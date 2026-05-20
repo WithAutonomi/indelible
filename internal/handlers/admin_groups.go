@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -99,6 +100,7 @@ func AdminListGroups(db *database.DB) http.HandlerFunc {
 // @Security     BearerAuth
 func AdminCreateGroup(db *database.DB) http.HandlerFunc {
 	groupSvc := services.NewGroupService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req createGroupRequest
@@ -127,6 +129,10 @@ func AdminCreateGroup(db *database.DB) http.HandlerFunc {
 			return
 		}
 
+		callerID := middleware.GetUserID(r.Context())
+		auditEvent(r, logSvc, "group_created", "info", &callerID,
+			fmt.Sprintf("id=%d name=%s permission=%s", group.ID, group.Name, req.PermissionLevel))
+
 		jsonResponse(w, http.StatusCreated, toGroupResponse(group, 0))
 	}
 }
@@ -146,6 +152,7 @@ func AdminCreateGroup(db *database.DB) http.HandlerFunc {
 // @Security     BearerAuth
 func AdminUpdateGroup(db *database.DB) http.HandlerFunc {
 	groupSvc := services.NewGroupService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
@@ -174,6 +181,9 @@ func AdminUpdateGroup(db *database.DB) http.HandlerFunc {
 			return
 		}
 
+		callerID := middleware.GetUserID(r.Context())
+		auditEvent(r, logSvc, "group_updated", "info", &callerID, fmt.Sprintf("id=%d", id))
+
 		group, _ := groupSvc.GetByID(id)
 		count, _ := groupSvc.MemberCount(id)
 		jsonResponse(w, http.StatusOK, toGroupResponse(group, count))
@@ -192,6 +202,7 @@ func AdminUpdateGroup(db *database.DB) http.HandlerFunc {
 // @Security     BearerAuth
 func AdminDeleteGroup(db *database.DB) http.HandlerFunc {
 	groupSvc := services.NewGroupService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
@@ -204,6 +215,9 @@ func AdminDeleteGroup(db *database.DB) http.HandlerFunc {
 			jsonError(w, "failed to delete group", http.StatusInternalServerError)
 			return
 		}
+
+		callerID := middleware.GetUserID(r.Context())
+		auditEvent(r, logSvc, "group_deleted", "warn", &callerID, fmt.Sprintf("id=%d", id))
 
 		jsonResponse(w, http.StatusOK, map[string]string{"message": "group deleted"})
 	}
@@ -224,6 +238,7 @@ func AdminDeleteGroup(db *database.DB) http.HandlerFunc {
 // @Security     BearerAuth
 func AdminAddGroupMember(db *database.DB) http.HandlerFunc {
 	groupSvc := services.NewGroupService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		groupID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
@@ -248,6 +263,9 @@ func AdminAddGroupMember(db *database.DB) http.HandlerFunc {
 			return
 		}
 
+		auditEvent(r, logSvc, "group_member_added", "info", &addedBy,
+			fmt.Sprintf("group=%d user=%d", groupID, req.UserID))
+
 		jsonResponse(w, http.StatusCreated, map[string]string{"message": "member added"})
 	}
 }
@@ -266,6 +284,7 @@ func AdminAddGroupMember(db *database.DB) http.HandlerFunc {
 // @Security     BearerAuth
 func AdminRemoveGroupMember(db *database.DB) http.HandlerFunc {
 	groupSvc := services.NewGroupService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		groupID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
@@ -287,6 +306,10 @@ func AdminRemoveGroupMember(db *database.DB) http.HandlerFunc {
 			jsonError(w, "failed to remove member", http.StatusInternalServerError)
 			return
 		}
+
+		callerID := middleware.GetUserID(r.Context())
+		auditEvent(r, logSvc, "group_member_removed", "info", &callerID,
+			fmt.Sprintf("group=%d user=%d", groupID, userID))
 
 		jsonResponse(w, http.StatusOK, map[string]string{"message": "member removed"})
 	}

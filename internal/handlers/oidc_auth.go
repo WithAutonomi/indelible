@@ -408,6 +408,7 @@ type adminOIDCAutoProvisionRequest struct {
 // @Router /admin/oidc/providers/{id}/auto-provision [put]
 func AdminSetOIDCAutoProvision(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	providerSvc := services.NewOIDCProviderService(db, cfg.WalletEncryptionKey)
+	logSvc := services.NewLogService(db)
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 		if err != nil {
@@ -423,6 +424,9 @@ func AdminSetOIDCAutoProvision(db *database.DB, cfg *config.Config) http.Handler
 			jsonError(w, "failed to update provider: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
+		callerID := middleware.GetUserID(r.Context())
+		auditEvent(r, logSvc, "oidc_auto_provision_changed", "info", &callerID,
+			fmt.Sprintf("provider=%d auto_provision=%t default_group=%d", id, req.AutoProvision, req.DefaultGroupID))
 		jsonResponse(w, http.StatusOK, map[string]bool{"ok": true})
 	}
 }

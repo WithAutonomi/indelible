@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -174,6 +175,7 @@ func AdminGetUser(db *database.DB) http.HandlerFunc {
 func AdminUpdateUser(db *database.DB) http.HandlerFunc {
 	userSvc := services.NewUserService(db)
 	permSvc := services.NewPermissionService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
@@ -186,6 +188,15 @@ func AdminUpdateUser(db *database.DB) http.HandlerFunc {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			jsonError(w, "invalid request body", http.StatusBadRequest)
 			return
+		}
+
+		// Capture pre-state so we can audit an is_active transition (V2-315).
+		var preActive *bool
+		if req.IsActive != nil {
+			if pre, err := userSvc.GetByID(id); err == nil {
+				v := pre.IsActive
+				preActive = &v
+			}
 		}
 
 		firstName := ""
@@ -206,6 +217,15 @@ func AdminUpdateUser(db *database.DB) http.HandlerFunc {
 			return
 		}
 
+		if preActive != nil && req.IsActive != nil && *preActive != *req.IsActive {
+			callerID := middleware.GetUserID(r.Context())
+			eventType := "user_enabled"
+			if !*req.IsActive {
+				eventType = "user_disabled"
+			}
+			auditEvent(r, logSvc, eventType, "info", &callerID, fmt.Sprintf("target=%d", id))
+		}
+
 		user, _ := userSvc.GetByID(id)
 		perms, _ := permSvc.GetEffective(id)
 		jsonResponse(w, http.StatusOK, toAdminUserResponse(user, perms))
@@ -224,6 +244,7 @@ func AdminUpdateUser(db *database.DB) http.HandlerFunc {
 // @Security     BearerAuth
 func AdminDeleteUser(db *database.DB) http.HandlerFunc {
 	userSvc := services.NewUserService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
@@ -242,6 +263,8 @@ func AdminDeleteUser(db *database.DB) http.HandlerFunc {
 			jsonError(w, "failed to delete user", http.StatusInternalServerError)
 			return
 		}
+
+		auditEvent(r, logSvc, "user_deleted", "warn", &callerID, fmt.Sprintf("target=%d", id))
 
 		jsonResponse(w, http.StatusOK, map[string]string{"message": "user deleted"})
 	}
@@ -262,6 +285,7 @@ func AdminDeleteUser(db *database.DB) http.HandlerFunc {
 func AdminCreateUser(db *database.DB) http.HandlerFunc {
 	userSvc := services.NewUserService(db)
 	permSvc := services.NewPermissionService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req adminCreateUserRequest
@@ -305,6 +329,9 @@ func AdminCreateUser(db *database.DB) http.HandlerFunc {
 		callerID := middleware.GetUserID(r.Context())
 		_ = permSvc.SetDirect(user.ID, req.Permissions, callerID)
 
+		auditEvent(r, logSvc, "user_created", "info", &callerID,
+			fmt.Sprintf("id=%d email=%s permissions=%s", user.ID, user.Email, req.Permissions))
+
 		jsonResponse(w, http.StatusCreated, toAdminUserResponse(user, req.Permissions))
 	}
 }
@@ -324,6 +351,7 @@ func AdminCreateUser(db *database.DB) http.HandlerFunc {
 func AdminCreateServiceAccount(db *database.DB) http.HandlerFunc {
 	userSvc := services.NewUserService(db)
 	permSvc := services.NewPermissionService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req createServiceAccountRequest
@@ -359,6 +387,9 @@ func AdminCreateServiceAccount(db *database.DB) http.HandlerFunc {
 		callerID := middleware.GetUserID(r.Context())
 		_ = permSvc.SetDirect(user.ID, req.Permissions, callerID)
 
+		auditEvent(r, logSvc, "user_created", "info", &callerID,
+			fmt.Sprintf("service_account id=%d email=%s permissions=%s", user.ID, user.Email, req.Permissions))
+
 		jsonResponse(w, http.StatusCreated, toAdminUserResponse(user, req.Permissions))
 	}
 }
@@ -378,6 +409,7 @@ func AdminCreateServiceAccount(db *database.DB) http.HandlerFunc {
 // @Security     BearerAuth
 func AdminSetPermissions(db *database.DB) http.HandlerFunc {
 	permSvc := services.NewPermissionService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
@@ -397,15 +429,15 @@ func AdminSetPermissions(db *database.DB) http.HandlerFunc {
 			return
 		}
 
+		// Capture old permission so we can record the transition.
+		oldPerm, _ := permSvc.GetEffective(id)
+
 		// Check we're not removing the last admin
-		if req.Permission != "admin" {
-			currentPerm, _ := permSvc.GetEffective(id)
-			if currentPerm == "admin" {
-				count, _ := permSvc.CountAdmins()
-				if count <= 1 {
-					jsonError(w, "cannot remove the last admin", http.StatusConflict)
-					return
-				}
+		if req.Permission != "admin" && oldPerm == "admin" {
+			count, _ := permSvc.CountAdmins()
+			if count <= 1 {
+				jsonError(w, "cannot remove the last admin", http.StatusConflict)
+				return
 			}
 		}
 
@@ -414,6 +446,9 @@ func AdminSetPermissions(db *database.DB) http.HandlerFunc {
 			jsonError(w, "failed to set permissions", http.StatusInternalServerError)
 			return
 		}
+
+		auditEvent(r, logSvc, "user_permissions_changed", "warn", &callerID,
+			fmt.Sprintf("target=%d old=%s new=%s", id, oldPerm, req.Permission))
 
 		jsonResponse(w, http.StatusOK, map[string]string{
 			"message":    "permissions updated",
