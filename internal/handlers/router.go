@@ -165,6 +165,7 @@ func NewRouter(cfg *config.Config, db *database.DB, antdInfo AntdInfoProvider) h
 			r.Delete("/admin/groups/{id}", AdminDeleteGroup(db))
 			r.Post("/admin/groups/{id}/members", AdminAddGroupMember(db))
 			r.Delete("/admin/groups/{id}/members/{userId}", AdminRemoveGroupMember(db))
+			r.Get("/admin/groups/{id}/members", AdminListGroupMembers(db))
 
 			// Token management (all tokens)
 			r.Get("/admin/tokens", AdminListAllTokens(db))

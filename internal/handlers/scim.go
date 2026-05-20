@@ -24,6 +24,7 @@ func NewSCIMServer(db *database.DB) (http.Handler, error) {
 	}
 	groupHandler := &scimGroupHandler{
 		groupSvc: services.NewGroupService(db),
+		userSvc:  services.NewUserService(db),
 		logSvc:   services.NewLogService(db),
 	}
 
@@ -264,6 +265,7 @@ func (h *scimUserHandler) audit(r *http.Request, eventType, detail string) {
 
 type scimGroupHandler struct {
 	groupSvc *services.GroupService
+	userSvc  *services.UserService
 	logSvc   *services.LogService
 }
 
@@ -437,10 +439,20 @@ func (h *scimGroupHandler) groupToResource(g *services.Group) (scim.Resource, er
 	memberIDs, _ := h.groupSvc.ListMembers(g.ID)
 	members := make([]interface{}, 0, len(memberIDs))
 	for _, uid := range memberIDs {
+		// V2-304: resolve member to their display name (email) so SCIM
+		// clients don't have to round-trip Users/{id} per member when
+		// rendering a Group. Best-effort — fall back to "" if the user
+		// can't be loaded (deleted, race during sync, etc.).
+		display := ""
+		if h.userSvc != nil {
+			if u, err := h.userSvc.GetByID(uid); err == nil {
+				display = u.Email
+			}
+		}
 		members = append(members, map[string]interface{}{
 			"value":   strconv.FormatInt(uid, 10),
 			"$ref":    fmt.Sprintf("Users/%d", uid),
-			"display": "",
+			"display": display,
 		})
 	}
 
