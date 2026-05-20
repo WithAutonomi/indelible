@@ -1,5 +1,63 @@
 basePath: /api/v2
 definitions:
+  github_com_WithAutonomi_indelible_internal_services.DayCount:
+    properties:
+      count:
+        type: integer
+      date:
+        description: YYYY-MM-DD
+        type: string
+    type: object
+  github_com_WithAutonomi_indelible_internal_services.LogStats:
+    properties:
+      by_component:
+        additionalProperties:
+          format: int64
+          type: integer
+        description: system_log (top 10)
+        type: object
+      by_day:
+        description: last 30 days, ascending
+        items:
+          $ref: '#/definitions/github_com_WithAutonomi_indelible_internal_services.DayCount'
+        type: array
+      by_event_type:
+        additionalProperties:
+          format: int64
+          type: integer
+        description: audit_log (top 10)
+        type: object
+      by_level:
+        additionalProperties:
+          format: int64
+          type: integer
+        description: system_log
+        type: object
+      by_setting_key:
+        additionalProperties:
+          format: int64
+          type: integer
+        description: config_audit (top 10)
+        type: object
+      by_severity:
+        additionalProperties:
+          format: int64
+          type: integer
+        description: One of these will be populated depending on the log type.
+        type: object
+      disk_usage_bytes:
+        description: |-
+          DiskUsageBytes is 0 when the dialect doesn't expose a per-table size
+          (SQLite has no straightforward way to break a whole-DB file down per
+          table). On Postgres it's pg_total_relation_size for the underlying table.
+        type: integer
+      earliest:
+        type: string
+      latest:
+        type: string
+      total_entries:
+        type: integer
+    type: object
   internal_handlers.addMemberRequest:
     properties:
       user_id:
@@ -981,6 +1039,28 @@ paths:
       summary: Export audit logs as JSON Lines
       tags:
       - 'Admin: Logs'
+  /admin/logs/audit/stats:
+    get:
+      description: Aggregate counts, date range, disk usage, and last-30-day buckets
+        for audit_log (V2-319).
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_WithAutonomi_indelible_internal_services.LogStats'
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Audit log statistics
+      tags:
+      - 'Admin: Logs'
   /admin/logs/config:
     get:
       description: Return setting-change entries (who changed what, when, from where).
@@ -1066,6 +1146,26 @@ paths:
       summary: Export config-audit log as JSON Lines
       tags:
       - 'Admin: Logs'
+  /admin/logs/config/stats:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_WithAutonomi_indelible_internal_services.LogStats'
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Config-audit statistics
+      tags:
+      - 'Admin: Logs'
   /admin/logs/system:
     get:
       description: Return system log entries with optional filtering (retention-managed)
@@ -1148,6 +1248,26 @@ paths:
       security:
       - BearerAuth: []
       summary: Export system logs as JSON Lines
+      tags:
+      - 'Admin: Logs'
+  /admin/logs/system/stats:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_WithAutonomi_indelible_internal_services.LogStats'
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: System log statistics
       tags:
       - 'Admin: Logs'
   /admin/logs/user:
