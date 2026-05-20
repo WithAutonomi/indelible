@@ -98,10 +98,13 @@ echo "→ Streaming heavy CI from $DEV1_HOST..."
 echo ""
 
 # Feed the remote script over stdin. The remote receives positional args
-# from the ssh command after `bash -s --`.
-ssh "$DEV1_HOST" bash -s -- "$DEV1_PATH" "$BRANCH" "$SHA" "$STEPS" <<'REMOTE'
+# from the ssh command after `bash -s --`. STEPS is comma-encoded because
+# ssh flattens its argv into a single command string and the remote shell
+# re-splits on whitespace — a literal " docker e2e" arrives as two args,
+# silently dropping every step after the first.
+ssh "$DEV1_HOST" bash -s -- "$DEV1_PATH" "$BRANCH" "$SHA" "${STEPS// /,}" <<'REMOTE'
 set -uo pipefail
-DEV1_PATH=$1; BRANCH=$2; SHA=$3; STEPS=$4
+DEV1_PATH=$1; BRANCH=$2; SHA=$3; STEPS="${4//,/ }"
 
 # Non-interactive SSH skips ~/.profile and ~/.bashrc by default, so Go (and
 # anything else dropped in ~/.local/go/bin or ~/go/bin) isn't on PATH yet.
@@ -216,6 +219,9 @@ if have_step docker; then
     curl -fsS http://localhost:8080/health >/dev/null
     uid=$(docker exec '"$SMOKE_CONTAINER"' id -u)
     [ "$uid" = "65532" ] || { echo "expected uid 65532, got $uid"; exit 1; }
+    # Stop the smoke container so the subsequent e2e step can bind :8080.
+    # Without this the trap-on-EXIT cleanup is too late.
+    docker rm -f '"$SMOKE_CONTAINER"' >/dev/null 2>&1 || true
   '
   else
     skipped+=("Docker smoke (build failed)")
