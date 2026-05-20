@@ -96,6 +96,23 @@ export interface WebhookDelivery {
   created_at: string
 }
 
+export interface Group {
+  id: number
+  name: string
+  description: string
+  permission_level: 'read' | 'write' | 'admin'
+  is_active: boolean
+  external_id: string | null
+  member_count: number
+  created_at: string
+}
+
+export interface GroupMember {
+  id: number
+  email: string
+  name: string
+}
+
 export interface Quota {
   id: number
   entity_type: 'system' | 'user' | 'group' | 'department'
