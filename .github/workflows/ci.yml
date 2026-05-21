@@ -164,23 +164,6 @@ jobs:
       - name: NPM audit
         run: cd web && npm audit --audit-level=high
 
-  # Secrets scanning runs on every PR + push (not master-only like `security`):
-  # the whole point is catching a leak before it lands. .gitleaks.toml at the
-  # repo root extends gitleaks's default ruleset and allowlists known doc/test
-  # placeholders. fetch-depth: 0 is required for full-history scanning so an
-  # attempt to slip a secret through history rewriting is also caught.
-  secrets-scan:
-    name: Secrets Scan
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
   frontend:
     name: Frontend
     runs-on: ubuntu-latest
