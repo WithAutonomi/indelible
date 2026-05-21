@@ -147,7 +147,7 @@ func (m *SystemMonitor) checkAntdHealth() {
 	// downloads will fail, so we surface them under the same alert.
 	// Payload must be >= 3 bytes: antd's self-encryption rejects smaller.
 	probe := antd.NewClient(m.cfg.AntdURL, antd.WithTimeout(probeTimeout))
-	if _, err := probe.DataCost(ctx, []byte{0, 0, 0}); err != nil {
+	if _, err := probe.DataCost(ctx, []byte{0, 0, 0}, antd.PaymentModeAuto); err != nil {
 		m.fireAlert("antd_health", "critical", "antd_unreachable",
 			"antd cannot reach the Autonomi network at "+m.cfg.AntdURL, 0)
 	} else {

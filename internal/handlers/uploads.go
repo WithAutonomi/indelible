@@ -592,7 +592,7 @@ func QuoteUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 
 		// Get cost from antd
 		isPublic := visibility == "public"
-		est, err := client.FileCost(r.Context(), tempPath, isPublic)
+		est, err := client.FileCost(r.Context(), tempPath, isPublic, antd.PaymentModeAuto)
 		if err != nil {
 			jsonAntdError(w, "cost estimation failed", err)
 			return
@@ -658,7 +658,7 @@ func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 		switch {
 		case upload.DataMap.Valid:
 			// External signer flow: use local DataMap to download directly
-			data, err := client.DataGetPrivate(r.Context(), upload.DataMap.String)
+			data, err := client.DataGet(r.Context(), upload.DataMap.String)
 			if err != nil {
 				jsonAntdError(w, "download from network failed", err)
 				return
@@ -670,12 +670,12 @@ func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 		case upload.DatamapAddress.Valid:
 			// Legacy flow: download via network address
 			if upload.Visibility == "public" {
-				if err := client.FileDownloadPublic(r.Context(), upload.DatamapAddress.String, tempPath); err != nil {
+				if err := client.FileGetPublic(r.Context(), upload.DatamapAddress.String, tempPath); err != nil {
 					jsonAntdError(w, "download from network failed", err)
 					return
 				}
 			} else {
-				data, err := client.DataGetPrivate(r.Context(), upload.DatamapAddress.String)
+				data, err := client.DataGet(r.Context(), upload.DatamapAddress.String)
 				if err != nil {
 					jsonAntdError(w, "download from network failed", err)
 					return
