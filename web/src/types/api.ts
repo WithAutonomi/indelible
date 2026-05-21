@@ -158,6 +158,7 @@ export interface AuditLogEntry {
   detail: string
   ip_address?: string
   user_agent?: string
+  request_id: string
   created_at: string
 }
 
@@ -167,6 +168,7 @@ export interface SystemLogEntry {
   component: string
   message: string
   detail?: string
+  request_id: string
   created_at: string
 }
 

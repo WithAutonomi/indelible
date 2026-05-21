@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strconv"
 
+	chimw "github.com/go-chi/chi/v5/middleware"
+
 	"github.com/elimity-com/scim"
 	scimerrors "github.com/elimity-com/scim/errors"
 	"github.com/elimity-com/scim/optional"
@@ -258,7 +260,7 @@ func (h *scimUserHandler) Patch(r *http.Request, id string, operations []scim.Pa
 }
 
 func (h *scimUserHandler) audit(r *http.Request, eventType, detail string) {
-	_ = h.logSvc.WriteAudit(eventType, "info", nil, detail, r.RemoteAddr, r.UserAgent())
+	_ = h.logSvc.WriteAudit(eventType, "info", nil, detail, r.RemoteAddr, r.UserAgent(), chimw.GetReqID(r.Context()))
 }
 
 // --- Group Resource Handler ---
@@ -476,7 +478,7 @@ func (h *scimGroupHandler) groupToResource(g *services.Group) (scim.Resource, er
 }
 
 func (h *scimGroupHandler) audit(r *http.Request, eventType, detail string) {
-	_ = h.logSvc.WriteAudit(eventType, "info", nil, detail, r.RemoteAddr, r.UserAgent())
+	_ = h.logSvc.WriteAudit(eventType, "info", nil, detail, r.RemoteAddr, r.UserAgent(), chimw.GetReqID(r.Context()))
 }
 
 // --- Helper functions ---

@@ -12,7 +12,7 @@ func TestLogWriteAudit(t *testing.T) {
 	user := createTestUser(t, userSvc, "test@test.com", "Test", "User")
 
 	uid := user.ID
-	err := svc.WriteAudit("login", "info", &uid, "User logged in", "127.0.0.1", "TestAgent")
+	err := svc.WriteAudit("login", "info", &uid, "User logged in", "127.0.0.1", "TestAgent", "req-test-1")
 	if err != nil {
 		t.Fatalf("WriteAudit: %v", err)
 	}
@@ -39,7 +39,7 @@ func TestLogWriteAudit_NilUserID(t *testing.T) {
 	db := setupTestDB(t)
 	svc := NewLogService(db)
 
-	err := svc.WriteAudit("system_start", "info", nil, "System started", "", "")
+	err := svc.WriteAudit("system_start", "info", nil, "System started", "", "", "")
 	if err != nil {
 		t.Fatalf("WriteAudit with nil userID: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestLogWriteSystem(t *testing.T) {
 	db := setupTestDB(t)
 	svc := NewLogService(db)
 
-	err := svc.WriteSystem("error", "uploader", "Upload failed", "file too large")
+	err := svc.WriteSystem("error", "uploader", "Upload failed", "file too large", "")
 	if err != nil {
 		t.Fatalf("WriteSystem: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestLogWriteSystem_EmptyDetail(t *testing.T) {
 	db := setupTestDB(t)
 	svc := NewLogService(db)
 
-	svc.WriteSystem("info", "startup", "Service started", "")
+	svc.WriteSystem("info", "startup", "Service started", "", "")
 
 	entries, _, _ := svc.QuerySystemLogs("", "", nil, nil, 50, 0)
 	if len(entries) != 1 {
@@ -99,9 +99,9 @@ func TestLogQueryAuditLogs_FilterByEventType(t *testing.T) {
 	db := setupTestDB(t)
 	svc := NewLogService(db)
 
-	svc.WriteAudit("login", "info", nil, "logged in", "", "")
-	svc.WriteAudit("upload", "info", nil, "uploaded file", "", "")
-	svc.WriteAudit("login", "info", nil, "logged in again", "", "")
+	svc.WriteAudit("login", "info", nil, "logged in", "", "", "")
+	svc.WriteAudit("upload", "info", nil, "uploaded file", "", "", "")
+	svc.WriteAudit("login", "info", nil, "logged in again", "", "", "")
 
 	entries, total, _ := svc.QueryAuditLogs("login", nil, nil, nil, 50, 0)
 	if total != 2 {
@@ -121,8 +121,8 @@ func TestLogQueryAuditLogs_FilterByUserID(t *testing.T) {
 
 	u1id := u1.ID
 	u2id := u2.ID
-	svc.WriteAudit("login", "info", &u1id, "u1 login", "", "")
-	svc.WriteAudit("login", "info", &u2id, "u2 login", "", "")
+	svc.WriteAudit("login", "info", &u1id, "u1 login", "", "", "")
+	svc.WriteAudit("login", "info", &u2id, "u2 login", "", "", "")
 
 	entries, _, _ := svc.QueryAuditLogs("", &u1id, nil, nil, 50, 0)
 	if len(entries) != 1 {
@@ -134,7 +134,7 @@ func TestLogQueryAuditLogs_FilterByTime(t *testing.T) {
 	db := setupTestDB(t)
 	svc := NewLogService(db)
 
-	svc.WriteAudit("login", "info", nil, "event", "", "")
+	svc.WriteAudit("login", "info", nil, "event", "", "", "")
 
 	future := time.Now().Add(1 * time.Hour)
 	entries, _, _ := svc.QueryAuditLogs("", nil, &future, nil, 50, 0)
@@ -147,9 +147,9 @@ func TestLogQuerySystemLogs_FilterByLevel(t *testing.T) {
 	db := setupTestDB(t)
 	svc := NewLogService(db)
 
-	svc.WriteSystem("info", "comp", "info msg", "")
-	svc.WriteSystem("error", "comp", "error msg", "details")
-	svc.WriteSystem("warn", "comp", "warn msg", "")
+	svc.WriteSystem("info", "comp", "info msg", "", "")
+	svc.WriteSystem("error", "comp", "error msg", "details", "")
+	svc.WriteSystem("warn", "comp", "warn msg", "", "")
 
 	entries, total, _ := svc.QuerySystemLogs("error", "", nil, nil, 50, 0)
 	if total != 1 {
@@ -164,8 +164,8 @@ func TestLogQuerySystemLogs_FilterByComponent(t *testing.T) {
 	db := setupTestDB(t)
 	svc := NewLogService(db)
 
-	svc.WriteSystem("info", "uploader", "msg1", "")
-	svc.WriteSystem("info", "auth", "msg2", "")
+	svc.WriteSystem("info", "uploader", "msg1", "", "")
+	svc.WriteSystem("info", "auth", "msg2", "", "")
 
 	entries, _, _ := svc.QuerySystemLogs("", "uploader", nil, nil, 50, 0)
 	if len(entries) != 1 {
@@ -178,7 +178,7 @@ func TestLogQuerySystemLogs_DefaultLimit(t *testing.T) {
 	svc := NewLogService(db)
 
 	for i := 0; i < 60; i++ {
-		svc.WriteSystem("info", "comp", "msg", "")
+		svc.WriteSystem("info", "comp", "msg", "", "")
 	}
 
 	entries, _, _ := svc.QuerySystemLogs("", "", nil, nil, 0, 0)
@@ -191,8 +191,8 @@ func TestLogCleanupOldLogs(t *testing.T) {
 	db := setupTestDB(t)
 	svc := NewLogService(db)
 
-	svc.WriteSystem("info", "comp", "msg1", "")
-	svc.WriteSystem("info", "comp", "msg2", "")
+	svc.WriteSystem("info", "comp", "msg1", "", "")
+	svc.WriteSystem("info", "comp", "msg2", "", "")
 
 	// Cleanup entries older than 1 day (fresh entries should not be deleted)
 	deleted, err := svc.CleanupOldLogs(1)
@@ -211,8 +211,8 @@ func TestLogQueryUserActivity(t *testing.T) {
 	user := createTestUser(t, userSvc, "test@test.com", "Test", "User")
 
 	uid := user.ID
-	svc.WriteAudit("login", "info", &uid, "logged in", "", "")
-	svc.WriteAudit("upload", "info", &uid, "uploaded file", "", "")
+	svc.WriteAudit("login", "info", &uid, "logged in", "", "", "")
+	svc.WriteAudit("upload", "info", &uid, "uploaded file", "", "", "")
 
 	entries, total, err := svc.QueryUserActivity(&uid, nil, nil, 50, 0)
 	if err != nil {
