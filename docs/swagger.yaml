@@ -933,6 +933,54 @@ paths:
       summary: Query audit logs
       tags:
       - 'Admin: Logs'
+  /admin/logs/config:
+    get:
+      description: Return setting-change entries (who changed what, when, from where).
+        Permanent — never deleted.
+      parameters:
+      - description: Filter by setting key
+        in: query
+        name: setting_key
+        type: string
+      - description: Filter by changed_by user ID
+        in: query
+        name: user_id
+        type: integer
+      - description: Start date (YYYY-MM-DD)
+        in: query
+        name: since
+        type: string
+      - description: End date (YYYY-MM-DD)
+        in: query
+        name: until
+        type: string
+      - description: Max results
+        in: query
+        name: limit
+        type: integer
+      - description: Offset for pagination
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Query config-audit log
+      tags:
+      - 'Admin: Logs'
   /admin/logs/system:
     get:
       description: Return system log entries with optional filtering (retention-managed)
