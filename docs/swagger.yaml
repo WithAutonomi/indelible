@@ -225,11 +225,23 @@ definitions:
       email:
         type: string
     type: object
+  internal_handlers.groupMemberResponse:
+    properties:
+      email:
+        type: string
+      id:
+        type: integer
+      name:
+        type: string
+    type: object
   internal_handlers.groupResponse:
     properties:
       created_at:
         type: string
       description:
+        type: string
+      external_id:
+        description: SCIM-provisioned groups carry this
         type: string
       id:
         type: integer
@@ -791,6 +803,43 @@ paths:
       tags:
       - 'Admin: Groups'
   /admin/groups/{id}/members:
+    get:
+      description: Return the resolved members of a group (id, email, display name).
+        V2-304.
+      parameters:
+      - description: Group ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              items:
+                $ref: '#/definitions/internal_handlers.groupMemberResponse'
+              type: array
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List group members
+      tags:
+      - 'Admin: Groups'
     post:
       consumes:
       - application/json

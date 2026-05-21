@@ -51,6 +51,10 @@ var (
 	valueRE     = regexp.MustCompile(`"value"\s*:\s*"\d+"`)
 	refRE       = regexp.MustCompile(`"(Users|Groups)/\d+"`)
 	timestampRE = regexp.MustCompile(`"(created|lastModified)"\s*:\s*"[^"]+"`)
+	// V2-304 populates `display` with the user's email instead of the empty
+	// string Okta originally captured. Both sides get masked since member
+	// resolution order isn't stable across runs.
+	displayRE = regexp.MustCompile(`"display"\s*:\s*"[^"]*"`)
 )
 
 func normalizeSCIMResponse(raw []byte) string {
@@ -59,6 +63,7 @@ func normalizeSCIMResponse(raw []byte) string {
 	s = valueRE.ReplaceAllString(s, `"value":"<ID>"`)
 	s = refRE.ReplaceAllString(s, `"$1/<ID>"`)
 	s = timestampRE.ReplaceAllString(s, `"$1":"<TIME>"`)
+	s = displayRE.ReplaceAllString(s, `"display":"<DISPLAY>"`)
 	return s
 }
 
