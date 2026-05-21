@@ -157,6 +157,56 @@ func (s *LogService) QueryUserActivity(userID *int64, since, until *time.Time, l
 	return s.QueryAuditLogs("", userID, since, until, limit, offset)
 }
 
+// QueryConfigAudit returns config_audit entries with optional filters.
+// Mirrors QueryAuditLogs in shape — V2-316 surfaces the table that
+// SettingsService.Update already populates.
+func (s *LogService) QueryConfigAudit(settingKey string, changedBy *int64, since, until *time.Time, limit, offset int) ([]*ConfigAuditEntry, int64, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+
+	where := " WHERE 1=1"
+	args := []any{}
+	if settingKey != "" {
+		where += " AND setting_key = ?"
+		args = append(args, settingKey)
+	}
+	if changedBy != nil {
+		where += " AND changed_by = ?"
+		args = append(args, *changedBy)
+	}
+	if since != nil {
+		where += " AND created_at >= ?"
+		args = append(args, since.Format("2006-01-02T15:04:05"))
+	}
+	if until != nil {
+		where += " AND created_at <= ?"
+		args = append(args, until.Format("2006-01-02T15:04:05"))
+	}
+
+	var total int64
+	s.db.QueryRow(`SELECT COUNT(*) FROM config_audit`+where, args...).Scan(&total)
+
+	rows, err := s.db.Query(
+		`SELECT id, setting_key, old_value, new_value, changed_by, ip_address, user_agent, created_at FROM config_audit`+where+` ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+		append(args, limit, offset)...,
+	)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var entries []*ConfigAuditEntry
+	for rows.Next() {
+		e := &ConfigAuditEntry{}
+		if err := rows.Scan(&e.ID, &e.SettingKey, &e.OldValue, &e.NewValue, &e.ChangedBy, &e.IPAddress, &e.UserAgent, &e.CreatedAt); err != nil {
+			return nil, 0, err
+		}
+		entries = append(entries, e)
+	}
+	return entries, total, rows.Err()
+}
+
 // CleanupOldLogs deletes system log entries older than the given number of days.
 // Audit logs are never deleted.
 func (s *LogService) CleanupOldLogs(retentionDays int) (int64, error) {

@@ -657,27 +657,25 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Return system log entries with optional filtering (retention-managed)\nReturn config_audit entries showing old/new value, actor, IP, and UA for every settings change. Permanent (never purged).",
+                "description": "Return setting-change entries (who changed what, when, from where). Permanent — never deleted.",
                 "produces": [
-                    "application/json",
                     "application/json"
                 ],
                 "tags": [
-                    "Admin: Logs",
                     "Admin: Logs"
                 ],
-                "summary": "Query config-change audit log",
+                "summary": "Query config-audit log",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Filter by log level",
-                        "name": "level",
+                        "description": "Filter by setting key",
+                        "name": "setting_key",
                         "in": "query"
                     },
                     {
-                        "type": "string",
-                        "description": "Filter by component",
-                        "name": "component",
+                        "type": "integer",
+                        "description": "Filter by changed_by user ID",
+                        "name": "user_id",
                         "in": "query"
                     },
                     {
@@ -695,36 +693,6 @@ const docTemplate = `{
                     {
                         "type": "integer",
                         "description": "Max results",
-                        "name": "limit",
-                        "in": "query"
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Offset for pagination",
-                        "name": "offset",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Filter by setting key",
-                        "name": "setting_key",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Start date (YYYY-MM-DD)",
-                        "name": "since",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "End date (YYYY-MM-DD)",
-                        "name": "until",
-                        "in": "query"
-                    },
-                    {
-                        "type": "integer",
-                        "description": "Max results (default 100, max 500)",
                         "name": "limit",
                         "in": "query"
                     },
