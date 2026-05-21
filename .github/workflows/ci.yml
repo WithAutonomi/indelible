@@ -127,11 +127,13 @@ jobs:
   # npm audit) don't typically change PR-by-PR, and the scanners hit external
   # registries which is also a bandwidth/rate-limit hazard if we run them
   # every push. Use `make security` locally if you need a check before pushing.
+  # Hard-fails on hit (was continue-on-error: true while private — see V2-344
+  # for the rationale and the precondition-check that confirmed master was
+  # green under hard-fail at flip time).
   security:
     name: Security Scanning
     runs-on: ubuntu-latest
     if: github.event_name == 'push'
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with:
