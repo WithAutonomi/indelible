@@ -32,7 +32,7 @@
       "emails": [
         {
           "primary": true,
-          "value": "fixture.user@maidsafe.net"
+          "value": "fixture.user@example.com"
         }
       ],
       "externalId": "00u13542539yHv3Xq698",
@@ -50,7 +50,7 @@
       "schemas": [
         "urn:ietf:params:scim:schemas:core:2.0:User"
       ],
-      "userName": "fixture.user@maidsafe.net"
+      "userName": "fixture.user@example.com"
     }
   }
 }

@@ -34,14 +34,14 @@ func setupRouterWithDB(t *testing.T) (http.Handler, *database.DB) {
 
 func mustWriteAudit(t *testing.T, svc *services.LogService, eventType, severity string, userID *int64, detail string) {
 	t.Helper()
-	if err := svc.WriteAudit(eventType, severity, userID, detail, "", ""); err != nil {
+	if err := svc.WriteAudit(eventType, severity, userID, detail, "", "", ""); err != nil {
 		t.Fatalf("WriteAudit: %v", err)
 	}
 }
 
 func mustWriteSystem(t *testing.T, svc *services.LogService, level, component, message, detail string) {
 	t.Helper()
-	if err := svc.WriteSystem(level, component, message, detail); err != nil {
+	if err := svc.WriteSystem(level, component, message, detail, ""); err != nil {
 		t.Fatalf("WriteSystem: %v", err)
 	}
 }

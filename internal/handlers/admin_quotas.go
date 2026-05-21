@@ -3,12 +3,14 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/WithAutonomi/indelible/internal/database"
+	"github.com/WithAutonomi/indelible/internal/middleware"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
 
@@ -91,6 +93,7 @@ func AdminListQuotas(db *database.DB) http.HandlerFunc {
 // @Security     BearerAuth
 func AdminCreateQuota(db *database.DB) http.HandlerFunc {
 	quotaSvc := services.NewQuotaService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req createQuotaRequest
@@ -117,6 +120,10 @@ func AdminCreateQuota(db *database.DB) http.HandlerFunc {
 			return
 		}
 
+		callerID := middleware.GetUserID(r.Context())
+		auditEvent(r, logSvc, "quota_created", "info", &callerID,
+			fmt.Sprintf("id=%d entity_type=%s entity_id=%s max_bytes=%d", quota.ID, req.EntityType, req.EntityID, req.MaxBytes))
+
 		jsonResponse(w, http.StatusCreated, toQuotaResponse(quota))
 	}
 }
@@ -136,6 +143,7 @@ func AdminCreateQuota(db *database.DB) http.HandlerFunc {
 // @Security     BearerAuth
 func AdminUpdateQuota(db *database.DB) http.HandlerFunc {
 	quotaSvc := services.NewQuotaService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
@@ -160,6 +168,10 @@ func AdminUpdateQuota(db *database.DB) http.HandlerFunc {
 			return
 		}
 
+		callerID := middleware.GetUserID(r.Context())
+		auditEvent(r, logSvc, "quota_updated", "info", &callerID,
+			fmt.Sprintf("id=%d max_bytes=%d enabled=%t", id, req.MaxBytes, req.IsEnabled))
+
 		jsonResponse(w, http.StatusOK, toQuotaResponse(quota))
 	}
 }
@@ -177,6 +189,7 @@ func AdminUpdateQuota(db *database.DB) http.HandlerFunc {
 // @Security     BearerAuth
 func AdminDeleteQuota(db *database.DB) http.HandlerFunc {
 	quotaSvc := services.NewQuotaService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
@@ -193,6 +206,9 @@ func AdminDeleteQuota(db *database.DB) http.HandlerFunc {
 			jsonError(w, "failed to delete quota", http.StatusInternalServerError)
 			return
 		}
+
+		callerID := middleware.GetUserID(r.Context())
+		auditEvent(r, logSvc, "quota_deleted", "info", &callerID, fmt.Sprintf("id=%d", id))
 
 		jsonResponse(w, http.StatusOK, map[string]string{"message": "quota deleted"})
 	}

@@ -112,6 +112,67 @@ func (s *SettingsService) Update(changes map[string]string, userID int64, ipAddr
 	return tx.Commit()
 }
 
+// --- Config audit log query --------------------------------------------------
+
+// QueryConfigAudit returns config-change history with optional filters.
+// settingKey "" matches all keys; since/until nil are open-ended; limit <= 0
+// defaults to 100 (and is capped at 500 to keep the response bounded).
+// Returns entries newest-first plus a total count for paging.
+func (s *SettingsService) QueryConfigAudit(settingKey string, since, until *time.Time, limit, offset int) ([]*ConfigAuditEntry, int64, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	where := "WHERE 1=1"
+	args := []interface{}{}
+	if settingKey != "" {
+		where += " AND setting_key = ?"
+		args = append(args, settingKey)
+	}
+	if since != nil {
+		where += " AND created_at >= ?"
+		args = append(args, *since)
+	}
+	if until != nil {
+		where += " AND created_at < ?"
+		args = append(args, *until)
+	}
+
+	var total int64
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM config_audit "+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	rowArgs := append(append([]interface{}{}, args...), limit, offset)
+	rows, err := s.db.Query(
+		`SELECT id, setting_key, old_value, new_value, changed_by, ip_address, user_agent, created_at
+		   FROM config_audit `+where+`
+		  ORDER BY created_at DESC, id DESC
+		  LIMIT ? OFFSET ?`,
+		rowArgs...,
+	)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var out []*ConfigAuditEntry
+	for rows.Next() {
+		e := &ConfigAuditEntry{}
+		if err := rows.Scan(&e.ID, &e.SettingKey, &e.OldValue, &e.NewValue, &e.ChangedBy, &e.IPAddress, &e.UserAgent, &e.CreatedAt); err != nil {
+			return nil, 0, err
+		}
+		out = append(out, e)
+	}
+	return out, total, rows.Err()
+}
+
 // --- Export/Import ---
 
 // ExportData is the structured export format including all instance configuration.

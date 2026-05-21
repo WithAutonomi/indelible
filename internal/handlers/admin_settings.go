@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/WithAutonomi/indelible/internal/database"
@@ -88,6 +89,7 @@ func AdminUpdateSettings(db *database.DB) http.HandlerFunc {
 // AdminExportSettings returns all settings as a downloadable JSON file.
 func AdminExportSettings(db *database.DB) http.HandlerFunc {
 	settingsSvc := services.NewSettingsService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		data, err := settingsSvc.Export()
@@ -95,6 +97,10 @@ func AdminExportSettings(db *database.DB) http.HandlerFunc {
 			jsonError(w, "failed to export settings", http.StatusInternalServerError)
 			return
 		}
+		callerID := middleware.GetUserID(r.Context())
+		// Export carries oidc client_ids + webhook URLs + group names. Worth
+		// auditing at warn severity.
+		auditEvent(r, logSvc, "settings_exported", "warn", &callerID, "")
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Content-Disposition", `attachment; filename="indelible-settings.json"`)
 		w.Write(data)
@@ -115,6 +121,7 @@ func AdminExportSettings(db *database.DB) http.HandlerFunc {
 // AdminImportSettings restores settings from a JSON export.
 func AdminImportSettings(db *database.DB) http.HandlerFunc {
 	settingsSvc := services.NewSettingsService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID := middleware.GetUserID(r.Context())
@@ -135,6 +142,8 @@ func AdminImportSettings(db *database.DB) http.HandlerFunc {
 				jsonError(w, "failed to import settings", http.StatusInternalServerError)
 				return
 			}
+			auditEvent(r, logSvc, "settings_imported", "warn", &userID,
+				fmt.Sprintf("settings=%d webhooks=%d groups=%d", len(structured.Settings), len(structured.Webhooks), len(structured.Groups)))
 			jsonResponse(w, http.StatusOK, map[string]any{
 				"message":  "settings imported",
 				"settings": len(structured.Settings),
@@ -155,6 +164,8 @@ func AdminImportSettings(db *database.DB) http.HandlerFunc {
 			jsonError(w, "failed to import settings", http.StatusInternalServerError)
 			return
 		}
+
+		auditEvent(r, logSvc, "settings_imported", "warn", &userID, fmt.Sprintf("settings=%d (legacy flat)", len(flat)))
 
 		jsonResponse(w, http.StatusOK, map[string]any{
 			"message":  "settings imported",

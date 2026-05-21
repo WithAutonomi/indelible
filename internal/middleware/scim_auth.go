@@ -38,8 +38,12 @@ func SCIMAuth(db *database.DB) func(http.Handler) http.Handler {
 				return
 			}
 
+			// V2-303: accept both "Bearer scim_<hex>" and bare "scim_<hex>".
+			// Okta's "SCIM 2.0 Test App (Header Auth)" variant pastes the
+			// token verbatim with no Bearer scheme, and the scim_ prefix is
+			// already a strong token-type discriminator on its own.
 			tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
-			if tokenStr == authHeader {
+			if !strings.HasPrefix(tokenStr, "scim_") {
 				w.Header().Set("Content-Type", "application/scim+json")
 				w.WriteHeader(http.StatusUnauthorized)
 				w.Write([]byte(`{"schemas":["urn:ietf:params:scim:api:messages:2.0:Error"],"detail":"invalid authorization format","status":401}`))

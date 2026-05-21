@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -54,6 +55,7 @@ func toScimTokenResponse(t *services.ScimToken) scimTokenResponse {
 // @Security     BearerAuth
 func AdminCreateScimToken(db *database.DB) http.HandlerFunc {
 	scimTokenSvc := services.NewScimTokenService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
@@ -74,6 +76,11 @@ func AdminCreateScimToken(db *database.DB) http.HandlerFunc {
 			jsonError(w, "failed to create SCIM token", http.StatusInternalServerError)
 			return
 		}
+
+		// SCIM tokens are the highest-blast-radius credential we issue. Detail
+		// records the token id + name; NEVER the secret.
+		auditEvent(r, logSvc, "scim_token_issued", "warn", &userID,
+			fmt.Sprintf("id=%d name=%s", token.ID, token.Name))
 
 		jsonResponse(w, http.StatusCreated, map[string]any{
 			"token":  toScimTokenResponse(token),
@@ -122,6 +129,7 @@ func AdminListScimTokens(db *database.DB) http.HandlerFunc {
 // @Security     BearerAuth
 func AdminRevokeScimToken(db *database.DB) http.HandlerFunc {
 	scimTokenSvc := services.NewScimTokenService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
@@ -138,6 +146,9 @@ func AdminRevokeScimToken(db *database.DB) http.HandlerFunc {
 			jsonError(w, "failed to revoke SCIM token", http.StatusInternalServerError)
 			return
 		}
+
+		callerID := middleware.GetUserID(r.Context())
+		auditEvent(r, logSvc, "scim_token_revoked", "info", &callerID, fmt.Sprintf("id=%d", id))
 
 		jsonResponse(w, http.StatusOK, map[string]string{"message": "SCIM token revoked"})
 	}
