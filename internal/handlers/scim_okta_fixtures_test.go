@@ -108,7 +108,7 @@ func seedSentinels(t *testing.T, env *scimTestEnv, n int) {
 
 func seedFixtureUser(t *testing.T, env *scimTestEnv) {
 	t.Helper()
-	seedUser(t, env, "fixture.user@maidsafe.net", "fixture", "user", "00u13542539yHv3Xq698")
+	seedUser(t, env, "fixture.user@example.com", "fixture", "user", "00u13542539yHv3Xq698")
 }
 
 func deactivateUserID(t *testing.T, env *scimTestEnv, id int64) {
