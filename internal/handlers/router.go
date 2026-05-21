@@ -165,6 +165,7 @@ func NewRouter(cfg *config.Config, db *database.DB, antdInfo AntdInfoProvider) h
 			r.Delete("/admin/groups/{id}", AdminDeleteGroup(db))
 			r.Post("/admin/groups/{id}/members", AdminAddGroupMember(db))
 			r.Delete("/admin/groups/{id}/members/{userId}", AdminRemoveGroupMember(db))
+			r.Get("/admin/groups/{id}/members", AdminListGroupMembers(db))
 
 			// Token management (all tokens)
 			r.Get("/admin/tokens", AdminListAllTokens(db))
@@ -176,6 +177,7 @@ func NewRouter(cfg *config.Config, db *database.DB, antdInfo AntdInfoProvider) h
 			r.Put("/admin/wallets/{id}/default", AdminSetDefaultWallet(db, cfg))
 			r.Delete("/admin/wallets/{id}", AdminDeleteWallet(db, cfg))
 			r.Post("/admin/wallets/{id}/balance", AdminRefreshWalletBalance(db, cfg))
+			r.Get("/admin/wallets/{id}/transactions", AdminWalletTransactions(db))
 
 			// System settings
 			r.Get("/admin/settings", AdminGetSettings(db))
@@ -204,6 +206,7 @@ func NewRouter(cfg *config.Config, db *database.DB, antdInfo AntdInfoProvider) h
 			r.Put("/admin/oidc/providers/{id}", AdminUpdateOIDCProvider(db, cfg))
 			r.Delete("/admin/oidc/providers/{id}", AdminDeleteOIDCProvider(db, cfg))
 			r.Put("/admin/oidc/providers/{id}/auto-provision", AdminSetOIDCAutoProvision(db, cfg))
+			r.Put("/admin/oidc/providers/{id}/extra-params", AdminSetOIDCExtraAuthorizeParams(db, cfg))
 
 			// Analytics
 			r.Get("/admin/analytics/uploads", AdminUploadAnalytics(db))
@@ -213,6 +216,7 @@ func NewRouter(cfg *config.Config, db *database.DB, antdInfo AntdInfoProvider) h
 			// Logs
 			r.Get("/admin/logs/audit", AdminAuditLogs(db))
 			r.Get("/admin/logs/system", AdminSystemLogs(db))
+			r.Get("/admin/logs/config", AdminConfigAuditLogs(db))
 			r.Get("/admin/logs/user", AdminUserLogs(db))
 
 			// Quotas

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -201,6 +202,75 @@ func TestUnlinkIdentity_AllowsWhenMultipleIdentities(t *testing.T) {
 	}
 	if err := loginSvc.UnlinkIdentity(ids[0].ID, noPwUser.ID); err != nil {
 		t.Errorf("unlink should succeed (2 identities exist), got %v", err)
+	}
+}
+
+// --- BuildAuthorizeURL: ExtraAuthorizeParams appended -----------------------
+
+func TestBuildAuthorizeURL_AppendsExtraParams(t *testing.T) {
+	db := setupTestDB(t)
+	providerSvc := NewOIDCProviderService(db, testCookieKey)
+	loginSvc := NewOIDCLoginService(db, providerSvc, testCookieKey)
+
+	idp := newFakeIDP(t, "test-client")
+	provider, err := providerSvc.Create("google", "Google", idp.server.URL, "test-client", "test-secret", "openid,email,profile")
+	if err != nil {
+		t.Fatalf("create provider: %v", err)
+	}
+	// Google Workspace domain restriction — the launch-blocking case behind V2-313.
+	if err := providerSvc.SetExtraAuthorizeParams(provider.ID, map[string]string{
+		"hd":     "company.com",
+		"prompt": "select_account",
+	}); err != nil {
+		t.Fatalf("SetExtraAuthorizeParams: %v", err)
+	}
+
+	authURL, _, err := loginSvc.BuildAuthorizeURL(context.Background(), provider.ID, AuthorizeOpts{
+		RedirectURL: idp.server.URL + "/cb",
+	})
+	if err != nil {
+		t.Fatalf("BuildAuthorizeURL: %v", err)
+	}
+
+	u, err := url.Parse(authURL)
+	if err != nil {
+		t.Fatalf("parse authorize URL: %v", err)
+	}
+	q := u.Query()
+	if got := q.Get("hd"); got != "company.com" {
+		t.Errorf("hd = %q, want company.com (full URL: %s)", got, authURL)
+	}
+	if got := q.Get("prompt"); got != "select_account" {
+		t.Errorf("prompt = %q, want select_account", got)
+	}
+	// SDK-managed params must survive intact alongside the extras.
+	if q.Get("state") == "" {
+		t.Error("state missing from authorize URL")
+	}
+	if q.Get("nonce") == "" {
+		t.Error("nonce missing from authorize URL")
+	}
+	if q.Get("code_challenge") == "" {
+		t.Error("code_challenge missing from authorize URL (PKCE broken)")
+	}
+}
+
+func TestBuildAuthorizeURL_NoExtraParamsByDefault(t *testing.T) {
+	db := setupTestDB(t)
+	providerSvc := NewOIDCProviderService(db, testCookieKey)
+	loginSvc := NewOIDCLoginService(db, providerSvc, testCookieKey)
+	idp := newFakeIDP(t, "test-client")
+	provider, _ := providerSvc.Create("okta", "Okta", idp.server.URL, "test-client", "test-secret", "openid,email,profile")
+
+	authURL, _, err := loginSvc.BuildAuthorizeURL(context.Background(), provider.ID, AuthorizeOpts{
+		RedirectURL: idp.server.URL + "/cb",
+	})
+	if err != nil {
+		t.Fatalf("BuildAuthorizeURL: %v", err)
+	}
+	u, _ := url.Parse(authURL)
+	if u.Query().Get("hd") != "" {
+		t.Errorf("hd should be absent when no extras configured, got %q", u.Query().Get("hd"))
 	}
 }
 

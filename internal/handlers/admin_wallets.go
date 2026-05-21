@@ -270,3 +270,80 @@ func AdminRefreshWalletBalance(db *database.DB, cfg *config.Config) http.Handler
 		})
 	}
 }
+
+// walletTransactionResponse mirrors services.Transaction with nullable
+// handling for the wire format.
+type walletTransactionResponse struct {
+	ID           int64   `json:"id"`
+	WalletID     int64   `json:"wallet_id"`
+	UploadID     *int64  `json:"upload_id"`
+	TxType       string  `json:"tx_type"`
+	Amount       string  `json:"amount"`
+	BalanceAfter string  `json:"balance_after"`
+	TxHash       *string `json:"tx_hash"`
+	CreatedAt    string  `json:"created_at"`
+}
+
+func toWalletTransactionResponse(t *services.Transaction) walletTransactionResponse {
+	r := walletTransactionResponse{
+		ID:           t.ID,
+		WalletID:     t.WalletID,
+		TxType:       t.TxType,
+		Amount:       t.Amount,
+		BalanceAfter: t.BalanceAfter,
+		CreatedAt:    t.CreatedAt.Format("2006-01-02T15:04:05Z"),
+	}
+	if t.UploadID.Valid {
+		r.UploadID = &t.UploadID.Int64
+	}
+	if t.TxHash.Valid {
+		r.TxHash = &t.TxHash.String
+	}
+	return r
+}
+
+// @Summary      Per-wallet transaction history
+// @Description  List recorded transactions for a wallet (upload payments, refunds), newest first. V2-321.
+// @Tags         Admin: Wallets
+// @Produce      json
+// @Param        id     path  int true "Wallet ID"
+// @Param        limit  query int false "Max results (default 50, max 100)"
+// @Param        offset query int false "Offset for pagination"
+// @Success      200 {object} map[string]interface{}
+// @Failure      400 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /admin/wallets/{id}/transactions [get]
+// @Security     BearerAuth
+// AdminWalletTransactions returns the transaction log for a wallet (V2-321).
+func AdminWalletTransactions(db *database.DB) http.HandlerFunc {
+	txSvc := services.NewTransactionService(db)
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+		if err != nil {
+			jsonError(w, "invalid wallet id", http.StatusBadRequest)
+			return
+		}
+
+		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+		offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+
+		txns, total, err := txSvc.ListByWallet(id, limit, offset)
+		if err != nil {
+			jsonError(w, "failed to list transactions", http.StatusInternalServerError)
+			return
+		}
+
+		resp := make([]walletTransactionResponse, 0, len(txns))
+		for _, t := range txns {
+			resp = append(resp, toWalletTransactionResponse(t))
+		}
+
+		jsonResponse(w, http.StatusOK, map[string]any{
+			"transactions": resp,
+			"total":        total,
+			"limit":        limit,
+			"offset":       offset,
+		})
+	}
+}

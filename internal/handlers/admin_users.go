@@ -17,16 +17,18 @@ import (
 )
 
 type adminUserResponse struct {
-	ID               int64   `json:"id"`
-	Email            string  `json:"email"`
-	FirstName        string  `json:"first_name"`
-	LastName         string  `json:"last_name"`
-	IsActive         bool    `json:"is_active"`
-	IsServiceAccount bool    `json:"is_service_account"`
-	EmailVerified    bool    `json:"email_verified"`
-	Permissions      string  `json:"permissions"`
-	LastLoginAt      *string `json:"last_login_at"`
-	CreatedAt        string  `json:"created_at"`
+	ID               int64    `json:"id"`
+	Email            string   `json:"email"`
+	FirstName        string   `json:"first_name"`
+	LastName         string   `json:"last_name"`
+	IsActive         bool     `json:"is_active"`
+	IsServiceAccount bool     `json:"is_service_account"`
+	EmailVerified    bool     `json:"email_verified"`
+	Permissions      string   `json:"permissions"`
+	MaxFileSizeBytes *int64   `json:"max_file_size_bytes"`
+	AllowedFileTypes []string `json:"allowed_file_types"`
+	LastLoginAt      *string  `json:"last_login_at"`
+	CreatedAt        string   `json:"created_at"`
 }
 
 type adminListUsersResponse struct {
@@ -56,9 +58,11 @@ type setPermissionsRequest struct {
 }
 
 type updateUserRequest struct {
-	FirstName *string `json:"first_name"`
-	LastName  *string `json:"last_name"`
-	IsActive  *bool   `json:"is_active"`
+	FirstName        *string   `json:"first_name"`
+	LastName         *string   `json:"last_name"`
+	IsActive         *bool     `json:"is_active"`
+	MaxFileSizeBytes *int64    `json:"max_file_size_bytes"`  // nullable; absent in body = leave unchanged
+	AllowedFileTypes *[]string `json:"allowed_file_types"`   // nullable; absent in body = leave unchanged; empty array = clear
 }
 
 func toAdminUserResponse(u *services.User, perms string) adminUserResponse {
@@ -71,7 +75,18 @@ func toAdminUserResponse(u *services.User, perms string) adminUserResponse {
 		IsServiceAccount: u.IsServiceAccount,
 		EmailVerified:    u.EmailVerified,
 		Permissions:      perms,
+		AllowedFileTypes: []string{},
 		CreatedAt:        u.CreatedAt.Format("2006-01-02T15:04:05Z"),
+	}
+	if u.MaxFileSizeBytes.Valid {
+		v := u.MaxFileSizeBytes.Int64
+		r.MaxFileSizeBytes = &v
+	}
+	if u.AllowedFileTypes.Valid && u.AllowedFileTypes.String != "" {
+		var types []string
+		if err := json.Unmarshal([]byte(u.AllowedFileTypes.String), &types); err == nil {
+			r.AllowedFileTypes = types
+		}
 	}
 	if u.LastLoginAt.Valid {
 		t := u.LastLoginAt.Time.Format("2006-01-02T15:04:05Z")
@@ -215,6 +230,42 @@ func AdminUpdateUser(db *database.DB) http.HandlerFunc {
 			}
 			jsonError(w, "failed to update user", http.StatusInternalServerError)
 			return
+		}
+
+		// Restrictions are applied with a separate write when either field is
+		// provided. Sending an empty allowed_file_types array clears the list;
+		// sending null max_file_size_bytes clears the per-user limit.
+		if req.MaxFileSizeBytes != nil || req.AllowedFileTypes != nil {
+			current, err := userSvc.GetByID(id)
+			if err != nil {
+				jsonError(w, "failed to load user", http.StatusInternalServerError)
+				return
+			}
+
+			maxSize := (*int64)(nil)
+			if req.MaxFileSizeBytes != nil {
+				if *req.MaxFileSizeBytes > 0 {
+					maxSize = req.MaxFileSizeBytes
+				}
+			} else if current.MaxFileSizeBytes.Valid {
+				v := current.MaxFileSizeBytes.Int64
+				maxSize = &v
+			}
+
+			allowedJSON := ""
+			if req.AllowedFileTypes != nil {
+				if len(*req.AllowedFileTypes) > 0 {
+					b, _ := json.Marshal(*req.AllowedFileTypes)
+					allowedJSON = string(b)
+				}
+			} else if current.AllowedFileTypes.Valid {
+				allowedJSON = current.AllowedFileTypes.String
+			}
+
+			if err := userSvc.UpdateRestrictions(id, maxSize, allowedJSON); err != nil {
+				jsonError(w, "failed to update user restrictions", http.StatusInternalServerError)
+				return
+			}
 		}
 
 		if preActive != nil && req.IsActive != nil && *preActive != *req.IsActive {

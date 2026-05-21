@@ -140,10 +140,17 @@ func (s *OIDCLoginService) BuildAuthorizeURL(ctx context.Context, providerID int
 		Scopes:       splitScopes(provider.Scopes),
 	}
 
-	authURL = cfg.AuthCodeURL(stateToken,
+	// Base options: nonce + PKCE challenge. Append per-provider extras
+	// (Google Workspace hd=, MS prompt=, AAD domain_hint, …) afterwards so
+	// they never clobber the SDK-managed params.
+	authOpts := []oauth2.AuthCodeOption{
 		oidc.Nonce(nonce),
 		oauth2.S256ChallengeOption(verifier),
-	)
+	}
+	for k, v := range provider.ExtraAuthorizeParams {
+		authOpts = append(authOpts, oauth2.SetAuthURLParam(k, v))
+	}
+	authURL = cfg.AuthCodeURL(stateToken, authOpts...)
 
 	payload := oidcStatePayload{
 		ProviderID:   providerID,
