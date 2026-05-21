@@ -12,6 +12,7 @@ import InputNumber from 'primevue/inputnumber'
 import Select from 'primevue/select'
 import Dialog from 'primevue/dialog'
 import Card from 'primevue/card'
+import Chip from 'primevue/chip'
 import ConfirmDialog from 'primevue/confirmdialog'
 
 const confirm = useConfirm()
@@ -23,6 +24,9 @@ const showCreate = ref(false)
 const newTokenName = ref('')
 const newTokenScope = ref('read')
 const newTokenExpiry = ref(90)
+const newTokenMaxSize = ref<number | null>(null)
+const newTokenAllowedTypes = ref<string[]>([])
+const newTokenAllowedTypesInput = ref('')
 const createdTokenValue = ref('')
 const creating = ref(false)
 
@@ -44,16 +48,39 @@ async function fetchTokens() {
   }
 }
 
+function addAllowedType() {
+  const v = newTokenAllowedTypesInput.value.trim()
+  if (!v) return
+  if (!newTokenAllowedTypes.value.includes(v)) {
+    newTokenAllowedTypes.value.push(v)
+  }
+  newTokenAllowedTypesInput.value = ''
+}
+
+function removeAllowedType(idx: number) {
+  newTokenAllowedTypes.value.splice(idx, 1)
+}
+
 async function createToken() {
   creating.value = true
   try {
-    const res = await api.post('/api/v2/tokens', {
+    const payload: Record<string, unknown> = {
       name: newTokenName.value,
       permissions: [newTokenScope.value],
       expires_in_days: newTokenExpiry.value,
-    })
+    }
+    if (newTokenMaxSize.value && newTokenMaxSize.value > 0) {
+      payload.max_file_size_bytes = newTokenMaxSize.value
+    }
+    if (newTokenAllowedTypes.value.length > 0) {
+      payload.allowed_file_types = newTokenAllowedTypes.value
+    }
+    const res = await api.post('/api/v2/tokens', payload)
     createdTokenValue.value = res.data.secret
     newTokenName.value = ''
+    newTokenMaxSize.value = null
+    newTokenAllowedTypes.value = []
+    newTokenAllowedTypesInput.value = ''
     toast.add({ severity: 'success', summary: 'Created', detail: 'API token created', life: 3000 })
     await fetchTokens()
   } catch (e: any) {
@@ -138,6 +165,22 @@ onMounted(fetchTokens)
           <div class="flex items-center gap-2">
             <InputNumber v-model="newTokenExpiry" :min="1" :max="365" class="w-32" />
             <span class="text-sm text-gray-400">days</span>
+          </div>
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1">Max upload size (optional)</label>
+          <p class="text-xs text-surface-400 mb-2">Bytes. Tighter than your account limit; empty inherits the account/system limit.</p>
+          <InputNumber v-model="newTokenMaxSize" :min="0" placeholder="Inherit account default" class="w-full" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1">Allowed file types (optional)</label>
+          <p class="text-xs text-surface-400 mb-2">Content-type patterns (e.g. <code>image/*</code>, <code>application/pdf</code>). Empty inherits the account/system list.</p>
+          <div class="flex gap-2 mb-2">
+            <InputText v-model="newTokenAllowedTypesInput" placeholder="image/* or application/pdf" class="flex-1" @keydown.enter.prevent="addAllowedType" />
+            <Button icon="pi pi-plus" severity="secondary" @click="addAllowedType" />
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <Chip v-for="(t, idx) in newTokenAllowedTypes" :key="t" :label="t" removable @remove="removeAllowedType(idx)" />
           </div>
         </div>
         <div class="flex justify-end gap-2 pt-2">

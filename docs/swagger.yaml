@@ -39,8 +39,19 @@ definitions:
       default_group_id:
         type: integer
     type: object
+  internal_handlers.adminOIDCExtraAuthorizeParamsRequest:
+    properties:
+      extra_authorize_params:
+        additionalProperties:
+          type: string
+        type: object
+    type: object
   internal_handlers.adminUserResponse:
     properties:
+      allowed_file_types:
+        items:
+          type: string
+        type: array
       created_at:
         type: string
       email:
@@ -59,6 +70,8 @@ definitions:
         type: string
       last_name:
         type: string
+      max_file_size_bytes:
+        type: integer
       permissions:
         type: string
     type: object
@@ -158,12 +171,20 @@ definitions:
     type: object
   internal_handlers.createTokenRequest:
     properties:
+      allowed_file_types:
+        description: empty = inherit user/system list
+        items:
+          type: string
+        type: array
       department:
         type: string
       description:
         type: string
       expires_in_days:
         description: null = use system default
+        type: integer
+      max_file_size_bytes:
+        description: null = inherit user/system limit
         type: integer
       name:
         type: string
@@ -225,11 +246,23 @@ definitions:
       email:
         type: string
     type: object
+  internal_handlers.groupMemberResponse:
+    properties:
+      email:
+        type: string
+      id:
+        type: integer
+      name:
+        type: string
+    type: object
   internal_handlers.groupResponse:
     properties:
       created_at:
         type: string
       description:
+        type: string
+      external_id:
+        description: SCIM-provisioned groups carry this
         type: string
       id:
         type: integer
@@ -283,6 +316,10 @@ definitions:
         type: integer
       display_name:
         type: string
+      extra_authorize_params:
+        additionalProperties:
+          type: string
+        type: object
       id:
         type: integer
       is_enabled:
@@ -367,6 +404,10 @@ definitions:
     type: object
   internal_handlers.tokenResponse:
     properties:
+      allowed_file_types:
+        items:
+          type: string
+        type: array
       created_at:
         type: string
       department:
@@ -377,6 +418,8 @@ definitions:
         type: string
       last_used_at:
         type: string
+      max_file_size_bytes:
+        type: integer
       name:
         type: string
       owner_id:
@@ -435,12 +478,20 @@ definitions:
     type: object
   internal_handlers.updateUserRequest:
     properties:
+      allowed_file_types:
+        description: nullable; absent in body = leave unchanged; empty array = clear
+        items:
+          type: string
+        type: array
       first_name:
         type: string
       is_active:
         type: boolean
       last_name:
         type: string
+      max_file_size_bytes:
+        description: nullable; absent in body = leave unchanged
+        type: integer
     type: object
   internal_handlers.updateWebhookRequest:
     properties:
@@ -791,6 +842,43 @@ paths:
       tags:
       - 'Admin: Groups'
   /admin/groups/{id}/members:
+    get:
+      description: Return the resolved members of a group (id, email, display name).
+        V2-304.
+      parameters:
+      - description: Group ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              items:
+                $ref: '#/definitions/internal_handlers.groupMemberResponse'
+              type: array
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List group members
+      tags:
+      - 'Admin: Groups'
     post:
       consumes:
       - application/json
@@ -983,51 +1071,9 @@ paths:
       - 'Admin: Logs'
   /admin/logs/system:
     get:
-      description: Return system log entries with optional filtering (retention-managed)
-      parameters:
-      - description: Filter by log level
-        in: query
-        name: level
-        type: string
-      - description: Filter by component
-        in: query
-        name: component
-        type: string
-      - description: Start date (YYYY-MM-DD)
-        in: query
-        name: since
-        type: string
-      - description: End date (YYYY-MM-DD)
-        in: query
-        name: until
-        type: string
-      - description: Max results
-        in: query
-        name: limit
-        type: integer
-      - description: Offset for pagination
-        in: query
-        name: offset
-        type: integer
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties: true
-            type: object
-        "500":
-          description: Internal Server Error
-          schema:
-            additionalProperties:
-              type: string
-            type: object
+      responses: {}
       security:
       - BearerAuth: []
-      summary: Query system logs
-      tags:
-      - 'Admin: Logs'
   /admin/logs/user:
     get:
       description: Return user activity log entries with optional filtering
@@ -1255,6 +1301,45 @@ paths:
       security:
       - BearerAuth: []
       summary: Toggle OIDC auto-provisioning
+      tags:
+      - 'Admin: OIDC'
+  /admin/oidc/providers/{id}/extra-params:
+    put:
+      consumes:
+      - application/json
+      description: Replace the IdP-specific params map appended to the authorize URL.
+        Used to set Google Workspace hd=, Microsoft prompt=, AAD domain_hint, etc.
+        Send an empty object to clear.
+      parameters:
+      - description: Provider ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: extra_authorize_params map (empty {} to clear)
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handlers.adminOIDCExtraAuthorizeParamsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: boolean
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Set OIDC extra authorize-URL params
       tags:
       - 'Admin: OIDC'
   /admin/quotas:
@@ -2147,6 +2232,49 @@ paths:
       security:
       - BearerAuth: []
       summary: Set default wallet
+      tags:
+      - 'Admin: Wallets'
+  /admin/wallets/{id}/transactions:
+    get:
+      description: List recorded transactions for a wallet (upload payments, refunds),
+        newest first. V2-321.
+      parameters:
+      - description: Wallet ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Max results (default 50, max 100)
+        in: query
+        name: limit
+        type: integer
+      - description: Offset for pagination
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Per-wallet transaction history
       tags:
       - 'Admin: Wallets'
   /admin/webhooks:

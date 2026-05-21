@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -16,16 +17,18 @@ import (
 )
 
 type adminUserResponse struct {
-	ID               int64   `json:"id"`
-	Email            string  `json:"email"`
-	FirstName        string  `json:"first_name"`
-	LastName         string  `json:"last_name"`
-	IsActive         bool    `json:"is_active"`
-	IsServiceAccount bool    `json:"is_service_account"`
-	EmailVerified    bool    `json:"email_verified"`
-	Permissions      string  `json:"permissions"`
-	LastLoginAt      *string `json:"last_login_at"`
-	CreatedAt        string  `json:"created_at"`
+	ID               int64    `json:"id"`
+	Email            string   `json:"email"`
+	FirstName        string   `json:"first_name"`
+	LastName         string   `json:"last_name"`
+	IsActive         bool     `json:"is_active"`
+	IsServiceAccount bool     `json:"is_service_account"`
+	EmailVerified    bool     `json:"email_verified"`
+	Permissions      string   `json:"permissions"`
+	MaxFileSizeBytes *int64   `json:"max_file_size_bytes"`
+	AllowedFileTypes []string `json:"allowed_file_types"`
+	LastLoginAt      *string  `json:"last_login_at"`
+	CreatedAt        string   `json:"created_at"`
 }
 
 type adminListUsersResponse struct {
@@ -55,9 +58,11 @@ type setPermissionsRequest struct {
 }
 
 type updateUserRequest struct {
-	FirstName *string `json:"first_name"`
-	LastName  *string `json:"last_name"`
-	IsActive  *bool   `json:"is_active"`
+	FirstName        *string   `json:"first_name"`
+	LastName         *string   `json:"last_name"`
+	IsActive         *bool     `json:"is_active"`
+	MaxFileSizeBytes *int64    `json:"max_file_size_bytes"`  // nullable; absent in body = leave unchanged
+	AllowedFileTypes *[]string `json:"allowed_file_types"`   // nullable; absent in body = leave unchanged; empty array = clear
 }
 
 func toAdminUserResponse(u *services.User, perms string) adminUserResponse {
@@ -70,7 +75,18 @@ func toAdminUserResponse(u *services.User, perms string) adminUserResponse {
 		IsServiceAccount: u.IsServiceAccount,
 		EmailVerified:    u.EmailVerified,
 		Permissions:      perms,
+		AllowedFileTypes: []string{},
 		CreatedAt:        u.CreatedAt.Format("2006-01-02T15:04:05Z"),
+	}
+	if u.MaxFileSizeBytes.Valid {
+		v := u.MaxFileSizeBytes.Int64
+		r.MaxFileSizeBytes = &v
+	}
+	if u.AllowedFileTypes.Valid && u.AllowedFileTypes.String != "" {
+		var types []string
+		if err := json.Unmarshal([]byte(u.AllowedFileTypes.String), &types); err == nil {
+			r.AllowedFileTypes = types
+		}
 	}
 	if u.LastLoginAt.Valid {
 		t := u.LastLoginAt.Time.Format("2006-01-02T15:04:05Z")
@@ -174,6 +190,7 @@ func AdminGetUser(db *database.DB) http.HandlerFunc {
 func AdminUpdateUser(db *database.DB) http.HandlerFunc {
 	userSvc := services.NewUserService(db)
 	permSvc := services.NewPermissionService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
@@ -186,6 +203,15 @@ func AdminUpdateUser(db *database.DB) http.HandlerFunc {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			jsonError(w, "invalid request body", http.StatusBadRequest)
 			return
+		}
+
+		// Capture pre-state so we can audit an is_active transition (V2-315).
+		var preActive *bool
+		if req.IsActive != nil {
+			if pre, err := userSvc.GetByID(id); err == nil {
+				v := pre.IsActive
+				preActive = &v
+			}
 		}
 
 		firstName := ""
@@ -206,6 +232,51 @@ func AdminUpdateUser(db *database.DB) http.HandlerFunc {
 			return
 		}
 
+		// Restrictions are applied with a separate write when either field is
+		// provided. Sending an empty allowed_file_types array clears the list;
+		// sending null max_file_size_bytes clears the per-user limit.
+		if req.MaxFileSizeBytes != nil || req.AllowedFileTypes != nil {
+			current, err := userSvc.GetByID(id)
+			if err != nil {
+				jsonError(w, "failed to load user", http.StatusInternalServerError)
+				return
+			}
+
+			maxSize := (*int64)(nil)
+			if req.MaxFileSizeBytes != nil {
+				if *req.MaxFileSizeBytes > 0 {
+					maxSize = req.MaxFileSizeBytes
+				}
+			} else if current.MaxFileSizeBytes.Valid {
+				v := current.MaxFileSizeBytes.Int64
+				maxSize = &v
+			}
+
+			allowedJSON := ""
+			if req.AllowedFileTypes != nil {
+				if len(*req.AllowedFileTypes) > 0 {
+					b, _ := json.Marshal(*req.AllowedFileTypes)
+					allowedJSON = string(b)
+				}
+			} else if current.AllowedFileTypes.Valid {
+				allowedJSON = current.AllowedFileTypes.String
+			}
+
+			if err := userSvc.UpdateRestrictions(id, maxSize, allowedJSON); err != nil {
+				jsonError(w, "failed to update user restrictions", http.StatusInternalServerError)
+				return
+			}
+		}
+
+		if preActive != nil && req.IsActive != nil && *preActive != *req.IsActive {
+			callerID := middleware.GetUserID(r.Context())
+			eventType := "user_enabled"
+			if !*req.IsActive {
+				eventType = "user_disabled"
+			}
+			auditEvent(r, logSvc, eventType, "info", &callerID, fmt.Sprintf("target=%d", id))
+		}
+
 		user, _ := userSvc.GetByID(id)
 		perms, _ := permSvc.GetEffective(id)
 		jsonResponse(w, http.StatusOK, toAdminUserResponse(user, perms))
@@ -224,6 +295,7 @@ func AdminUpdateUser(db *database.DB) http.HandlerFunc {
 // @Security     BearerAuth
 func AdminDeleteUser(db *database.DB) http.HandlerFunc {
 	userSvc := services.NewUserService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
@@ -242,6 +314,8 @@ func AdminDeleteUser(db *database.DB) http.HandlerFunc {
 			jsonError(w, "failed to delete user", http.StatusInternalServerError)
 			return
 		}
+
+		auditEvent(r, logSvc, "user_deleted", "warn", &callerID, fmt.Sprintf("target=%d", id))
 
 		jsonResponse(w, http.StatusOK, map[string]string{"message": "user deleted"})
 	}
@@ -262,6 +336,7 @@ func AdminDeleteUser(db *database.DB) http.HandlerFunc {
 func AdminCreateUser(db *database.DB) http.HandlerFunc {
 	userSvc := services.NewUserService(db)
 	permSvc := services.NewPermissionService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req adminCreateUserRequest
@@ -305,6 +380,9 @@ func AdminCreateUser(db *database.DB) http.HandlerFunc {
 		callerID := middleware.GetUserID(r.Context())
 		_ = permSvc.SetDirect(user.ID, req.Permissions, callerID)
 
+		auditEvent(r, logSvc, "user_created", "info", &callerID,
+			fmt.Sprintf("id=%d email=%s permissions=%s", user.ID, user.Email, req.Permissions))
+
 		jsonResponse(w, http.StatusCreated, toAdminUserResponse(user, req.Permissions))
 	}
 }
@@ -324,6 +402,7 @@ func AdminCreateUser(db *database.DB) http.HandlerFunc {
 func AdminCreateServiceAccount(db *database.DB) http.HandlerFunc {
 	userSvc := services.NewUserService(db)
 	permSvc := services.NewPermissionService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req createServiceAccountRequest
@@ -359,6 +438,9 @@ func AdminCreateServiceAccount(db *database.DB) http.HandlerFunc {
 		callerID := middleware.GetUserID(r.Context())
 		_ = permSvc.SetDirect(user.ID, req.Permissions, callerID)
 
+		auditEvent(r, logSvc, "user_created", "info", &callerID,
+			fmt.Sprintf("service_account id=%d email=%s permissions=%s", user.ID, user.Email, req.Permissions))
+
 		jsonResponse(w, http.StatusCreated, toAdminUserResponse(user, req.Permissions))
 	}
 }
@@ -378,6 +460,7 @@ func AdminCreateServiceAccount(db *database.DB) http.HandlerFunc {
 // @Security     BearerAuth
 func AdminSetPermissions(db *database.DB) http.HandlerFunc {
 	permSvc := services.NewPermissionService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
@@ -397,15 +480,15 @@ func AdminSetPermissions(db *database.DB) http.HandlerFunc {
 			return
 		}
 
+		// Capture old permission so we can record the transition.
+		oldPerm, _ := permSvc.GetEffective(id)
+
 		// Check we're not removing the last admin
-		if req.Permission != "admin" {
-			currentPerm, _ := permSvc.GetEffective(id)
-			if currentPerm == "admin" {
-				count, _ := permSvc.CountAdmins()
-				if count <= 1 {
-					jsonError(w, "cannot remove the last admin", http.StatusConflict)
-					return
-				}
+		if req.Permission != "admin" && oldPerm == "admin" {
+			count, _ := permSvc.CountAdmins()
+			if count <= 1 {
+				jsonError(w, "cannot remove the last admin", http.StatusConflict)
+				return
 			}
 		}
 
@@ -414,6 +497,9 @@ func AdminSetPermissions(db *database.DB) http.HandlerFunc {
 			jsonError(w, "failed to set permissions", http.StatusInternalServerError)
 			return
 		}
+
+		auditEvent(r, logSvc, "user_permissions_changed", "warn", &callerID,
+			fmt.Sprintf("target=%d old=%s new=%s", id, oldPerm, req.Permission))
 
 		jsonResponse(w, http.StatusOK, map[string]string{
 			"message":    "permissions updated",

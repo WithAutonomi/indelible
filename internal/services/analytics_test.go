@@ -210,6 +210,101 @@ func TestCostAnalytics_Empty(t *testing.T) {
 	}
 }
 
+// V2-281 item 4: cost analytics aggregate by api_tokens.department so the
+// admin dashboard can answer "which department spent the most this month."
+// Catches the regression where someone refactors token resolution out of the
+// SELECT JOIN.
+
+// insertTestUploadViaToken inserts a completed upload tied to a specific
+// API token. Used by the by-department aggregation tests.
+func insertTestUploadViaToken(t *testing.T, uploadSvc *UploadService, userID, tokenID int64, filename string, size int64) {
+	t.Helper()
+	tID := tokenID
+	u, err := uploadSvc.Create(userID, &tID, filename, filename, size, "application/octet-stream", "public", "/tmp/"+filename, nil)
+	if err != nil {
+		t.Fatalf("create upload via token: %v", err)
+	}
+	uploadSvc.MarkCompleted(u.ID, "0xDATAMAP", "1000")
+}
+
+func TestCostAnalytics_ByDepartment_AggregatesAcrossTokens(t *testing.T) {
+	db := setupTestDB(t)
+	userSvc := NewUserService(db)
+	uploadSvc := NewUploadService(db)
+	tokenSvc := NewTokenService(db)
+	analyticsSvc := NewAnalyticsService(db)
+
+	user := createTestUser(t, userSvc, "dept@example.com", "D", "U")
+
+	// Two tokens in "engineering", one in "marketing".
+	_, engA, _ := tokenSvc.Create(user.ID, "eng-a", "", `["write"]`, "engineering", nil, "", nil)
+	_, engB, _ := tokenSvc.Create(user.ID, "eng-b", "", `["write"]`, "engineering", nil, "", nil)
+	_, mkt, _ := tokenSvc.Create(user.ID, "mkt", "", `["write"]`, "marketing", nil, "", nil)
+
+	// 3 uploads via engineering (across 2 tokens), 1 via marketing.
+	insertTestUploadViaToken(t, uploadSvc, user.ID, engA.ID, "ea1.bin", 1000)
+	insertTestUploadViaToken(t, uploadSvc, user.ID, engA.ID, "ea2.bin", 2000)
+	insertTestUploadViaToken(t, uploadSvc, user.ID, engB.ID, "eb1.bin", 3000)
+	insertTestUploadViaToken(t, uploadSvc, user.ID, mkt.ID, "m1.bin", 500)
+
+	since := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+	stats, err := analyticsSvc.CostAnalytics(since)
+	if err != nil {
+		t.Fatalf("CostAnalytics: %v", err)
+	}
+
+	byDept := map[string]DepartmentCost{}
+	for _, d := range stats.ByDepartment {
+		byDept[d.Department] = d
+	}
+
+	eng, ok := byDept["engineering"]
+	if !ok {
+		t.Fatalf("missing 'engineering' bucket; got %v", stats.ByDepartment)
+	}
+	if eng.UploadCount != 3 {
+		t.Errorf("engineering uploads = %d, want 3 (aggregated across both eng tokens)", eng.UploadCount)
+	}
+	if eng.TotalBytes != 6000 {
+		t.Errorf("engineering bytes = %d, want 6000", eng.TotalBytes)
+	}
+	if eng.TotalCost != "3000" { // 3 * actual_cost=1000
+		t.Errorf("engineering cost = %q, want '3000'", eng.TotalCost)
+	}
+
+	mktBucket, ok := byDept["marketing"]
+	if !ok {
+		t.Fatalf("missing 'marketing' bucket")
+	}
+	if mktBucket.UploadCount != 1 {
+		t.Errorf("marketing uploads = %d", mktBucket.UploadCount)
+	}
+}
+
+func TestCostAnalytics_ByDepartment_UnassignedBucketForNoToken(t *testing.T) {
+	db := setupTestDB(t)
+	userSvc := NewUserService(db)
+	uploadSvc := NewUploadService(db)
+	analyticsSvc := NewAnalyticsService(db)
+
+	user := createTestUser(t, userSvc, "noTok@example.com", "N", "T")
+	// Web-UI upload (no token) → must fall into the 'unassigned' bucket so
+	// totals tie out across breakdowns.
+	insertTestUpload(t, uploadSvc, user.ID, "web.bin", 4000, "completed")
+
+	since := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+	stats, _ := analyticsSvc.CostAnalytics(since)
+	found := false
+	for _, d := range stats.ByDepartment {
+		if d.Department == "unassigned" && d.UploadCount == 1 {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected 'unassigned' bucket with 1 upload, got %v", stats.ByDepartment)
+	}
+}
+
 func TestTokenAnalytics_Empty(t *testing.T) {
 	db := setupTestDB(t)
 	analyticsSvc := NewAnalyticsService(db)

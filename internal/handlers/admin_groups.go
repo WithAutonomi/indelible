@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -15,13 +16,20 @@ import (
 )
 
 type groupResponse struct {
-	ID              int64  `json:"id"`
-	Name            string `json:"name"`
-	Description     string `json:"description"`
-	PermissionLevel string `json:"permission_level"`
-	IsActive        bool   `json:"is_active"`
-	MemberCount     int64  `json:"member_count"`
-	CreatedAt       string `json:"created_at"`
+	ID              int64   `json:"id"`
+	Name            string  `json:"name"`
+	Description     string  `json:"description"`
+	PermissionLevel string  `json:"permission_level"`
+	IsActive        bool    `json:"is_active"`
+	ExternalID      *string `json:"external_id"` // SCIM-provisioned groups carry this
+	MemberCount     int64   `json:"member_count"`
+	CreatedAt       string  `json:"created_at"`
+}
+
+type groupMemberResponse struct {
+	ID    int64  `json:"id"`
+	Email string `json:"email"`
+	Name  string `json:"name"`
 }
 
 type createGroupRequest struct {
@@ -42,7 +50,7 @@ type addMemberRequest struct {
 }
 
 func toGroupResponse(g *services.Group, memberCount int64) groupResponse {
-	return groupResponse{
+	r := groupResponse{
 		ID:              g.ID,
 		Name:            g.Name,
 		Description:     g.Description,
@@ -51,6 +59,10 @@ func toGroupResponse(g *services.Group, memberCount int64) groupResponse {
 		MemberCount:     memberCount,
 		CreatedAt:       g.CreatedAt.Format("2006-01-02T15:04:05Z"),
 	}
+	if g.ExternalID.Valid {
+		r.ExternalID = &g.ExternalID.String
+	}
+	return r
 }
 
 func validPermissionLevel(level string) bool {
@@ -99,6 +111,7 @@ func AdminListGroups(db *database.DB) http.HandlerFunc {
 // @Security     BearerAuth
 func AdminCreateGroup(db *database.DB) http.HandlerFunc {
 	groupSvc := services.NewGroupService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req createGroupRequest
@@ -127,6 +140,10 @@ func AdminCreateGroup(db *database.DB) http.HandlerFunc {
 			return
 		}
 
+		callerID := middleware.GetUserID(r.Context())
+		auditEvent(r, logSvc, "group_created", "info", &callerID,
+			fmt.Sprintf("id=%d name=%s permission=%s", group.ID, group.Name, req.PermissionLevel))
+
 		jsonResponse(w, http.StatusCreated, toGroupResponse(group, 0))
 	}
 }
@@ -146,6 +163,7 @@ func AdminCreateGroup(db *database.DB) http.HandlerFunc {
 // @Security     BearerAuth
 func AdminUpdateGroup(db *database.DB) http.HandlerFunc {
 	groupSvc := services.NewGroupService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
@@ -174,6 +192,9 @@ func AdminUpdateGroup(db *database.DB) http.HandlerFunc {
 			return
 		}
 
+		callerID := middleware.GetUserID(r.Context())
+		auditEvent(r, logSvc, "group_updated", "info", &callerID, fmt.Sprintf("id=%d", id))
+
 		group, _ := groupSvc.GetByID(id)
 		count, _ := groupSvc.MemberCount(id)
 		jsonResponse(w, http.StatusOK, toGroupResponse(group, count))
@@ -192,6 +213,7 @@ func AdminUpdateGroup(db *database.DB) http.HandlerFunc {
 // @Security     BearerAuth
 func AdminDeleteGroup(db *database.DB) http.HandlerFunc {
 	groupSvc := services.NewGroupService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
@@ -204,6 +226,9 @@ func AdminDeleteGroup(db *database.DB) http.HandlerFunc {
 			jsonError(w, "failed to delete group", http.StatusInternalServerError)
 			return
 		}
+
+		callerID := middleware.GetUserID(r.Context())
+		auditEvent(r, logSvc, "group_deleted", "warn", &callerID, fmt.Sprintf("id=%d", id))
 
 		jsonResponse(w, http.StatusOK, map[string]string{"message": "group deleted"})
 	}
@@ -224,6 +249,7 @@ func AdminDeleteGroup(db *database.DB) http.HandlerFunc {
 // @Security     BearerAuth
 func AdminAddGroupMember(db *database.DB) http.HandlerFunc {
 	groupSvc := services.NewGroupService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		groupID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
@@ -248,6 +274,9 @@ func AdminAddGroupMember(db *database.DB) http.HandlerFunc {
 			return
 		}
 
+		auditEvent(r, logSvc, "group_member_added", "info", &addedBy,
+			fmt.Sprintf("group=%d user=%d", groupID, req.UserID))
+
 		jsonResponse(w, http.StatusCreated, map[string]string{"message": "member added"})
 	}
 }
@@ -266,6 +295,7 @@ func AdminAddGroupMember(db *database.DB) http.HandlerFunc {
 // @Security     BearerAuth
 func AdminRemoveGroupMember(db *database.DB) http.HandlerFunc {
 	groupSvc := services.NewGroupService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		groupID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
@@ -288,6 +318,56 @@ func AdminRemoveGroupMember(db *database.DB) http.HandlerFunc {
 			return
 		}
 
+		callerID := middleware.GetUserID(r.Context())
+		auditEvent(r, logSvc, "group_member_removed", "info", &callerID,
+			fmt.Sprintf("group=%d user=%d", groupID, userID))
+
 		jsonResponse(w, http.StatusOK, map[string]string{"message": "member removed"})
+	}
+}
+
+// @Summary      List group members
+// @Description  Return the resolved members of a group (id, email, display name). V2-304.
+// @Tags         Admin: Groups
+// @Produce      json
+// @Param        id path int true "Group ID"
+// @Success      200 {object} map[string][]groupMemberResponse
+// @Failure      400 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /admin/groups/{id}/members [get]
+// @Security     BearerAuth
+// AdminListGroupMembers returns resolved member info for a group (V2-304).
+func AdminListGroupMembers(db *database.DB) http.HandlerFunc {
+	groupSvc := services.NewGroupService(db)
+	userSvc := services.NewUserService(db)
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+		if err != nil {
+			jsonError(w, "invalid group id", http.StatusBadRequest)
+			return
+		}
+
+		memberIDs, err := groupSvc.ListMembers(id)
+		if err != nil {
+			jsonError(w, "failed to list members", http.StatusInternalServerError)
+			return
+		}
+
+		resp := make([]groupMemberResponse, 0, len(memberIDs))
+		for _, uid := range memberIDs {
+			u, err := userSvc.GetByID(uid)
+			if err != nil {
+				// Best-effort: skip soft-deleted users rather than 500ing the whole call.
+				continue
+			}
+			resp = append(resp, groupMemberResponse{
+				ID:    u.ID,
+				Email: u.Email,
+				Name:  strings.TrimSpace(u.FirstName + " " + u.LastName),
+			})
+		}
+
+		jsonResponse(w, http.StatusOK, map[string]any{"members": resp})
 	}
 }

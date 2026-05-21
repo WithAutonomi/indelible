@@ -65,6 +65,12 @@ const router = createRouter({
       meta: { auth: true, admin: true },
     },
     {
+      path: '/admin/groups',
+      name: 'admin-groups',
+      component: () => import('../views/admin/GroupsView.vue'),
+      meta: { auth: true, admin: true },
+    },
+    {
       path: '/admin/wallets',
       name: 'admin-wallets',
       component: () => import('../views/admin/WalletsView.vue'),
