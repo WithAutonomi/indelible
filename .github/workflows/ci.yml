@@ -192,18 +192,13 @@ jobs:
           retention-days: 1
 
   # Validates the Dockerfile + .dockerignore + buildx cross-compile path on
-  # every PR. Builds amd64 locally for a smoke test (start → /health → uid 65532)
-  # and also runs the multi-arch (amd64+arm64) build without loading, just to
-  # confirm the arm64 cross-compile still succeeds. No image is pushed here —
-  # publishing is handled in release.yml + V2-298.
-  # Docker build is master-only — multi-arch buildx + amd64 smoke test is
-  # ~5min and runs against ghcr's cache. We don't need it on every PR; use
-  # `make docker` locally or run scripts/ci-dev1.sh for full coverage before
-  # merging anything that touches Dockerfile/deploy/.
+  # every PR and push. Builds amd64 locally for a smoke test
+  # (start → /health → uid 65532) and also runs the multi-arch (amd64+arm64)
+  # build without loading, just to confirm the arm64 cross-compile still
+  # succeeds. No image is pushed here — publishing is handled in release.yml.
   docker:
     name: Docker (build + smoke test)
     runs-on: ubuntu-latest
-    if: github.event_name == 'push'
     steps:
       - uses: actions/checkout@v4
 
