@@ -982,9 +982,11 @@ paths:
       summary: Query audit logs
       tags:
       - 'Admin: Logs'
-  /admin/logs/system:
+  /admin/logs/config:
     get:
-      description: Return system log entries with optional filtering (retention-managed)
+      description: |-
+        Return system log entries with optional filtering (retention-managed)
+        Return config_audit entries showing old/new value, actor, IP, and UA for every settings change. Permanent (never purged).
       parameters:
       - description: Filter by log level
         in: query
@@ -1010,7 +1012,28 @@ paths:
         in: query
         name: offset
         type: integer
+      - description: Filter by setting key
+        in: query
+        name: setting_key
+        type: string
+      - description: Start date (YYYY-MM-DD)
+        in: query
+        name: since
+        type: string
+      - description: End date (YYYY-MM-DD)
+        in: query
+        name: until
+        type: string
+      - description: Max results (default 100, max 500)
+        in: query
+        name: limit
+        type: integer
+      - description: Offset for pagination
+        in: query
+        name: offset
+        type: integer
       produces:
+      - application/json
       - application/json
       responses:
         "200":
@@ -1026,9 +1049,15 @@ paths:
             type: object
       security:
       - BearerAuth: []
-      summary: Query system logs
+      summary: Query config-change audit log
       tags:
       - 'Admin: Logs'
+      - 'Admin: Logs'
+  /admin/logs/system:
+    get:
+      responses: {}
+      security:
+      - BearerAuth: []
   /admin/logs/user:
     get:
       description: Return user activity log entries with optional filtering

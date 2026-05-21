@@ -42,6 +42,39 @@ type auditLogResponse struct {
 	CreatedAt string  `json:"created_at"`
 }
 
+type configAuditResponse struct {
+	ID         int64   `json:"id"`
+	SettingKey string  `json:"setting_key"`
+	OldValue   *string `json:"old_value"`
+	NewValue   string  `json:"new_value"`
+	ChangedBy  *int64  `json:"changed_by"`
+	IPAddress  *string `json:"ip_address"`
+	UserAgent  *string `json:"user_agent"`
+	CreatedAt  string  `json:"created_at"`
+}
+
+func toConfigAuditResponse(e *services.ConfigAuditEntry) configAuditResponse {
+	r := configAuditResponse{
+		ID:         e.ID,
+		SettingKey: e.SettingKey,
+		NewValue:   e.NewValue,
+		CreatedAt:  e.CreatedAt.Format("2006-01-02T15:04:05Z"),
+	}
+	if e.OldValue.Valid {
+		r.OldValue = &e.OldValue.String
+	}
+	if e.ChangedBy.Valid {
+		r.ChangedBy = &e.ChangedBy.Int64
+	}
+	if e.IPAddress.Valid {
+		r.IPAddress = &e.IPAddress.String
+	}
+	if e.UserAgent.Valid {
+		r.UserAgent = &e.UserAgent.String
+	}
+	return r
+}
+
 type systemLogResponse struct {
 	ID        int64   `json:"id"`
 	Level     string  `json:"level"`
@@ -138,6 +171,42 @@ func AdminAuditLogs(db *database.DB) http.HandlerFunc {
 // @Param        offset    query int    false "Offset for pagination"
 // @Success      200 {object} map[string]interface{}
 // @Failure      500 {object} map[string]string
+// @Summary      Query config-change audit log
+// @Description  Return config_audit entries showing old/new value, actor, IP, and UA for every settings change. Permanent (never purged).
+// @Tags         Admin: Logs
+// @Produce      json
+// @Param        setting_key query string false "Filter by setting key"
+// @Param        since       query string false "Start date (YYYY-MM-DD)"
+// @Param        until       query string false "End date (YYYY-MM-DD)"
+// @Param        limit       query int    false "Max results (default 100, max 500)"
+// @Param        offset      query int    false "Offset for pagination"
+// @Success      200 {object} map[string]interface{}
+// @Failure      500 {object} map[string]string
+// @Router       /admin/logs/config [get]
+// @Security     BearerAuth
+// AdminConfigAuditLogs returns config-change history. Backs FEATURES.md §9's
+// "config change audit trail: records old value, new value, who changed, when,
+// from where" claim — Update() already writes the rows; this reads them back.
+func AdminConfigAuditLogs(db *database.DB) http.HandlerFunc {
+	settingsSvc := services.NewSettingsService(db)
+	return func(w http.ResponseWriter, r *http.Request) {
+		settingKey := r.URL.Query().Get("setting_key")
+		_, _, since, until, limit, offset := parseLogFilters(r)
+		entries, total, err := settingsSvc.QueryConfigAudit(settingKey, since, until, limit, offset)
+		if err != nil {
+			jsonError(w, "failed to query config audit", http.StatusInternalServerError)
+			return
+		}
+		resp := make([]configAuditResponse, 0, len(entries))
+		for _, e := range entries {
+			resp = append(resp, toConfigAuditResponse(e))
+		}
+		jsonResponse(w, http.StatusOK, map[string]any{
+			"entries": resp, "total": total, "limit": limit, "offset": offset,
+		})
+	}
+}
+
 // @Router       /admin/logs/system [get]
 // @Security     BearerAuth
 // AdminSystemLogs returns system log entries (retention-managed).
