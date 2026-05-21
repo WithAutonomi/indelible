@@ -61,7 +61,7 @@ func Health(db *database.DB, cfg *config.Config, antdInfo AntdInfoProvider) http
 			ctx, cancel := context.WithTimeout(r.Context(), probeTimeout)
 			defer cancel()
 			probe := antd.NewClient(cfg.AntdURL, antd.WithTimeout(probeTimeout))
-			if _, err := probe.DataCost(ctx, []byte{0, 0, 0}); err == nil {
+			if _, err := probe.DataCost(ctx, []byte{0, 0, 0}, antd.PaymentModeAuto); err == nil {
 				antdOK = true
 			}
 		}

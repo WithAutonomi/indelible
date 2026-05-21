@@ -4,12 +4,13 @@ go 1.25.10
 
 require (
 	github.com/BurntSushi/toml v1.6.0
-	github.com/WithAutonomi/ant-sdk/antd-go v0.7.0
+	github.com/WithAutonomi/ant-sdk/antd-go v0.8.0
 	github.com/coreos/go-oidc/v3 v3.18.0
 	github.com/elimity-com/scim v0.0.0-20240320110924-172bf2aee9c8
-	github.com/ethereum/go-ethereum v1.17.2
+	github.com/ethereum/go-ethereum v1.17.3
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/go-chi/cors v1.2.2
+	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/lib/pq v1.11.2
@@ -37,7 +38,6 @@ require (
 	github.com/di-wu/xsd-datetime v1.0.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/ethereum/c-kzg-4844/v2 v2.1.6 // indirect
-	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
