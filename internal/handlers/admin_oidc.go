@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -10,6 +11,7 @@ import (
 
 	"github.com/WithAutonomi/indelible/internal/config"
 	"github.com/WithAutonomi/indelible/internal/database"
+	"github.com/WithAutonomi/indelible/internal/middleware"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
 
@@ -114,6 +116,7 @@ func AdminListOIDCProviders(db *database.DB, cfg *config.Config) http.HandlerFun
 // @Security     BearerAuth
 func AdminCreateOIDCProvider(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	oidcSvc := services.NewOIDCProviderService(db, cfg.WalletEncryptionKey)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req createOIDCRequest
@@ -135,6 +138,13 @@ func AdminCreateOIDCProvider(db *database.DB, cfg *config.Config) http.HandlerFu
 			return
 		}
 
+		callerID := middleware.GetUserID(r.Context())
+		// Detail logs the issuer URL + client_id (public-ish identifiers) so
+		// an operator can correlate the audit row with the provider config in
+		// the IdP console. NEVER logs req.ClientSecret.
+		auditEvent(r, logSvc, "oidc_provider_created", "info", &callerID,
+			fmt.Sprintf("id=%d name=%s issuer=%s client_id=%s", provider.ID, provider.Name, provider.IssuerURL, provider.ClientID))
+
 		jsonResponse(w, http.StatusCreated, toOIDCProviderResponse(provider))
 	}
 }
@@ -154,6 +164,7 @@ func AdminCreateOIDCProvider(db *database.DB, cfg *config.Config) http.HandlerFu
 // @Security     BearerAuth
 func AdminUpdateOIDCProvider(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	oidcSvc := services.NewOIDCProviderService(db, cfg.WalletEncryptionKey)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
@@ -168,6 +179,9 @@ func AdminUpdateOIDCProvider(db *database.DB, cfg *config.Config) http.HandlerFu
 			return
 		}
 
+		// Snapshot pre-state for the enabled/disabled transition event.
+		pre, _ := oidcSvc.GetByID(id)
+
 		provider, err := oidcSvc.Update(id, req.Name, req.DisplayName, req.IssuerURL, req.ClientID, req.ClientSecret, req.Scopes, req.IsEnabled)
 		if err != nil {
 			if errors.Is(err, services.ErrOIDCProviderNotFound) {
@@ -176,6 +190,16 @@ func AdminUpdateOIDCProvider(db *database.DB, cfg *config.Config) http.HandlerFu
 			}
 			jsonError(w, "failed to update OIDC provider", http.StatusInternalServerError)
 			return
+		}
+
+		callerID := middleware.GetUserID(r.Context())
+		auditEvent(r, logSvc, "oidc_provider_updated", "info", &callerID, fmt.Sprintf("id=%d", id))
+		if pre != nil && pre.IsEnabled != provider.IsEnabled {
+			event := "oidc_provider_enabled"
+			if !provider.IsEnabled {
+				event = "oidc_provider_disabled"
+			}
+			auditEvent(r, logSvc, event, "info", &callerID, fmt.Sprintf("id=%d", id))
 		}
 
 		jsonResponse(w, http.StatusOK, toOIDCProviderResponse(provider))
@@ -195,6 +219,7 @@ func AdminUpdateOIDCProvider(db *database.DB, cfg *config.Config) http.HandlerFu
 // @Security     BearerAuth
 func AdminDeleteOIDCProvider(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	oidcSvc := services.NewOIDCProviderService(db, cfg.WalletEncryptionKey)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
@@ -211,6 +236,9 @@ func AdminDeleteOIDCProvider(db *database.DB, cfg *config.Config) http.HandlerFu
 			jsonError(w, "failed to delete OIDC provider", http.StatusInternalServerError)
 			return
 		}
+
+		callerID := middleware.GetUserID(r.Context())
+		auditEvent(r, logSvc, "oidc_provider_deleted", "warn", &callerID, fmt.Sprintf("id=%d", id))
 
 		jsonResponse(w, http.StatusOK, map[string]string{"message": "OIDC provider deleted"})
 	}
