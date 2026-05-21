@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -231,6 +232,77 @@ func TestRateLimitMiddleware_BlocksOverLimit(t *testing.T) {
 	}
 	if w.Header().Get("X-RateLimit-Remaining") != "0" {
 		t.Errorf("X-RateLimit-Remaining = %q, want 0", w.Header().Get("X-RateLimit-Remaining"))
+	}
+}
+
+// V2-281 item 1: Retry-After must carry a reasonable seconds value (>= 1,
+// <= window) so clients can back off correctly.
+func TestRateLimitMiddleware_RetryAfterIsBoundedAndPositive(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	window := 10 * time.Second
+	mw := RateLimit(1, window, nil)
+	wrapped := mw(handler)
+
+	// First request OK, exhausts limit.
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "10.0.0.5:9999"
+	wrapped.ServeHTTP(httptest.NewRecorder(), req)
+
+	// Second request — 429 with bounded Retry-After.
+	req = httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "10.0.0.5:9999"
+	w := httptest.NewRecorder()
+	wrapped.ServeHTTP(w, req)
+
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("got %d", w.Code)
+	}
+	raw := w.Header().Get("Retry-After")
+	if raw == "" {
+		t.Fatal("missing Retry-After")
+	}
+	secs, err := strconv.Atoi(raw)
+	if err != nil {
+		t.Fatalf("Retry-After not numeric: %q", raw)
+	}
+	// Window is 10s; Retry-After must be in [1, 11] (+1 second jitter for the
+	// `+1` rounding in the middleware).
+	if secs < 1 || secs > int(window.Seconds())+1 {
+		t.Errorf("Retry-After = %d, want in [1, %d]", secs, int(window.Seconds())+1)
+	}
+}
+
+// V2-281 item 1: rate-limit headers must be present on 200 OK responses too,
+// not just 429s — otherwise clients can't preemptively back off before they
+// hit the limit.
+func TestRateLimitMiddleware_HeadersOnOKResponse(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	mw := RateLimit(5, time.Minute, nil)
+	wrapped := mw(handler)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "10.0.0.7:9999"
+	w := httptest.NewRecorder()
+	wrapped.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d", w.Code)
+	}
+	if w.Header().Get("X-RateLimit-Limit") != "5" {
+		t.Errorf("X-RateLimit-Limit = %q on OK response", w.Header().Get("X-RateLimit-Limit"))
+	}
+	if w.Header().Get("X-RateLimit-Remaining") != "4" {
+		t.Errorf("X-RateLimit-Remaining = %q on OK response (1 used of 5)", w.Header().Get("X-RateLimit-Remaining"))
+	}
+	if w.Header().Get("X-RateLimit-Reset") == "" {
+		t.Error("X-RateLimit-Reset missing on OK response")
+	}
+	if w.Header().Get("Retry-After") != "" {
+		t.Error("Retry-After should NOT be set on OK responses")
 	}
 }
 

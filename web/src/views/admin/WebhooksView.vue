@@ -75,6 +75,11 @@ const testResult = ref<{ success: boolean; status_code: number; error?: string }
 
 const uploadEvents = ['queued', 'processing', 'completed', 'failed']
 const systemEvents = ['disk_warning', 'disk_critical', 'disk_recovered']
+// V2-322: auth events power the email-notifier-via-webhook path
+// (SettingsView → Email Notifier → Webhook). Subscribing to these is
+// required for password reset + email verification to reach end users.
+const authEvents = ['auth.password_reset_requested', 'auth.email_verification_requested']
+const integrationEvents = ['tags_updated', 'collection_file_added', 'collection_file_removed']
 
 function parseEvents(eventsJson: string): string[] {
   try { return JSON.parse(eventsJson) } catch { return [] }
@@ -246,6 +251,8 @@ function copySecret() {
 
 function eventTagSeverity(evt: string): string {
   if (systemEvents.includes(evt)) return 'warn'
+  if (authEvents.includes(evt)) return 'danger'
+  if (integrationEvents.includes(evt)) return 'secondary'
   if (evt === 'test_ping') return 'secondary'
   return 'info'
 }
@@ -301,10 +308,26 @@ onMounted(fetchWebhooks)
             </div>
           </div>
           <p class="text-xs font-medium text-surface-500 uppercase mb-2">System Events</p>
-          <div class="flex flex-wrap gap-3">
+          <div class="flex flex-wrap gap-3 mb-3">
             <div v-for="evt in systemEvents" :key="evt" class="flex items-center gap-1.5">
               <Checkbox v-model="newEvents" :inputId="'new-sys-' + evt" :value="evt" />
               <label :for="'new-sys-' + evt" class="text-sm cursor-pointer">{{ evt }}</label>
+            </div>
+          </div>
+          <p class="text-xs font-medium text-surface-500 uppercase mb-1">Auth Events</p>
+          <p class="text-xs text-surface-400 mb-2">Password reset + email verification links. Required when Email Notifier is set to Webhook.</p>
+          <div class="flex flex-wrap gap-3 mb-3">
+            <div v-for="evt in authEvents" :key="evt" class="flex items-center gap-1.5">
+              <Checkbox v-model="newEvents" :inputId="'new-auth-' + evt" :value="evt" />
+              <label :for="'new-auth-' + evt" class="text-sm cursor-pointer">{{ evt }}</label>
+            </div>
+          </div>
+          <p class="text-xs font-medium text-surface-500 uppercase mb-1">Integration Events</p>
+          <p class="text-xs text-surface-400 mb-2">Tag changes and collection membership updates.</p>
+          <div class="flex flex-wrap gap-3">
+            <div v-for="evt in integrationEvents" :key="evt" class="flex items-center gap-1.5">
+              <Checkbox v-model="newEvents" :inputId="'new-int-' + evt" :value="evt" />
+              <label :for="'new-int-' + evt" class="text-sm cursor-pointer">{{ evt }}</label>
             </div>
           </div>
         </div>
@@ -414,10 +437,25 @@ onMounted(fetchWebhooks)
             </div>
           </div>
           <p class="text-xs font-medium text-surface-500 uppercase mb-2">System</p>
-          <div class="flex flex-wrap gap-3">
+          <div class="flex flex-wrap gap-3 mb-3">
             <div v-for="evt in systemEvents" :key="evt" class="flex items-center gap-1.5">
               <Checkbox v-model="editEvents" :inputId="'edit-sys-' + evt" :value="evt" />
               <label :for="'edit-sys-' + evt" class="text-sm cursor-pointer">{{ evt }}</label>
+            </div>
+          </div>
+          <p class="text-xs font-medium text-surface-500 uppercase mb-1">Auth</p>
+          <p class="text-xs text-surface-400 mb-2">Password reset + email verification. Required for the Webhook notifier mode.</p>
+          <div class="flex flex-wrap gap-3 mb-3">
+            <div v-for="evt in authEvents" :key="evt" class="flex items-center gap-1.5">
+              <Checkbox v-model="editEvents" :inputId="'edit-auth-' + evt" :value="evt" />
+              <label :for="'edit-auth-' + evt" class="text-sm cursor-pointer">{{ evt }}</label>
+            </div>
+          </div>
+          <p class="text-xs font-medium text-surface-500 uppercase mb-1">Integration</p>
+          <div class="flex flex-wrap gap-3">
+            <div v-for="evt in integrationEvents" :key="evt" class="flex items-center gap-1.5">
+              <Checkbox v-model="editEvents" :inputId="'edit-int-' + evt" :value="evt" />
+              <label :for="'edit-int-' + evt" class="text-sm cursor-pointer">{{ evt }}</label>
             </div>
           </div>
         </div>

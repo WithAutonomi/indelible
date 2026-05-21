@@ -13,6 +13,7 @@ import Password from 'primevue/password'
 import Tag from 'primevue/tag'
 import Message from 'primevue/message'
 import Dialog from 'primevue/dialog'
+import Drawer from 'primevue/drawer'
 
 const route = useRoute()
 const confirm = useConfirm()
@@ -84,6 +85,32 @@ function deleteWallet(id: number, name: string) {
 }
 
 const refreshingBalance = ref<number | null>(null)
+
+// V2-321: transaction history drawer
+const txDrawerVisible = ref(false)
+const txDrawerWallet = ref<Wallet | null>(null)
+const transactions = ref<any[]>([])
+const txLoading = ref(false)
+
+async function openTransactions(wallet: Wallet) {
+  txDrawerWallet.value = wallet
+  txDrawerVisible.value = true
+  txLoading.value = true
+  try {
+    const res = await api.get(`/api/v2/admin/wallets/${wallet.id}/transactions`, { params: { limit: 100 } })
+    transactions.value = res.data.transactions || []
+  } catch {
+    transactions.value = []
+  } finally {
+    txLoading.value = false
+  }
+}
+
+function truncateHash(h: string | null | undefined): string {
+  if (!h) return '-'
+  if (h.length <= 14) return h
+  return h.slice(0, 8) + '…' + h.slice(-6)
+}
 
 async function refreshBalance(id: number) {
   refreshingBalance.value = id
@@ -204,6 +231,9 @@ onMounted(() => {
             <Button v-if="!data.is_default" label="Set Default" severity="info" text size="small" @click="setDefault(data.id)" />
             <Button v-else label="Default" text size="small" disabled class="opacity-40"
               v-tooltip.top="'This is the active wallet'" />
+            <Button icon="pi pi-history" text rounded size="small" severity="secondary"
+              aria-label="Transaction history" v-tooltip.top="'Transaction history'"
+              @click="openTransactions(data)" />
             <Button icon="pi pi-trash" text rounded size="small"
               :severity="data.is_default ? 'secondary' : 'secondary'"
               :disabled="data.is_default"
@@ -215,5 +245,46 @@ onMounted(() => {
         </template>
       </Column>
     </DataTable>
+
+    <!-- V2-321: Transaction history drawer -->
+    <Drawer v-model:visible="txDrawerVisible" position="right" class="w-full max-w-3xl"
+      :header="txDrawerWallet ? `Transactions — ${txDrawerWallet.name}` : 'Transactions'">
+      <p v-if="txDrawerWallet" class="text-xs font-mono text-surface-500 mb-4 truncate">{{ txDrawerWallet.address }}</p>
+      <DataTable :value="transactions" :loading="txLoading" stripedRows size="small">
+        <template #empty>No transactions recorded for this wallet yet.</template>
+        <Column field="created_at" header="Time" sortable>
+          <template #body="{ data }">
+            <span class="text-xs text-surface-500 whitespace-nowrap">{{ new Date(data.created_at).toLocaleString() }}</span>
+          </template>
+        </Column>
+        <Column field="tx_type" header="Type" sortable>
+          <template #body="{ data }">
+            <Tag :value="data.tx_type" :severity="data.tx_type === 'refund' ? 'success' : 'info'" />
+          </template>
+        </Column>
+        <Column field="amount" header="Amount (ANT)" sortable>
+          <template #body="{ data }">
+            <span class="font-mono text-sm">{{ formatBalance(data.amount) }}</span>
+          </template>
+        </Column>
+        <Column field="balance_after" header="Balance After (ANT)" sortable>
+          <template #body="{ data }">
+            <span class="font-mono text-sm text-surface-500">{{ formatBalance(data.balance_after) }}</span>
+          </template>
+        </Column>
+        <Column field="upload_id" header="Upload">
+          <template #body="{ data }">
+            <span v-if="data.upload_id" class="text-xs text-surface-400">#{{ data.upload_id }}</span>
+            <span v-else class="text-xs text-surface-300">-</span>
+          </template>
+        </Column>
+        <Column field="tx_hash" header="Tx Hash">
+          <template #body="{ data }">
+            <code v-if="data.tx_hash" class="text-xs text-surface-400" :title="data.tx_hash">{{ truncateHash(data.tx_hash) }}</code>
+            <span v-else class="text-xs text-surface-300">-</span>
+          </template>
+        </Column>
+      </DataTable>
+    </Drawer>
   </div>
 </template>

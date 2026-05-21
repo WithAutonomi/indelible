@@ -375,6 +375,62 @@ const docTemplate = `{
             }
         },
         "/admin/groups/{id}/members": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Return the resolved members of a group (id, email, display name). V2-304.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin: Groups"
+                ],
+                "summary": "List group members",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Group ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "array",
+                                "items": {
+                                    "$ref": "#/definitions/internal_handlers.groupMemberResponse"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
             "post": {
                 "security": [
                     {
@@ -594,21 +650,23 @@ const docTemplate = `{
                 }
             }
         },
-        "/admin/logs/system": {
+        "/admin/logs/config": {
             "get": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
-                "description": "Return system log entries with optional filtering (retention-managed)",
+                "description": "Return system log entries with optional filtering (retention-managed)\nReturn config_audit entries showing old/new value, actor, IP, and UA for every settings change. Permanent (never purged).",
                 "produces": [
+                    "application/json",
                     "application/json"
                 ],
                 "tags": [
+                    "Admin: Logs",
                     "Admin: Logs"
                 ],
-                "summary": "Query system logs",
+                "summary": "Query config-change audit log",
                 "parameters": [
                     {
                         "type": "string",
@@ -645,6 +703,36 @@ const docTemplate = `{
                         "description": "Offset for pagination",
                         "name": "offset",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by setting key",
+                        "name": "setting_key",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Start date (YYYY-MM-DD)",
+                        "name": "since",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "End date (YYYY-MM-DD)",
+                        "name": "until",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Max results (default 100, max 500)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Offset for pagination",
+                        "name": "offset",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -665,6 +753,16 @@ const docTemplate = `{
                         }
                     }
                 }
+            }
+        },
+        "/admin/logs/system": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "responses": {}
             }
         },
         "/admin/logs/user": {
@@ -997,6 +1095,64 @@ const docTemplate = `{
                         "required": true,
                         "schema": {
                             "$ref": "#/definitions/internal_handlers.adminOIDCAutoProvisionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "boolean"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/oidc/providers/{id}/extra-params": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Replace the IdP-specific params map appended to the authorize URL. Used to set Google Workspace hd=, Microsoft prompt=, AAD domain_hint, etc. Send an empty object to clear.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin: OIDC"
+                ],
+                "summary": "Set OIDC extra authorize-URL params",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Provider ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "extra_authorize_params map (empty {} to clear)",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handlers.adminOIDCExtraAuthorizeParamsRequest"
                         }
                     }
                 ],
@@ -2400,6 +2556,71 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/wallets/{id}/transactions": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "List recorded transactions for a wallet (upload payments, refunds), newest first. V2-321.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin: Wallets"
+                ],
+                "summary": "Per-wallet transaction history",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Wallet ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Max results (default 50, max 100)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Offset for pagination",
+                        "name": "offset",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -4865,9 +5086,26 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_handlers.adminOIDCExtraAuthorizeParamsRequest": {
+            "type": "object",
+            "properties": {
+                "extra_authorize_params": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "internal_handlers.adminUserResponse": {
             "type": "object",
             "properties": {
+                "allowed_file_types": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "created_at": {
                     "type": "string"
                 },
@@ -4894,6 +5132,9 @@ const docTemplate = `{
                 },
                 "last_name": {
                     "type": "string"
+                },
+                "max_file_size_bytes": {
+                    "type": "integer"
                 },
                 "permissions": {
                     "type": "string"
@@ -5048,6 +5289,13 @@ const docTemplate = `{
         "internal_handlers.createTokenRequest": {
             "type": "object",
             "properties": {
+                "allowed_file_types": {
+                    "description": "empty = inherit user/system list",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "department": {
                     "type": "string"
                 },
@@ -5056,6 +5304,10 @@ const docTemplate = `{
                 },
                 "expires_in_days": {
                     "description": "null = use system default",
+                    "type": "integer"
+                },
+                "max_file_size_bytes": {
+                    "description": "null = inherit user/system limit",
                     "type": "integer"
                 },
                 "name": {
@@ -5149,6 +5401,20 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_handlers.groupMemberResponse": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
         "internal_handlers.groupResponse": {
             "type": "object",
             "properties": {
@@ -5156,6 +5422,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "description": {
+                    "type": "string"
+                },
+                "external_id": {
+                    "description": "SCIM-provisioned groups carry this",
                     "type": "string"
                 },
                 "id": {
@@ -5237,6 +5507,12 @@ const docTemplate = `{
                 },
                 "display_name": {
                     "type": "string"
+                },
+                "extra_authorize_params": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
                 },
                 "id": {
                     "type": "integer"
@@ -5367,6 +5643,12 @@ const docTemplate = `{
         "internal_handlers.tokenResponse": {
             "type": "object",
             "properties": {
+                "allowed_file_types": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "created_at": {
                     "type": "string"
                 },
@@ -5381,6 +5663,9 @@ const docTemplate = `{
                 },
                 "last_used_at": {
                     "type": "string"
+                },
+                "max_file_size_bytes": {
+                    "type": "integer"
                 },
                 "name": {
                     "type": "string"
@@ -5471,6 +5756,13 @@ const docTemplate = `{
         "internal_handlers.updateUserRequest": {
             "type": "object",
             "properties": {
+                "allowed_file_types": {
+                    "description": "nullable; absent in body = leave unchanged; empty array = clear",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "first_name": {
                     "type": "string"
                 },
@@ -5479,6 +5771,10 @@ const docTemplate = `{
                 },
                 "last_name": {
                     "type": "string"
+                },
+                "max_file_size_bytes": {
+                    "description": "nullable; absent in body = leave unchanged",
+                    "type": "integer"
                 }
             }
         },
