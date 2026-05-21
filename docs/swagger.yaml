@@ -1,5 +1,63 @@
 basePath: /api/v2
 definitions:
+  github_com_WithAutonomi_indelible_internal_services.DayCount:
+    properties:
+      count:
+        type: integer
+      date:
+        description: YYYY-MM-DD
+        type: string
+    type: object
+  github_com_WithAutonomi_indelible_internal_services.LogStats:
+    properties:
+      by_component:
+        additionalProperties:
+          format: int64
+          type: integer
+        description: system_log (top 10)
+        type: object
+      by_day:
+        description: last 30 days, ascending
+        items:
+          $ref: '#/definitions/github_com_WithAutonomi_indelible_internal_services.DayCount'
+        type: array
+      by_event_type:
+        additionalProperties:
+          format: int64
+          type: integer
+        description: audit_log (top 10)
+        type: object
+      by_level:
+        additionalProperties:
+          format: int64
+          type: integer
+        description: system_log
+        type: object
+      by_setting_key:
+        additionalProperties:
+          format: int64
+          type: integer
+        description: config_audit (top 10)
+        type: object
+      by_severity:
+        additionalProperties:
+          format: int64
+          type: integer
+        description: One of these will be populated depending on the log type.
+        type: object
+      disk_usage_bytes:
+        description: |-
+          DiskUsageBytes is 0 when the dialect doesn't expose a per-table size
+          (SQLite has no straightforward way to break a whole-DB file down per
+          table). On Postgres it's pg_total_relation_size for the underlying table.
+        type: integer
+      earliest:
+        type: string
+      latest:
+        type: string
+      total_entries:
+        type: integer
+    type: object
   internal_handlers.addMemberRequest:
     properties:
       user_id:
@@ -39,8 +97,19 @@ definitions:
       default_group_id:
         type: integer
     type: object
+  internal_handlers.adminOIDCExtraAuthorizeParamsRequest:
+    properties:
+      extra_authorize_params:
+        additionalProperties:
+          type: string
+        type: object
+    type: object
   internal_handlers.adminUserResponse:
     properties:
+      allowed_file_types:
+        items:
+          type: string
+        type: array
       created_at:
         type: string
       email:
@@ -59,6 +128,8 @@ definitions:
         type: string
       last_name:
         type: string
+      max_file_size_bytes:
+        type: integer
       permissions:
         type: string
     type: object
@@ -158,12 +229,20 @@ definitions:
     type: object
   internal_handlers.createTokenRequest:
     properties:
+      allowed_file_types:
+        description: empty = inherit user/system list
+        items:
+          type: string
+        type: array
       department:
         type: string
       description:
         type: string
       expires_in_days:
         description: null = use system default
+        type: integer
+      max_file_size_bytes:
+        description: null = inherit user/system limit
         type: integer
       name:
         type: string
@@ -225,11 +304,23 @@ definitions:
       email:
         type: string
     type: object
+  internal_handlers.groupMemberResponse:
+    properties:
+      email:
+        type: string
+      id:
+        type: integer
+      name:
+        type: string
+    type: object
   internal_handlers.groupResponse:
     properties:
       created_at:
         type: string
       description:
+        type: string
+      external_id:
+        description: SCIM-provisioned groups carry this
         type: string
       id:
         type: integer
@@ -283,6 +374,10 @@ definitions:
         type: integer
       display_name:
         type: string
+      extra_authorize_params:
+        additionalProperties:
+          type: string
+        type: object
       id:
         type: integer
       is_enabled:
@@ -367,6 +462,10 @@ definitions:
     type: object
   internal_handlers.tokenResponse:
     properties:
+      allowed_file_types:
+        items:
+          type: string
+        type: array
       created_at:
         type: string
       department:
@@ -377,6 +476,8 @@ definitions:
         type: string
       last_used_at:
         type: string
+      max_file_size_bytes:
+        type: integer
       name:
         type: string
       owner_id:
@@ -439,12 +540,20 @@ definitions:
     type: object
   internal_handlers.updateUserRequest:
     properties:
+      allowed_file_types:
+        description: nullable; absent in body = leave unchanged; empty array = clear
+        items:
+          type: string
+        type: array
       first_name:
         type: string
       is_active:
         type: boolean
       last_name:
         type: string
+      max_file_size_bytes:
+        description: nullable; absent in body = leave unchanged
+        type: integer
     type: object
   internal_handlers.updateWebhookRequest:
     properties:
@@ -795,6 +904,43 @@ paths:
       tags:
       - 'Admin: Groups'
   /admin/groups/{id}/members:
+    get:
+      description: Return the resolved members of a group (id, email, display name).
+        V2-304.
+      parameters:
+      - description: Group ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              items:
+                $ref: '#/definitions/internal_handlers.groupMemberResponse'
+              type: array
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List group members
+      tags:
+      - 'Admin: Groups'
     post:
       consumes:
       - application/json
@@ -898,6 +1044,10 @@ paths:
         in: query
         name: event_type
         type: string
+      - description: Filter by severity (info|warn|error)
+        in: query
+        name: severity
+        type: string
       - description: Filter by user ID
         in: query
         name: user_id
@@ -937,18 +1087,24 @@ paths:
       summary: Query audit logs
       tags:
       - 'Admin: Logs'
-  /admin/logs/system:
+  /admin/logs/audit/export:
     get:
-      description: Return system log entries with optional filtering (retention-managed)
+      description: Stream the audit log under the GET filter as application/x-ndjson
+        with attachment Content-Disposition. Caps at 1M rows; on exceedance a trailing
+        {"error":...} line is appended.
       parameters:
-      - description: Filter by log level
+      - description: Filter by event type
         in: query
-        name: level
+        name: event_type
         type: string
-      - description: Filter by component
+      - description: Filter by severity (info|warn|error)
         in: query
-        name: component
+        name: severity
         type: string
+      - description: Filter by user ID
+        in: query
+        name: user_id
+        type: integer
       - description: Start date (YYYY-MM-DD)
         in: query
         name: since
@@ -957,22 +1113,13 @@ paths:
         in: query
         name: until
         type: string
-      - description: Max results
-        in: query
-        name: limit
-        type: integer
-      - description: Offset for pagination
-        in: query
-        name: offset
-        type: integer
       produces:
-      - application/json
+      - application/x-ndjson
       responses:
         "200":
-          description: OK
+          description: NDJSON stream
           schema:
-            additionalProperties: true
-            type: object
+            type: string
         "500":
           description: Internal Server Error
           schema:
@@ -981,14 +1128,41 @@ paths:
             type: object
       security:
       - BearerAuth: []
-      summary: Query system logs
+      summary: Export audit logs as JSON Lines
       tags:
       - 'Admin: Logs'
-  /admin/logs/user:
+  /admin/logs/audit/stats:
     get:
-      description: Return user activity log entries with optional filtering
+      description: Aggregate counts, date range, disk usage, and last-30-day buckets
+        for audit_log (V2-319).
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_WithAutonomi_indelible_internal_services.LogStats'
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Audit log statistics
+      tags:
+      - 'Admin: Logs'
+  /admin/logs/config:
+    get:
+      description: Return setting-change entries (who changed what, when, from where).
+        Permanent — never deleted.
       parameters:
-      - description: Filter by user ID
+      - description: Filter by setting key
+        in: query
+        name: setting_key
+        type: string
+      - description: Filter by changed_by user ID
         in: query
         name: user_id
         type: integer
@@ -1024,7 +1198,277 @@ paths:
             type: object
       security:
       - BearerAuth: []
+      summary: Query config-audit log
+      tags:
+      - 'Admin: Logs'
+  /admin/logs/config/export:
+    get:
+      parameters:
+      - description: Filter by setting key
+        in: query
+        name: setting_key
+        type: string
+      - description: Filter by changed_by user ID
+        in: query
+        name: user_id
+        type: integer
+      - description: Start date (YYYY-MM-DD)
+        in: query
+        name: since
+        type: string
+      - description: End date (YYYY-MM-DD)
+        in: query
+        name: until
+        type: string
+      produces:
+      - application/x-ndjson
+      responses:
+        "200":
+          description: NDJSON stream
+          schema:
+            type: string
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Export config-audit log as JSON Lines
+      tags:
+      - 'Admin: Logs'
+  /admin/logs/config/stats:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_WithAutonomi_indelible_internal_services.LogStats'
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Config-audit statistics
+      tags:
+      - 'Admin: Logs'
+  /admin/logs/system:
+    get:
+      description: |-
+        Return system log entries with optional filtering (retention-managed)
+        Return config_audit entries showing old/new value, actor, IP, and UA for every settings change. Permanent (never purged).
+      parameters:
+      - description: Filter by log level
+        in: query
+        name: level
+        type: string
+      - description: Filter by component
+        in: query
+        name: component
+        type: string
+      - description: Start date (YYYY-MM-DD)
+        in: query
+        name: since
+        type: string
+      - description: End date (YYYY-MM-DD)
+        in: query
+        name: until
+        type: string
+      - description: Max results
+        in: query
+        name: limit
+        type: integer
+      - description: Offset for pagination
+        in: query
+        name: offset
+        type: integer
+      - description: Filter by setting key
+        in: query
+        name: setting_key
+        type: string
+      - description: Start date (YYYY-MM-DD)
+        in: query
+        name: since
+        type: string
+      - description: End date (YYYY-MM-DD)
+        in: query
+        name: until
+        type: string
+      - description: Max results (default 100, max 500)
+        in: query
+        name: limit
+        type: integer
+      - description: Offset for pagination
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      - BearerAuth: []
+      summary: Query config-change audit log
+      tags:
+      - 'Admin: Logs'
+      - 'Admin: Logs'
+  /admin/logs/system/export:
+    get:
+      parameters:
+      - description: Filter by log level
+        in: query
+        name: level
+        type: string
+      - description: Filter by component
+        in: query
+        name: component
+        type: string
+      - description: Start date (YYYY-MM-DD)
+        in: query
+        name: since
+        type: string
+      - description: End date (YYYY-MM-DD)
+        in: query
+        name: until
+        type: string
+      produces:
+      - application/x-ndjson
+      responses:
+        "200":
+          description: NDJSON stream
+          schema:
+            type: string
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Export system logs as JSON Lines
+      tags:
+      - 'Admin: Logs'
+  /admin/logs/system/stats:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_WithAutonomi_indelible_internal_services.LogStats'
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: System log statistics
+      tags:
+      - 'Admin: Logs'
+  /admin/logs/user:
+    get:
+      description: Return user activity log entries with optional filtering
+      parameters:
+      - description: Filter by user ID
+        in: query
+        name: user_id
+        type: integer
+      - description: Filter by severity (info|warn|error)
+        in: query
+        name: severity
+        type: string
+      - description: Start date (YYYY-MM-DD)
+        in: query
+        name: since
+        type: string
+      - description: End date (YYYY-MM-DD)
+        in: query
+        name: until
+        type: string
+      - description: Max results
+        in: query
+        name: limit
+        type: integer
+      - description: Offset for pagination
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
       summary: Query user activity logs
+      tags:
+      - 'Admin: Logs'
+  /admin/logs/user/export:
+    get:
+      parameters:
+      - description: Filter by user ID
+        in: query
+        name: user_id
+        type: integer
+      - description: Filter by severity (info|warn|error)
+        in: query
+        name: severity
+        type: string
+      - description: Start date (YYYY-MM-DD)
+        in: query
+        name: since
+        type: string
+      - description: End date (YYYY-MM-DD)
+        in: query
+        name: until
+        type: string
+      produces:
+      - application/x-ndjson
+      responses:
+        "200":
+          description: NDJSON stream
+          schema:
+            type: string
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Export user activity logs as JSON Lines
       tags:
       - 'Admin: Logs'
   /admin/oidc/providers:
@@ -1211,6 +1655,45 @@ paths:
       security:
       - BearerAuth: []
       summary: Toggle OIDC auto-provisioning
+      tags:
+      - 'Admin: OIDC'
+  /admin/oidc/providers/{id}/extra-params:
+    put:
+      consumes:
+      - application/json
+      description: Replace the IdP-specific params map appended to the authorize URL.
+        Used to set Google Workspace hd=, Microsoft prompt=, AAD domain_hint, etc.
+        Send an empty object to clear.
+      parameters:
+      - description: Provider ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: extra_authorize_params map (empty {} to clear)
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handlers.adminOIDCExtraAuthorizeParamsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: boolean
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Set OIDC extra authorize-URL params
       tags:
       - 'Admin: OIDC'
   /admin/quotas:
@@ -2103,6 +2586,49 @@ paths:
       security:
       - BearerAuth: []
       summary: Set default wallet
+      tags:
+      - 'Admin: Wallets'
+  /admin/wallets/{id}/transactions:
+    get:
+      description: List recorded transactions for a wallet (upload payments, refunds),
+        newest first. V2-321.
+      parameters:
+      - description: Wallet ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Max results (default 50, max 100)
+        in: query
+        name: limit
+        type: integer
+      - description: Offset for pagination
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Per-wallet transaction history
       tags:
       - 'Admin: Wallets'
   /admin/webhooks:

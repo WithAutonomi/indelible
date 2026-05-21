@@ -3,12 +3,14 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/WithAutonomi/indelible/internal/database"
+	"github.com/WithAutonomi/indelible/internal/middleware"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
 
@@ -87,6 +89,7 @@ func AdminGetWebhooks(db *database.DB) http.HandlerFunc {
 // @Security     BearerAuth
 func AdminCreateWebhook(db *database.DB) http.HandlerFunc {
 	webhookSvc := services.NewWebhookService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req createWebhookRequest
@@ -104,6 +107,10 @@ func AdminCreateWebhook(db *database.DB) http.HandlerFunc {
 			jsonError(w, "failed to create webhook", http.StatusInternalServerError)
 			return
 		}
+
+		callerID := middleware.GetUserID(r.Context())
+		auditEvent(r, logSvc, "webhook_created", "info", &callerID,
+			fmt.Sprintf("id=%d url=%s integration=%s", webhook.ID, webhook.URL, webhook.IntegrationType))
 
 		// Include secret in create response (shown once)
 		resp := toWebhookResponse(webhook)
@@ -129,6 +136,7 @@ func AdminCreateWebhook(db *database.DB) http.HandlerFunc {
 // @Security     BearerAuth
 func AdminUpdateWebhook(db *database.DB) http.HandlerFunc {
 	webhookSvc := services.NewWebhookService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
@@ -153,6 +161,9 @@ func AdminUpdateWebhook(db *database.DB) http.HandlerFunc {
 			return
 		}
 
+		callerID := middleware.GetUserID(r.Context())
+		auditEvent(r, logSvc, "webhook_updated", "info", &callerID, fmt.Sprintf("id=%d", id))
+
 		jsonResponse(w, http.StatusOK, toWebhookResponse(webhook))
 	}
 }
@@ -170,6 +181,7 @@ func AdminUpdateWebhook(db *database.DB) http.HandlerFunc {
 // @Security     BearerAuth
 func AdminDeleteWebhook(db *database.DB) http.HandlerFunc {
 	webhookSvc := services.NewWebhookService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
@@ -186,6 +198,9 @@ func AdminDeleteWebhook(db *database.DB) http.HandlerFunc {
 			jsonError(w, "failed to delete webhook", http.StatusInternalServerError)
 			return
 		}
+
+		callerID := middleware.GetUserID(r.Context())
+		auditEvent(r, logSvc, "webhook_deleted", "info", &callerID, fmt.Sprintf("id=%d", id))
 
 		jsonResponse(w, http.StatusOK, map[string]string{"message": "webhook deleted"})
 	}

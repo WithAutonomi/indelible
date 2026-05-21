@@ -1,0 +1,38 @@
+# Dex configuration for the SSO E2E test. Spun up as a Docker service in
+# .github/workflows/ci.yml's e2e job and pointed at by a test OIDC provider
+# created in the Playwright spec.
+#
+# Single static user (alice@example.com / password) so the test can drive the
+# consent screen with deterministic credentials.
+
+issuer: http://localhost:5556
+
+storage:
+  type: memory
+
+web:
+  http: 0.0.0.0:5556
+
+oauth2:
+  # Skip the consent prompt — the test asserts the indelible flow, not Dex UX.
+  skipApprovalScreen: true
+  # Surface the password connector directly so the login form is the first
+  # screen Playwright sees, no connector chooser to click through.
+  passwordConnector: local
+
+staticClients:
+  - id: indelible-e2e
+    name: "Indelible E2E"
+    secret: indelible-e2e-secret
+    redirectURIs:
+      - http://localhost:8080/api/v2/auth/oidc/callback
+
+enablePasswordDB: true
+
+staticPasswords:
+  - email: "alice@example.com"
+    # bcrypt of "password" (cost 10) — regenerate locally with:
+    # go run golang.org/x/crypto/bcrypt
+    hash: "$2a$10$HsoVUelAhMOa0r9xbWlHxOrIV2oBYLa5Av96p5G2k12R4fFcHmyvK"
+    username: "alice"
+    userID: "alice-e2e-uid-1"

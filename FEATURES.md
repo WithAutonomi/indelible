@@ -101,7 +101,7 @@ No mutable network primitives (pointers, scratchpads, registers, graph entries) 
 - Fields: email (unique), first/last name, active status, email verified
 - Per-user upload restrictions:
   - `max_file_size_bytes` (nullable = use system default)
-  - `allowed_file_types` (array of extensions, empty = no restriction)
+  - `allowed_file_types` (array of content-type patterns with `*` wildcards, e.g. `image/*`, `application/pdf`; empty = use system default)
 - Soft delete (preserves upload history, prevents cascade data loss)
 - Last login tracking
 
@@ -149,9 +149,9 @@ Three permission levels: **read**, **write**, **admin**
 - Permission set: array of (read/write/admin)
 - Client department (optional, for cost allocation/analytics)
 - Expiry: configurable per-token, nullable = no expiry, capped at 10 years
-- Per-token upload restrictions:
-  - `max_file_size_bytes`
-  - `allowed_file_types`
+- Per-token upload restrictions (token override > user override > system default):
+  - `max_file_size_bytes` (nullable = inherit user/system limit)
+  - `allowed_file_types` (array of content-type patterns; empty = inherit user/system list)
 
 ### 4.2 Token Lifecycle
 - **Creation:** regular users get read/write tokens only; admins can create admin tokens
@@ -258,6 +258,8 @@ Three permission levels: **read**, **write**, **admin**
 - Per-webhook event subscription: select which events trigger delivery
   - Upload events: Queued, Processing, Completed, Failed
   - System events: Disk Warning (80%), Disk Critical (95%), Disk Recovered
+  - Auth events: Password reset requested, Email verification requested (required when Email Notifier is set to Webhook — see §2.2)
+  - Integration events: Tags updated, Collection file added/removed
 - Dedicated admin page (**Admin > Webhooks**) with inline edit, event tag display
 - Test ping button per webhook for verifying endpoint connectivity
 
@@ -272,6 +274,11 @@ Three permission levels: **read**, **write**, **admin**
 | `disk_warning` | System | Disk alert worker | Disk usage reached warning threshold (80%) |
 | `disk_critical` | System | Disk alert worker | Disk usage reached critical threshold (95%), uploads paused |
 | `disk_recovered` | System | Disk alert worker | Disk usage returned below warning threshold |
+| `auth.password_reset_requested` | Auth | Password-reset flow | Reset link generated; payload carries recipient email + reset URL |
+| `auth.email_verification_requested` | Auth | Email-verification flow | Verification link generated; payload carries recipient email + verify URL |
+| `tags_updated` | Integration | Tag handlers | Tags on an upload were changed |
+| `collection_file_added` | Integration | Collection handler | Upload added to a collection |
+| `collection_file_removed` | Integration | Collection handler | Upload removed from a collection |
 | `test_ping` | Test | Admin API | Manual test ping from admin UI |
 
 ### 8.3 Delivery
@@ -286,7 +293,10 @@ Three permission levels: **read**, **write**, **admin**
 ### 8.4 Payloads
 **Generic (upload event):** JSON with `event_type`, `timestamp`, `upload` object (uuid, user_id, token_id, filename, status, file_size, visibility, actual_cost, error_message). `token_id` included when the upload was created via API token, enabling consumers to filter for their own uploads.
 **Generic (system event):** JSON with `event_type`, `timestamp`, `system` object (alert_type, message, value)
-**Slack:** Formatted Block Kit messages with markdown — upload events show file info and cost; system events show alert type and percentage
+**Generic (auth event):** JSON with `event_type`, `timestamp`, `auth` object (`to`, `url`). Receivers are expected to deliver `url` to `to` via their preferred channel (transactional email API, Slack DM, etc.).
+**Generic (tag event):** JSON with `event_type`, `timestamp`, `tags` object (upload_uuid, tags: map<string, string[]>)
+**Generic (collection event):** JSON with `event_type`, `timestamp`, `collection` object (upload_uuid, collection_id, collection_name)
+**Slack:** Formatted Block Kit messages with markdown — upload events show file info and cost; system events show alert type and percentage; auth events show recipient address and a clickable link; tag/collection events show the affected upload UUID
 
 ### 8.5 Admin API
 - `POST /api/v2/admin/webhooks/{id}/test` — synchronous test ping, returns HTTP status code and success/failure

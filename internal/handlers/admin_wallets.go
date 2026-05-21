@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/WithAutonomi/indelible/internal/config"
 	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/evm"
+	"github.com/WithAutonomi/indelible/internal/middleware"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
 
@@ -88,6 +90,7 @@ func AdminListWallets(db *database.DB, cfg *config.Config) http.HandlerFunc {
 // AdminCreateWallet adds a new wallet with encrypted key storage.
 func AdminCreateWallet(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	walletSvc := services.NewWalletService(db, cfg.WalletEncryptionKey)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req createWalletRequest
@@ -117,6 +120,11 @@ func AdminCreateWallet(db *database.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
+		callerID := middleware.GetUserID(r.Context())
+		// Detail records the public address only. NEVER the private key.
+		auditEvent(r, logSvc, "wallet_created", "info", &callerID,
+			fmt.Sprintf("id=%d name=%s address=%s", wallet.ID, wallet.Name, wallet.Address))
+
 		jsonResponse(w, http.StatusCreated, map[string]any{
 			"message": "wallet created",
 			"wallet":  toWalletResponse(wallet),
@@ -138,6 +146,7 @@ func AdminCreateWallet(db *database.DB, cfg *config.Config) http.HandlerFunc {
 // AdminSetDefaultWallet makes a wallet the default for uploads.
 func AdminSetDefaultWallet(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	walletSvc := services.NewWalletService(db, cfg.WalletEncryptionKey)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		idStr := chi.URLParam(r, "id")
@@ -156,6 +165,9 @@ func AdminSetDefaultWallet(db *database.DB, cfg *config.Config) http.HandlerFunc
 			return
 		}
 
+		callerID := middleware.GetUserID(r.Context())
+		auditEvent(r, logSvc, "wallet_default_changed", "info", &callerID, fmt.Sprintf("id=%d", id))
+
 		jsonResponse(w, http.StatusOK, map[string]string{"message": "default wallet updated"})
 	}
 }
@@ -172,6 +184,7 @@ func AdminSetDefaultWallet(db *database.DB, cfg *config.Config) http.HandlerFunc
 // @Security     BearerAuth
 func AdminDeleteWallet(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	walletSvc := services.NewWalletService(db, cfg.WalletEncryptionKey)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		idStr := chi.URLParam(r, "id")
@@ -193,6 +206,9 @@ func AdminDeleteWallet(db *database.DB, cfg *config.Config) http.HandlerFunc {
 			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+
+		callerID := middleware.GetUserID(r.Context())
+		auditEvent(r, logSvc, "wallet_deleted", "warn", &callerID, fmt.Sprintf("id=%d", id))
 
 		jsonResponse(w, http.StatusOK, map[string]string{"message": "wallet deleted"})
 	}
@@ -251,6 +267,83 @@ func AdminRefreshWalletBalance(db *database.DB, cfg *config.Config) http.Handler
 		jsonResponse(w, http.StatusOK, map[string]any{
 			"payment_balance": tokenBal,
 			"gas_balance":     gasBal,
+		})
+	}
+}
+
+// walletTransactionResponse mirrors services.Transaction with nullable
+// handling for the wire format.
+type walletTransactionResponse struct {
+	ID           int64   `json:"id"`
+	WalletID     int64   `json:"wallet_id"`
+	UploadID     *int64  `json:"upload_id"`
+	TxType       string  `json:"tx_type"`
+	Amount       string  `json:"amount"`
+	BalanceAfter string  `json:"balance_after"`
+	TxHash       *string `json:"tx_hash"`
+	CreatedAt    string  `json:"created_at"`
+}
+
+func toWalletTransactionResponse(t *services.Transaction) walletTransactionResponse {
+	r := walletTransactionResponse{
+		ID:           t.ID,
+		WalletID:     t.WalletID,
+		TxType:       t.TxType,
+		Amount:       t.Amount,
+		BalanceAfter: t.BalanceAfter,
+		CreatedAt:    t.CreatedAt.Format("2006-01-02T15:04:05Z"),
+	}
+	if t.UploadID.Valid {
+		r.UploadID = &t.UploadID.Int64
+	}
+	if t.TxHash.Valid {
+		r.TxHash = &t.TxHash.String
+	}
+	return r
+}
+
+// @Summary      Per-wallet transaction history
+// @Description  List recorded transactions for a wallet (upload payments, refunds), newest first. V2-321.
+// @Tags         Admin: Wallets
+// @Produce      json
+// @Param        id     path  int true "Wallet ID"
+// @Param        limit  query int false "Max results (default 50, max 100)"
+// @Param        offset query int false "Offset for pagination"
+// @Success      200 {object} map[string]interface{}
+// @Failure      400 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /admin/wallets/{id}/transactions [get]
+// @Security     BearerAuth
+// AdminWalletTransactions returns the transaction log for a wallet (V2-321).
+func AdminWalletTransactions(db *database.DB) http.HandlerFunc {
+	txSvc := services.NewTransactionService(db)
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+		if err != nil {
+			jsonError(w, "invalid wallet id", http.StatusBadRequest)
+			return
+		}
+
+		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+		offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+
+		txns, total, err := txSvc.ListByWallet(id, limit, offset)
+		if err != nil {
+			jsonError(w, "failed to list transactions", http.StatusInternalServerError)
+			return
+		}
+
+		resp := make([]walletTransactionResponse, 0, len(txns))
+		for _, t := range txns {
+			resp = append(resp, toWalletTransactionResponse(t))
+		}
+
+		jsonResponse(w, http.StatusOK, map[string]any{
+			"transactions": resp,
+			"total":        total,
+			"limit":        limit,
+			"offset":       offset,
 		})
 	}
 }

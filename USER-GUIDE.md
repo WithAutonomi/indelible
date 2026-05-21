@@ -819,9 +819,15 @@ curl -X PATCH https://files.acme.com/api/v2/admin/settings \
 
 ## Rate Limiting
 
-The login endpoint is rate-limited to **5 attempts per 60 seconds per IP address**. When exceeded, requests receive a `429 Too Many Requests` response.
+Three endpoints have per-key rate limits today. Hit the limit and you get a `429 Too Many Requests` with a `Retry-After` header (seconds until the window resets).
 
-This protects against brute-force password attacks. The rate limiter uses the `X-Forwarded-For` header when behind a reverse proxy — ensure `trusted_proxies` is configured.
+| Endpoint | Limit | Window | Keyed by |
+|---|---|---|---|
+| `POST /api/v2/auth/login` | 5 attempts | 60 s | client IP |
+| `POST /api/v2/auth/forgot-password` and `/auth/reset-password` | 3 attempts | 60 s | client IP |
+| `POST /api/v2/uploads` | 60 requests | 60 s | authenticated user ID |
+
+The IP-keyed limiters honour `X-Forwarded-For` only when the connection comes from a CIDR listed in `trusted_proxies` (prevents header spoofing). All other endpoints are currently unrate-limited — protect them with your reverse proxy or WAF if you need broader throttling.
 
 ---
 
@@ -847,7 +853,7 @@ Every API response includes an `X-Request-Id` header. Include this ID in support
 
 ### Rate Limiting
 
-Rate-limited endpoints (currently login) include these headers on every response:
+Rate-limited endpoints (login, password-reset, uploads — see [Rate Limiting](#rate-limiting) above for the matrix) include these headers on every response:
 
 | Header | Description |
 |--------|-------------|

@@ -48,6 +48,8 @@ export interface User {
   is_service_account: boolean
   email_verified: boolean
   permissions: string
+  max_file_size_bytes: number | null
+  allowed_file_types: string[]
   last_login_at?: string
   created_at: string
 }
@@ -58,6 +60,8 @@ export interface ApiToken {
   name: string
   token_prefix: string
   permissions: string
+  max_file_size_bytes: number | null
+  allowed_file_types: string[]
   request_count: number
   last_used_at?: string
   expires_at: string
@@ -97,6 +101,23 @@ export interface WebhookDelivery {
   attempts: number
   error_message?: string
   created_at: string
+}
+
+export interface Group {
+  id: number
+  name: string
+  description: string
+  permission_level: 'read' | 'write' | 'admin'
+  is_active: boolean
+  external_id: string | null
+  member_count: number
+  created_at: string
+}
+
+export interface GroupMember {
+  id: number
+  email: string
+  name: string
 }
 
 export interface Quota {
@@ -140,6 +161,7 @@ export interface AuditLogEntry {
   detail: string
   ip_address?: string
   user_agent?: string
+  request_id: string
   created_at: string
 }
 
@@ -149,6 +171,7 @@ export interface SystemLogEntry {
   component: string
   message: string
   detail?: string
+  request_id: string
   created_at: string
 }
 

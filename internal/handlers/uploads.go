@@ -120,6 +120,8 @@ func CreateUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	quotaSvc := services.NewQuotaService(db)
 	webhookSvc := services.NewWebhookDeliveryService(db)
 	settingsSvc := services.NewSettingsService(db)
+	userSvc := services.NewUserService(db)
+	tokenSvc := services.NewTokenService(db)
 
 	walletSvc := services.NewWalletService(db, cfg.WalletEncryptionKey)
 
@@ -147,20 +149,52 @@ func CreateUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 			}
 		}
 
-		// S14: Read max_upload_size_bytes from settings
-		maxUploadSize := int64(10 << 30) // 10 GB fallback
+		// S14: Read max_upload_size_bytes from settings (the system-level ceiling)
+		systemMaxSize := int64(10 << 30) // 10 GB fallback
 		if maxStr, err := settingsSvc.Get("max_upload_size_bytes"); err == nil {
 			if n, err := strconv.ParseInt(maxStr, 10, 64); err == nil && n > 0 {
-				maxUploadSize = n
+				systemMaxSize = n
+			}
+		}
+
+		// V2-327: resolve effective upload restrictions — token override > user
+		// override > system default. For Bearer JWT (web UI) requests tokenID is 0.
+		var tokenRec *services.Token
+		if tokenID != 0 {
+			if t, err := tokenSvc.GetByID(tokenID); err == nil {
+				tokenRec = t
+			}
+		}
+		userRec, err := userSvc.GetByID(userID)
+		if err != nil {
+			jsonError(w, "failed to load user", http.StatusInternalServerError)
+			return
+		}
+
+		maxUploadSize := systemMaxSize
+		switch {
+		case tokenRec != nil && tokenRec.MaxFileSizeBytes.Valid && tokenRec.MaxFileSizeBytes.Int64 > 0:
+			if tokenRec.MaxFileSizeBytes.Int64 < maxUploadSize {
+				maxUploadSize = tokenRec.MaxFileSizeBytes.Int64
+			}
+		case userRec.MaxFileSizeBytes.Valid && userRec.MaxFileSizeBytes.Int64 > 0:
+			if userRec.MaxFileSizeBytes.Int64 < maxUploadSize {
+				maxUploadSize = userRec.MaxFileSizeBytes.Int64
 			}
 		}
 
 		// Limit request body size
 		r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
 
-		// Parse multipart form
+		// Parse multipart form. Differentiate "body exceeds limit" (413) from
+		// other parse errors (400 — e.g. missing/invalid form).
 		if err := r.ParseMultipartForm(32 << 20); err != nil { // 32 MB memory buffer
-			jsonErrorWithCode(w, "file too large or invalid multipart form", "file_too_large", http.StatusBadRequest)
+			var maxErr *http.MaxBytesError
+			if errors.As(err, &maxErr) {
+				jsonErrorWithCode(w, "file exceeds maximum upload size", "file_too_large", http.StatusRequestEntityTooLarge)
+				return
+			}
+			jsonErrorWithCode(w, "invalid multipart form", "invalid_request", http.StatusBadRequest)
 			return
 		}
 
@@ -210,13 +244,14 @@ func CreateUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 		ext := filepath.Ext(originalFilename)
 		safeFilename := uuid.New().String() + ext
 
-		// Detect and validate content type
+		// Detect and validate content type. Token override > user override > system list.
 		contentType := header.Header.Get("Content-Type")
 		if contentType == "" {
 			contentType = "application/octet-stream"
 		}
-		if !isAllowedContentType(contentType, settingsSvc) {
-			jsonError(w, "file type not allowed: "+contentType, http.StatusBadRequest)
+		allowlist := effectiveAllowlist(tokenRec, userRec, settingsSvc)
+		if !matchContentType(contentType, allowlist) {
+			jsonError(w, "file type not allowed: "+contentType, http.StatusUnsupportedMediaType)
 			return
 		}
 
@@ -235,6 +270,15 @@ func CreateUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 		if err != nil {
 			os.Remove(tempPath)
 			jsonError(w, "failed to save file", http.StatusInternalServerError)
+			return
+		}
+
+		// Belt-and-braces — MaxBytesReader covers the request body but the
+		// effective per-token/per-user cap can still be smaller than the
+		// system limit and worth surfacing as 413 with a clear code.
+		if written > maxUploadSize {
+			os.Remove(tempPath)
+			jsonErrorWithCode(w, "file exceeds maximum upload size", "file_too_large", http.StatusRequestEntityTooLarge)
 			return
 		}
 
@@ -825,26 +869,56 @@ func DeleteUpload(db *database.DB) http.HandlerFunc {
 	}
 }
 
-// isAllowedContentType checks the content type against a configurable allowlist.
-// Supports wildcard patterns like "image/*". Returns true if no allowlist is configured.
-func isAllowedContentType(ct string, settingsSvc *services.SettingsService) bool {
-	allowlist := "image/*,application/pdf,text/*,application/json,application/zip,application/gzip,application/x-tar,video/*,audio/*,application/octet-stream"
-	if v, err := settingsSvc.Get("allowed_upload_content_types"); err == nil && v != "" {
-		allowlist = v
+// effectiveAllowlist resolves the content-type allowlist for an upload using
+// the override chain: token > user > system setting > built-in default.
+// Returns a comma-separated string of patterns (same shape as the setting).
+func effectiveAllowlist(tok *services.Token, user *services.User, settingsSvc *services.SettingsService) string {
+	if tok != nil && tok.AllowedFileTypes.Valid && tok.AllowedFileTypes.String != "" {
+		if csv := jsonArrayToCSV(tok.AllowedFileTypes.String); csv != "" {
+			return csv
+		}
 	}
+	if user != nil && user.AllowedFileTypes.Valid && user.AllowedFileTypes.String != "" {
+		if csv := jsonArrayToCSV(user.AllowedFileTypes.String); csv != "" {
+			return csv
+		}
+	}
+	if v, err := settingsSvc.Get("allowed_upload_content_types"); err == nil && v != "" {
+		return v
+	}
+	return "image/*,application/pdf,text/*,application/json,application/zip,application/gzip,application/x-tar,video/*,audio/*,application/octet-stream"
+}
 
+// jsonArrayToCSV turns a stored JSON string array like `["image/*","application/pdf"]`
+// into the comma-separated form matchContentType expects. Returns "" on parse error
+// or when the array is empty — callers should treat that as "no restriction at this tier".
+func jsonArrayToCSV(s string) string {
+	var arr []string
+	if err := json.Unmarshal([]byte(s), &arr); err != nil {
+		return ""
+	}
+	return strings.Join(arr, ",")
+}
+
+// matchContentType checks ct against a comma-separated list of patterns.
+// Supports wildcard patterns like "image/*". An empty allowlist matches nothing.
+func matchContentType(ct, allowlist string) bool {
+	if strings.TrimSpace(allowlist) == "" {
+		return false
+	}
 	ct = strings.ToLower(strings.TrimSpace(ct))
-	// Strip parameters (e.g., "text/plain; charset=utf-8" → "text/plain")
 	if idx := strings.IndexByte(ct, ';'); idx != -1 {
 		ct = strings.TrimSpace(ct[:idx])
 	}
 
 	for _, pattern := range strings.Split(allowlist, ",") {
 		pattern = strings.ToLower(strings.TrimSpace(pattern))
+		if pattern == "" {
+			continue
+		}
 		if pattern == ct {
 			return true
 		}
-		// Wildcard: "image/*" matches "image/png"
 		if strings.HasSuffix(pattern, "/*") {
 			prefix := strings.TrimSuffix(pattern, "*")
 			if strings.HasPrefix(ct, prefix) {

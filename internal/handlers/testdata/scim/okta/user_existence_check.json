@@ -1,7 +1,7 @@
 {
   "request": {
     "method": "GET",
-    "path": "/scim/v2/Users?filter=userName%20eq%20%22fixture.user%40maidsafe.net%22&startIndex=1&count=100",
+    "path": "/scim/v2/Users?filter=userName%20eq%20%22fixture.user%40example.com%22&startIndex=1&count=100",
     "headers": {
       "User-Agent": "Okta SCIM Client 1.0.0",
       "Accept": "application/scim+json"
@@ -9,7 +9,7 @@
     "query": [
       [
         "filter",
-        "userName eq \"fixture.user@maidsafe.net\""
+        "userName eq \"fixture.user@example.com\""
       ],
       [
         "startIndex",

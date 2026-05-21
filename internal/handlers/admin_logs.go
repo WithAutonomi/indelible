@@ -1,6 +1,9 @@
 package handlers
 
 import (
+	"encoding/json"
+	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -9,8 +12,9 @@ import (
 	"github.com/WithAutonomi/indelible/internal/services"
 )
 
-func parseLogFilters(r *http.Request) (eventType string, userID *int64, since, until *time.Time, limit, offset int) {
+func parseLogFilters(r *http.Request) (eventType, severity string, userID *int64, since, until *time.Time, limit, offset int) {
 	eventType = r.URL.Query().Get("event_type")
+	severity = validSeverity(r.URL.Query().Get("severity"))
 	if uidStr := r.URL.Query().Get("user_id"); uidStr != "" {
 		if uid, err := strconv.ParseInt(uidStr, 10, 64); err == nil {
 			userID = &uid
@@ -31,6 +35,17 @@ func parseLogFilters(r *http.Request) (eventType string, userID *int64, since, u
 	return
 }
 
+// validSeverity narrows the input to the known set; unknown values are dropped
+// so a typo doesn't accidentally filter to nothing.
+func validSeverity(s string) string {
+	switch s {
+	case "info", "warn", "error":
+		return s
+	default:
+		return ""
+	}
+}
+
 type auditLogResponse struct {
 	ID        int64   `json:"id"`
 	EventType string  `json:"event_type"`
@@ -39,6 +54,7 @@ type auditLogResponse struct {
 	Detail    string  `json:"detail"`
 	IPAddress *string `json:"ip_address"`
 	UserAgent *string `json:"user_agent"`
+	RequestID string  `json:"request_id"` // V2-317; "" for worker-emitted rows
 	CreatedAt string  `json:"created_at"`
 }
 
@@ -48,6 +64,7 @@ type systemLogResponse struct {
 	Component string  `json:"component"`
 	Message   string  `json:"message"`
 	Detail    *string `json:"detail"`
+	RequestID string  `json:"request_id"`
 	CreatedAt string  `json:"created_at"`
 }
 
@@ -57,6 +74,7 @@ func toAuditLogResponse(e *services.AuditLogEntry) auditLogResponse {
 		EventType: e.EventType,
 		Severity:  e.Severity,
 		Detail:    e.Detail,
+		RequestID: e.RequestID,
 		CreatedAt: e.CreatedAt.Format("2006-01-02T15:04:05Z"),
 	}
 	if e.UserID.Valid {
@@ -77,6 +95,7 @@ func toSystemLogResponse(e *services.SystemLogEntry) systemLogResponse {
 		Level:     e.Level,
 		Component: e.Component,
 		Message:   e.Message,
+		RequestID: e.RequestID,
 		CreatedAt: e.CreatedAt.Format("2006-01-02T15:04:05Z"),
 	}
 	if e.Detail.Valid {
@@ -90,6 +109,7 @@ func toSystemLogResponse(e *services.SystemLogEntry) systemLogResponse {
 // @Tags         Admin: Logs
 // @Produce      json
 // @Param        event_type query string false "Filter by event type"
+// @Param        severity   query string false "Filter by severity (info|warn|error)"
 // @Param        user_id    query int    false "Filter by user ID"
 // @Param        since      query string false "Start date (YYYY-MM-DD)"
 // @Param        until      query string false "End date (YYYY-MM-DD)"
@@ -104,9 +124,9 @@ func AdminAuditLogs(db *database.DB) http.HandlerFunc {
 	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
-		eventType, userID, since, until, limit, offset := parseLogFilters(r)
+		eventType, severity, userID, since, until, limit, offset := parseLogFilters(r)
 
-		entries, total, err := logSvc.QueryAuditLogs(eventType, userID, since, until, limit, offset)
+		entries, total, err := logSvc.QueryAuditLogs(eventType, severity, userID, since, until, limit, offset)
 		if err != nil {
 			jsonError(w, "failed to query audit logs", http.StatusInternalServerError)
 			return
@@ -138,6 +158,19 @@ func AdminAuditLogs(db *database.DB) http.HandlerFunc {
 // @Param        offset    query int    false "Offset for pagination"
 // @Success      200 {object} map[string]interface{}
 // @Failure      500 {object} map[string]string
+// @Summary      Query config-change audit log
+// @Description  Return config_audit entries showing old/new value, actor, IP, and UA for every settings change. Permanent (never purged).
+// @Tags         Admin: Logs
+// @Produce      json
+// @Param        setting_key query string false "Filter by setting key"
+// @Param        since       query string false "Start date (YYYY-MM-DD)"
+// @Param        until       query string false "End date (YYYY-MM-DD)"
+// @Param        limit       query int    false "Max results (default 100, max 500)"
+// @Param        offset      query int    false "Offset for pagination"
+// @Success      200 {object} map[string]interface{}
+// @Failure      500 {object} map[string]string
+// @Router       /admin/logs/config [get]
+// @Security     BearerAuth
 // @Router       /admin/logs/system [get]
 // @Security     BearerAuth
 // AdminSystemLogs returns system log entries (retention-managed).
@@ -147,7 +180,7 @@ func AdminSystemLogs(db *database.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		level := r.URL.Query().Get("level")
 		component := r.URL.Query().Get("component")
-		_, _, since, until, limit, offset := parseLogFilters(r)
+		_, _, _, since, until, limit, offset := parseLogFilters(r)
 
 		entries, total, err := logSvc.QuerySystemLogs(level, component, since, until, limit, offset)
 		if err != nil {
@@ -169,15 +202,93 @@ func AdminSystemLogs(db *database.DB) http.HandlerFunc {
 	}
 }
 
+// configAuditResponse mirrors services.ConfigAuditEntry with JSON tags and
+// nullable handling for the wire format.
+type configAuditResponse struct {
+	ID         int64   `json:"id"`
+	SettingKey string  `json:"setting_key"`
+	OldValue   *string `json:"old_value"`
+	NewValue   string  `json:"new_value"`
+	ChangedBy  *int64  `json:"changed_by"`
+	IPAddress  *string `json:"ip_address"`
+	UserAgent  *string `json:"user_agent"`
+	CreatedAt  string  `json:"created_at"`
+}
+
+func toConfigAuditResponse(e *services.ConfigAuditEntry) configAuditResponse {
+	r := configAuditResponse{
+		ID:         e.ID,
+		SettingKey: e.SettingKey,
+		NewValue:   e.NewValue,
+		CreatedAt:  e.CreatedAt.Format("2006-01-02T15:04:05Z"),
+	}
+	if e.OldValue.Valid {
+		r.OldValue = &e.OldValue.String
+	}
+	if e.ChangedBy.Valid {
+		r.ChangedBy = &e.ChangedBy.Int64
+	}
+	if e.IPAddress.Valid {
+		r.IPAddress = &e.IPAddress.String
+	}
+	if e.UserAgent.Valid {
+		r.UserAgent = &e.UserAgent.String
+	}
+	return r
+}
+
+// @Summary      Query config-audit log
+// @Description  Return setting-change entries (who changed what, when, from where). Permanent — never deleted.
+// @Tags         Admin: Logs
+// @Produce      json
+// @Param        setting_key query string false "Filter by setting key"
+// @Param        user_id     query int    false "Filter by changed_by user ID"
+// @Param        since       query string false "Start date (YYYY-MM-DD)"
+// @Param        until       query string false "End date (YYYY-MM-DD)"
+// @Param        limit       query int    false "Max results"
+// @Param        offset      query int    false "Offset for pagination"
+// @Success      200 {object} map[string]interface{}
+// @Failure      500 {object} map[string]string
+// @Router       /admin/logs/config [get]
+// @Security     BearerAuth
+// AdminConfigAuditLogs returns config_audit entries (V2-316).
+func AdminConfigAuditLogs(db *database.DB) http.HandlerFunc {
+	logSvc := services.NewLogService(db)
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		settingKey := r.URL.Query().Get("setting_key")
+		_, _, userID, since, until, limit, offset := parseLogFilters(r)
+
+		entries, total, err := logSvc.QueryConfigAudit(settingKey, userID, since, until, limit, offset)
+		if err != nil {
+			jsonError(w, "failed to query config audit", http.StatusInternalServerError)
+			return
+		}
+
+		resp := make([]configAuditResponse, 0, len(entries))
+		for _, e := range entries {
+			resp = append(resp, toConfigAuditResponse(e))
+		}
+
+		jsonResponse(w, http.StatusOK, map[string]any{
+			"entries": resp,
+			"total":   total,
+			"limit":   limit,
+			"offset":  offset,
+		})
+	}
+}
+
 // @Summary      Query user activity logs
 // @Description  Return user activity log entries with optional filtering
 // @Tags         Admin: Logs
 // @Produce      json
-// @Param        user_id query int    false "Filter by user ID"
-// @Param        since   query string false "Start date (YYYY-MM-DD)"
-// @Param        until   query string false "End date (YYYY-MM-DD)"
-// @Param        limit   query int    false "Max results"
-// @Param        offset  query int    false "Offset for pagination"
+// @Param        user_id  query int    false "Filter by user ID"
+// @Param        severity query string false "Filter by severity (info|warn|error)"
+// @Param        since    query string false "Start date (YYYY-MM-DD)"
+// @Param        until    query string false "End date (YYYY-MM-DD)"
+// @Param        limit    query int    false "Max results"
+// @Param        offset   query int    false "Offset for pagination"
 // @Success      200 {object} map[string]interface{}
 // @Failure      500 {object} map[string]string
 // @Router       /admin/logs/user [get]
@@ -187,9 +298,9 @@ func AdminUserLogs(db *database.DB) http.HandlerFunc {
 	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
-		_, userID, since, until, limit, offset := parseLogFilters(r)
+		_, severity, userID, since, until, limit, offset := parseLogFilters(r)
 
-		entries, total, err := logSvc.QueryUserActivity(userID, since, until, limit, offset)
+		entries, total, err := logSvc.QueryUserActivity(severity, userID, since, until, limit, offset)
 		if err != nil {
 			jsonError(w, "failed to query user logs", http.StatusInternalServerError)
 			return
@@ -206,5 +317,211 @@ func AdminUserLogs(db *database.DB) http.HandlerFunc {
 			"limit":   limit,
 			"offset":  offset,
 		})
+	}
+}
+
+// exportFilename builds the Content-Disposition filename for a log export.
+// Date stamp is "today" — date filters are reflected in the data, not the name.
+func exportFilename(logType string) string {
+	return logType + "-" + time.Now().UTC().Format("2006-01-02") + ".jsonl"
+}
+
+// writeExportHeaders prepares the response for an NDJSON stream. Once headers
+// are sent the status code is locked, so any cap-exceeded or DB error mid-stream
+// is appended as a final JSON error line rather than reported via HTTP status.
+func writeExportHeaders(w http.ResponseWriter, logType string) {
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+exportFilename(logType)+`"`)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+}
+
+// writeExportError emits a final JSON error line when streaming fails partway
+// through. The HTTP status is already 200 OK at this point.
+func writeExportError(w http.ResponseWriter, err error) {
+	enc := json.NewEncoder(w)
+	_ = enc.Encode(map[string]string{"error": err.Error()})
+	if errors.Is(err, services.ErrExportCapExceeded) {
+		slog.Warn("log export hit row cap", "error", err.Error())
+	} else {
+		slog.Error("log export failed mid-stream", "error", err.Error())
+	}
+}
+
+// @Summary      Export audit logs as JSON Lines
+// @Description  Stream the audit log under the GET filter as application/x-ndjson with attachment Content-Disposition. Caps at 1M rows; on exceedance a trailing {"error":...} line is appended.
+// @Tags         Admin: Logs
+// @Produce      application/x-ndjson
+// @Param        event_type query string false "Filter by event type"
+// @Param        severity   query string false "Filter by severity (info|warn|error)"
+// @Param        user_id    query int    false "Filter by user ID"
+// @Param        since      query string false "Start date (YYYY-MM-DD)"
+// @Param        until      query string false "End date (YYYY-MM-DD)"
+// @Success      200 {string} string "NDJSON stream"
+// @Failure      500 {object} map[string]string
+// @Router       /admin/logs/audit/export [get]
+// @Security     BearerAuth
+// AdminExportAuditLogs streams audit log entries as JSON Lines (V2-318).
+func AdminExportAuditLogs(db *database.DB) http.HandlerFunc {
+	logSvc := services.NewLogService(db)
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		eventType, severity, userID, since, until, _, _ := parseLogFilters(r)
+		writeExportHeaders(w, "audit")
+		enc := json.NewEncoder(w)
+		_, err := logSvc.StreamAuditLogs(eventType, severity, userID, since, until, func(e *services.AuditLogEntry) error {
+			return enc.Encode(toAuditLogResponse(e))
+		})
+		if err != nil {
+			writeExportError(w, err)
+		}
+	}
+}
+
+// @Summary      Export system logs as JSON Lines
+// @Tags         Admin: Logs
+// @Produce      application/x-ndjson
+// @Param        level     query string false "Filter by log level"
+// @Param        component query string false "Filter by component"
+// @Param        since     query string false "Start date (YYYY-MM-DD)"
+// @Param        until     query string false "End date (YYYY-MM-DD)"
+// @Success      200 {string} string "NDJSON stream"
+// @Failure      500 {object} map[string]string
+// @Router       /admin/logs/system/export [get]
+// @Security     BearerAuth
+// AdminExportSystemLogs streams system log entries as JSON Lines (V2-318).
+func AdminExportSystemLogs(db *database.DB) http.HandlerFunc {
+	logSvc := services.NewLogService(db)
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		level := r.URL.Query().Get("level")
+		component := r.URL.Query().Get("component")
+		_, _, _, since, until, _, _ := parseLogFilters(r)
+		writeExportHeaders(w, "system")
+		enc := json.NewEncoder(w)
+		_, err := logSvc.StreamSystemLogs(level, component, since, until, func(e *services.SystemLogEntry) error {
+			return enc.Encode(toSystemLogResponse(e))
+		})
+		if err != nil {
+			writeExportError(w, err)
+		}
+	}
+}
+
+// @Summary      Export config-audit log as JSON Lines
+// @Tags         Admin: Logs
+// @Produce      application/x-ndjson
+// @Param        setting_key query string false "Filter by setting key"
+// @Param        user_id     query int    false "Filter by changed_by user ID"
+// @Param        since       query string false "Start date (YYYY-MM-DD)"
+// @Param        until       query string false "End date (YYYY-MM-DD)"
+// @Success      200 {string} string "NDJSON stream"
+// @Failure      500 {object} map[string]string
+// @Router       /admin/logs/config/export [get]
+// @Security     BearerAuth
+// AdminExportConfigAuditLogs streams config_audit entries as JSON Lines (V2-318).
+func AdminExportConfigAuditLogs(db *database.DB) http.HandlerFunc {
+	logSvc := services.NewLogService(db)
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		settingKey := r.URL.Query().Get("setting_key")
+		_, _, userID, since, until, _, _ := parseLogFilters(r)
+		writeExportHeaders(w, "config")
+		enc := json.NewEncoder(w)
+		_, err := logSvc.StreamConfigAudit(settingKey, userID, since, until, func(e *services.ConfigAuditEntry) error {
+			return enc.Encode(toConfigAuditResponse(e))
+		})
+		if err != nil {
+			writeExportError(w, err)
+		}
+	}
+}
+
+// @Summary      Audit log statistics
+// @Description  Aggregate counts, date range, disk usage, and last-30-day buckets for audit_log (V2-319).
+// @Tags         Admin: Logs
+// @Produce      json
+// @Success      200 {object} services.LogStats
+// @Failure      500 {object} map[string]string
+// @Router       /admin/logs/audit/stats [get]
+// @Security     BearerAuth
+// AdminAuditStats returns aggregate audit_log statistics (V2-319).
+func AdminAuditStats(db *database.DB) http.HandlerFunc {
+	logSvc := services.NewLogService(db)
+	return func(w http.ResponseWriter, r *http.Request) {
+		st, err := logSvc.QueryAuditStats()
+		if err != nil {
+			jsonError(w, "failed to compute audit stats", http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, http.StatusOK, st)
+	}
+}
+
+// @Summary      System log statistics
+// @Tags         Admin: Logs
+// @Produce      json
+// @Success      200 {object} services.LogStats
+// @Failure      500 {object} map[string]string
+// @Router       /admin/logs/system/stats [get]
+// @Security     BearerAuth
+// AdminSystemStats returns aggregate system_log statistics (V2-319).
+func AdminSystemStats(db *database.DB) http.HandlerFunc {
+	logSvc := services.NewLogService(db)
+	return func(w http.ResponseWriter, r *http.Request) {
+		st, err := logSvc.QuerySystemStats()
+		if err != nil {
+			jsonError(w, "failed to compute system stats", http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, http.StatusOK, st)
+	}
+}
+
+// @Summary      Config-audit statistics
+// @Tags         Admin: Logs
+// @Produce      json
+// @Success      200 {object} services.LogStats
+// @Failure      500 {object} map[string]string
+// @Router       /admin/logs/config/stats [get]
+// @Security     BearerAuth
+// AdminConfigAuditStats returns aggregate config_audit statistics (V2-319).
+func AdminConfigAuditStats(db *database.DB) http.HandlerFunc {
+	logSvc := services.NewLogService(db)
+	return func(w http.ResponseWriter, r *http.Request) {
+		st, err := logSvc.QueryConfigAuditStats()
+		if err != nil {
+			jsonError(w, "failed to compute config audit stats", http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, http.StatusOK, st)
+	}
+}
+
+// @Summary      Export user activity logs as JSON Lines
+// @Tags         Admin: Logs
+// @Produce      application/x-ndjson
+// @Param        user_id  query int    false "Filter by user ID"
+// @Param        severity query string false "Filter by severity (info|warn|error)"
+// @Param        since    query string false "Start date (YYYY-MM-DD)"
+// @Param        until    query string false "End date (YYYY-MM-DD)"
+// @Success      200 {string} string "NDJSON stream"
+// @Failure      500 {object} map[string]string
+// @Router       /admin/logs/user/export [get]
+// @Security     BearerAuth
+// AdminExportUserLogs streams user activity entries as JSON Lines (V2-318).
+func AdminExportUserLogs(db *database.DB) http.HandlerFunc {
+	logSvc := services.NewLogService(db)
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		_, severity, userID, since, until, _, _ := parseLogFilters(r)
+		writeExportHeaders(w, "user")
+		enc := json.NewEncoder(w)
+		// User activity is audit_log filtered by user — reuse StreamAuditLogs with eventType="".
+		_, err := logSvc.StreamAuditLogs("", severity, userID, since, until, func(e *services.AuditLogEntry) error {
+			return enc.Encode(toAuditLogResponse(e))
+		})
+		if err != nil {
+			writeExportError(w, err)
+		}
 	}
 }
