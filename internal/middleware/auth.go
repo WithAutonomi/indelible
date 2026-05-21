@@ -52,9 +52,14 @@ func Authenticate(db *database.DB, cfg *config.Config) func(http.Handler) http.H
 					return
 				}
 
-				// Reject JWTs issued before a password change
+				// Reject JWTs issued before a password change. Compare at
+				// whole-second granularity: JWT iat is a Unix-second integer,
+				// but PasswordChangedAt carries sub-second precision from the
+				// DB. A re-login completing in the same wall-clock second as
+				// the password change would otherwise be 401'd, because the
+				// JWT's iat truncates to .000 while the column reads .NNN.
 				if user.PasswordChangedAt.Valid && claims.IssuedAt != nil {
-					if claims.IssuedAt.Time.Before(user.PasswordChangedAt.Time) {
+					if claims.IssuedAt.Time.Unix() < user.PasswordChangedAt.Time.Unix() {
 						http.Error(w, `{"error":"session invalidated by password change","code":"unauthorized"}`, http.StatusUnauthorized)
 						return
 					}
