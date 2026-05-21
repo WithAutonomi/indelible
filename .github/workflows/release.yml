@@ -6,6 +6,10 @@ on:
       - "v*"
   workflow_dispatch:
     inputs:
+      version:
+        description: "Dry-run version for docker image tags (e.g. 0.0.0-dryrun-1). Only :<version> is pushed; :latest is reserved for real tag releases."
+        required: false
+        default: "0.0.0-dryrun"
       antd_version:
         description: "ant-sdk release tag to bundle (e.g. v0.2.0). Leave empty to read .antd-version file."
         required: false
@@ -21,18 +25,22 @@ jobs:
       version: ${{ steps.meta.outputs.version }}
       prerelease: ${{ steps.meta.outputs.prerelease }}
     steps:
-      - name: Parse tag
+      - name: Resolve version
         id: meta
         run: |
-          tag="${GITHUB_REF#refs/tags/}"
-          version="${tag#v}"
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            tag="${GITHUB_REF#refs/tags/}"
+            version="${tag#v}"
+          else
+            version="${{ inputs.version }}"
+          fi
           echo "version=${version}" >> $GITHUB_OUTPUT
           if [[ "$version" == *-* ]]; then
             echo "prerelease=true" >> $GITHUB_OUTPUT
           else
             echo "prerelease=false" >> $GITHUB_OUTPUT
           fi
-          echo "Tag: $tag, Version: $version, Prerelease: $(grep prerelease $GITHUB_OUTPUT | tail -1 | cut -d= -f2)"
+          echo "Event: ${GITHUB_EVENT_NAME}, Version: $version"
 
   resolve-antd-version:
     name: Resolve antd version
@@ -71,6 +79,7 @@ jobs:
 
   build:
     name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
+    if: github.event_name == 'push'
     runs-on: ${{ matrix.os }}
     needs: [release-meta, resolve-antd-version]
     strategy:
@@ -147,6 +156,7 @@ jobs:
 
   release:
     name: Create Release
+    if: github.event_name == 'push'
     needs: [build, release-meta, resolve-antd-version]
     runs-on: ubuntu-latest
     steps:
@@ -170,12 +180,8 @@ jobs:
           body: |
             Bundled antd daemon: `${{ needs.resolve-antd-version.outputs.antd_tag }}`
 
-  # Multi-arch Docker images. The build runs on every tag and validates the
-  # cross-compile; the push step is gated off until V2-298 lands the Docker Hub
-  # org + GHCR setup + credentials. Once V2-298 flips `push: true` and adds the
-  # login steps, this job becomes the actual release-publish path.
   docker:
-    name: Docker (multi-arch build, push gated by V2-298)
+    name: Docker (multi-arch build + push)
     needs: [release-meta, resolve-antd-version]
     runs-on: ubuntu-latest
     permissions:
@@ -188,51 +194,53 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      # V2-298: uncomment the two login steps below and flip both build-push
-      # actions' `push:` to `true` once DOCKERHUB_USERNAME + DOCKERHUB_TOKEN
-      # secrets are configured.
-      #
-      # - name: Log in to GHCR
-      #   uses: docker/login-action@v3
-      #   with:
-      #     registry: ghcr.io
-      #     username: ${{ github.actor }}
-      #     password: ${{ secrets.GITHUB_TOKEN }}
-      #
-      # - name: Log in to Docker Hub
-      #   uses: docker/login-action@v3
-      #   with:
-      #     username: ${{ secrets.DOCKERHUB_USERNAME }}
-      #     password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build indelible (linux/amd64,linux/arm64)
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push indelible (linux/amd64,linux/arm64)
         uses: docker/build-push-action@v6
         with:
           context: .
-          push: false # V2-298 flips to true
+          push: true
           platforms: linux/amd64,linux/arm64
           build-args: |
             VERSION=${{ needs.release-meta.outputs.version }}
           tags: |
             ghcr.io/withautonomi/indelible:${{ needs.release-meta.outputs.version }}
-            ghcr.io/withautonomi/indelible:latest
             withautonomi/indelible:${{ needs.release-meta.outputs.version }}
-            withautonomi/indelible:latest
+            ${{ github.event_name == 'push' && 'ghcr.io/withautonomi/indelible:latest' || '' }}
+            ${{ github.event_name == 'push' && 'withautonomi/indelible:latest' || '' }}
           cache-from: type=gha,scope=docker-release
           cache-to: type=gha,scope=docker-release,mode=max
 
-      - name: Build antd companion (linux/amd64 — arm64 blocked on V2-275)
+      - name: Build and push antd companion (linux/amd64,linux/arm64)
         uses: docker/build-push-action@v6
         with:
           context: ./deploy/antd
-          push: false # V2-298 flips to true
-          platforms: linux/amd64
+          push: true
+          platforms: linux/amd64,linux/arm64
           build-args: |
             ANTD_VERSION=${{ needs.resolve-antd-version.outputs.antd_tag }}
+          # On dispatch (dry-run) the antd image is tagged with the indelible
+          # dry-run version, not the antd version, so it doesn't pollute the
+          # antd release tag namespace. On a real tag push it's tagged with
+          # the resolved antd version + `latest`.
           tags: |
-            ghcr.io/withautonomi/antd:${{ needs.resolve-antd-version.outputs.antd_tag }}
-            ghcr.io/withautonomi/antd:latest
-            withautonomi/antd:${{ needs.resolve-antd-version.outputs.antd_tag }}
-            withautonomi/antd:latest
+            ${{ github.event_name == 'push' && format('ghcr.io/withautonomi/antd:{0}', needs.resolve-antd-version.outputs.antd_tag) || '' }}
+            ${{ github.event_name == 'push' && format('withautonomi/antd:{0}', needs.resolve-antd-version.outputs.antd_tag) || '' }}
+            ${{ github.event_name == 'workflow_dispatch' && format('ghcr.io/withautonomi/antd:{0}', needs.release-meta.outputs.version) || '' }}
+            ${{ github.event_name == 'workflow_dispatch' && format('withautonomi/antd:{0}', needs.release-meta.outputs.version) || '' }}
+            ${{ github.event_name == 'push' && 'ghcr.io/withautonomi/antd:latest' || '' }}
+            ${{ github.event_name == 'push' && 'withautonomi/antd:latest' || '' }}
           cache-from: type=gha,scope=docker-release-antd
           cache-to: type=gha,scope=docker-release-antd,mode=max
