@@ -379,7 +379,7 @@ func (m *SystemMonitor) fireAlert(checkName, level, eventType, message string, v
 	m.mu.Unlock()
 
 	slog.Warn("system monitor alert", "check", checkName, "level", level, "message", message)
-	m.logSvc.WriteSystem(level, "system_monitor", message, "")
+	m.logSvc.WriteSystem(level, "system_monitor", message, "", "")
 	m.webhookSvc.FireSystemEvent(eventType, &services.WebhookSystemData{
 		AlertType: eventType,
 		Message:   message,
@@ -401,7 +401,7 @@ func (m *SystemMonitor) clearAlert(checkName, eventType, message string, value f
 	m.mu.Unlock()
 
 	slog.Info("system monitor recovered", "check", checkName, "message", message)
-	m.logSvc.WriteSystem("info", "system_monitor", message, "")
+	m.logSvc.WriteSystem("info", "system_monitor", message, "", "")
 	m.webhookSvc.FireSystemEvent(eventType, &services.WebhookSystemData{
 		AlertType: eventType,
 		Message:   message,

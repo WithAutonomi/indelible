@@ -86,7 +86,7 @@ func (w *DiskAlertWorker) check() {
 		if !w.IsPaused {
 			w.IsPaused = true
 			w.logSvc.WriteSystem("error", "disk_alert",
-				"Critical: disk usage at "+pctStr+"%, uploads paused", "")
+				"Critical: disk usage at "+pctStr+"%, uploads paused", "", "")
 			slog.Error("disk critical — uploads paused", "usage_pct", usagePct)
 		}
 		if w.lastAlertLevel != "critical" {
@@ -100,7 +100,7 @@ func (w *DiskAlertWorker) check() {
 	case usagePct >= 80:
 		w.IsPaused = false
 		w.logSvc.WriteSystem("warn", "disk_alert",
-			"Warning: disk usage at "+pctStr+"%", "")
+			"Warning: disk usage at "+pctStr+"%", "", "")
 		slog.Warn("disk warning", "usage_pct", usagePct)
 		if w.lastAlertLevel != "warning" {
 			w.lastAlertLevel = "warning"
@@ -114,7 +114,7 @@ func (w *DiskAlertWorker) check() {
 		if w.IsPaused {
 			w.IsPaused = false
 			w.logSvc.WriteSystem("info", "disk_alert",
-				"Disk usage back to normal ("+pctStr+"%)", "")
+				"Disk usage back to normal ("+pctStr+"%)", "", "")
 			slog.Info("disk usage normal — uploads resumed", "usage_pct", usagePct)
 		}
 		if w.lastAlertLevel != "" {

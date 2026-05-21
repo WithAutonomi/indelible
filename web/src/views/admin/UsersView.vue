@@ -8,10 +8,12 @@ import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import Button from 'primevue/button'
 import InputText from 'primevue/inputtext'
+import InputNumber from 'primevue/inputnumber'
 import Select from 'primevue/select'
 import Dialog from 'primevue/dialog'
 import ConfirmDialog from 'primevue/confirmdialog'
 import Tag from 'primevue/tag'
+import Chip from 'primevue/chip'
 
 const confirm = useConfirm()
 const toast = useToast()
@@ -21,6 +23,9 @@ const loading = ref(true)
 const editingUser = ref<User | null>(null)
 const showEditDialog = ref(false)
 const editPermissions = ref('')
+const editMaxFileSize = ref<number | null>(null)
+const editAllowedTypes = ref<string[]>([])
+const editAllowedTypesInput = ref('')
 const saving = ref(false)
 
 const showCreate = ref(false)
@@ -77,7 +82,23 @@ async function fetchUsers() {
 function startEdit(u: User) {
   editingUser.value = u
   editPermissions.value = u.permissions || ''
+  editMaxFileSize.value = u.max_file_size_bytes ?? null
+  editAllowedTypes.value = [...(u.allowed_file_types || [])]
+  editAllowedTypesInput.value = ''
   showEditDialog.value = true
+}
+
+function addAllowedType() {
+  const v = editAllowedTypesInput.value.trim()
+  if (!v) return
+  if (!editAllowedTypes.value.includes(v)) {
+    editAllowedTypes.value.push(v)
+  }
+  editAllowedTypesInput.value = ''
+}
+
+function removeAllowedType(idx: number) {
+  editAllowedTypes.value.splice(idx, 1)
 }
 
 async function savePermissions() {
@@ -87,12 +108,17 @@ async function savePermissions() {
     await api.put(`/api/v2/admin/users/${editingUser.value.id}/permissions`, {
       permissions: editPermissions.value,
     })
+    // Restrictions ride on the main update endpoint, not the permissions one.
+    await api.put(`/api/v2/admin/users/${editingUser.value.id}`, {
+      max_file_size_bytes: editMaxFileSize.value,
+      allowed_file_types: editAllowedTypes.value,
+    })
     showEditDialog.value = false
     editingUser.value = null
     await fetchUsers()
-    toast.add({ severity: 'success', summary: 'Updated', detail: 'Permissions updated', life: 3000 })
+    toast.add({ severity: 'success', summary: 'Updated', detail: 'User updated', life: 3000 })
   } catch (e: any) {
-    toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to update permissions', life: 5000 })
+    toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to update user', life: 5000 })
   } finally {
     saving.value = false
   }
@@ -176,8 +202,8 @@ onMounted(fetchUsers)
       </template>
     </Dialog>
 
-    <!-- Edit permissions dialog -->
-    <Dialog v-model:visible="showEditDialog" modal :header="editingUser ? `Edit Permissions: ${editingUser.first_name} ${editingUser.last_name}` : ''" class="w-full max-w-lg">
+    <!-- Edit user dialog (permissions + restrictions) -->
+    <Dialog v-model:visible="showEditDialog" modal :header="editingUser ? `Edit User: ${editingUser.first_name} ${editingUser.last_name}` : ''" class="w-full max-w-lg">
       <div class="grid grid-cols-3 gap-6 py-2">
         <div>
           <label class="text-sm font-medium">Permissions</label>
@@ -185,6 +211,28 @@ onMounted(fetchUsers)
         </div>
         <div class="col-span-2">
           <Select v-model="editPermissions" :options="permissionOptions" optionLabel="label" optionValue="value" class="w-48" />
+        </div>
+
+        <div>
+          <label class="text-sm font-medium">Max upload size</label>
+          <p class="text-xs text-surface-400 mt-1">Bytes. Leave empty to use the system default.</p>
+        </div>
+        <div class="col-span-2">
+          <InputNumber v-model="editMaxFileSize" :min="0" placeholder="Use system default" class="w-full" />
+        </div>
+
+        <div>
+          <label class="text-sm font-medium">Allowed file types</label>
+          <p class="text-xs text-surface-400 mt-1">Content type patterns (e.g. <code>image/*</code>, <code>application/pdf</code>). Empty = use system default.</p>
+        </div>
+        <div class="col-span-2 space-y-2">
+          <div class="flex gap-2">
+            <InputText v-model="editAllowedTypesInput" placeholder="image/* or application/pdf" class="flex-1" @keydown.enter.prevent="addAllowedType" />
+            <Button icon="pi pi-plus" severity="secondary" @click="addAllowedType" />
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <Chip v-for="(t, idx) in editAllowedTypes" :key="t" :label="t" removable @remove="removeAllowedType(idx)" />
+          </div>
         </div>
       </div>
       <template #footer>

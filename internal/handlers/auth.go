@@ -87,6 +87,7 @@ func Login(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	userSvc := services.NewUserService(db)
 	permSvc := services.NewPermissionService(db)
 	settingsSvc := services.NewSettingsService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req loginRequest
@@ -103,17 +104,22 @@ func Login(db *database.DB, cfg *config.Config) http.HandlerFunc {
 
 		user, err := userSvc.GetByEmail(req.Email)
 		if err != nil {
-			// Constant-time: don't reveal whether email exists
+			// Constant-time: don't reveal whether email exists in the response, but
+			// audit the attempt with the supplied email so credential-stuffing
+			// detection has something to work with.
+			auditEvent(r, logSvc, "login_failed", "warn", nil, "unknown email: "+req.Email)
 			jsonErrorWithCode(w, "invalid email or password", "invalid_credentials", http.StatusUnauthorized)
 			return
 		}
 
 		if !user.IsActive {
+			auditEvent(r, logSvc, "login_failed", "warn", &user.ID, "account inactive")
 			jsonErrorWithCode(w, "account is inactive", "account_inactive", http.StatusForbidden)
 			return
 		}
 
 		if !user.PasswordHash.Valid || !auth.CheckPassword(req.Password, user.PasswordHash.String) {
+			auditEvent(r, logSvc, "login_failed", "warn", &user.ID, "incorrect password")
 			jsonErrorWithCode(w, "invalid email or password", "invalid_credentials", http.StatusUnauthorized)
 			return
 		}
@@ -133,6 +139,7 @@ func Login(db *database.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		_ = userSvc.UpdateLastLogin(user.ID)
+		auditEvent(r, logSvc, "login", "info", &user.ID, "password")
 
 		// Set httpOnly session cookie (browser auth)
 		http.SetCookie(w, &http.Cookie{
@@ -256,8 +263,19 @@ func Register(db *database.DB, cfg *config.Config) http.HandlerFunc {
 }
 
 // Logout clears the session cookie.
-func Logout() http.HandlerFunc {
+func Logout(db *database.DB) http.HandlerFunc {
+	logSvc := services.NewLogService(db)
+
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Logout is bound to a route under the Authenticate middleware (see
+		// router.go), so the user ID is always set; nil-check defensively.
+		userID := middleware.GetUserID(r.Context())
+		var uidPtr *int64
+		if userID != 0 {
+			uidPtr = &userID
+		}
+		auditEvent(r, logSvc, "logout", "info", uidPtr, "")
+
 		http.SetCookie(w, &http.Cookie{
 			Name:     "session",
 			Value:    "",
@@ -346,6 +364,7 @@ func UpdateProfile(db *database.DB) http.HandlerFunc {
 // @Security BearerAuth
 func ChangePassword(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	userSvc := services.NewUserService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID := middleware.GetUserID(r.Context())
@@ -385,6 +404,7 @@ func ChangePassword(db *database.DB, cfg *config.Config) http.HandlerFunc {
 
 		// password_changed_at is set by UpdatePassword — JWTs issued before
 		// this timestamp are rejected by the auth middleware.
+		auditEvent(r, logSvc, "password_changed", "info", &userID, "")
 
 		jsonResponse(w, http.StatusOK, map[string]string{"message": "password updated"})
 	}
@@ -411,6 +431,7 @@ type resetPasswordRequest struct {
 func ForgotPassword(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	userSvc := services.NewUserService(db)
 	resetSvc := services.NewResetTokenService(db)
+	logSvc := services.NewLogService(db)
 	notifier := services.NewNotifier(cfg, db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -432,10 +453,14 @@ func ForgotPassword(db *database.DB, cfg *config.Config) http.HandlerFunc {
 
 		user, err := userSvc.GetByEmail(req.Email)
 		if err != nil {
-			return // email not found — respond identically
+			// Audit so a credential-stuffing burst at /forgot-password is
+			// visible even though we don't reveal it to the caller.
+			auditEvent(r, logSvc, "password_reset_requested", "warn", nil, "unknown email: "+req.Email)
+			return
 		}
 		if !user.IsActive || user.IsServiceAccount {
-			return // inactive or service account — no reset
+			auditEvent(r, logSvc, "password_reset_requested", "warn", &user.ID, "inactive or service account")
+			return
 		}
 
 		token, err := resetSvc.Create(user.ID)
@@ -450,6 +475,7 @@ func ForgotPassword(db *database.DB, cfg *config.Config) http.HandlerFunc {
 		resetURL := baseURL + "/reset-password?token=" + token
 
 		_ = notifier.SendPasswordReset(user.Email, resetURL)
+		auditEvent(r, logSvc, "password_reset_requested", "info", &user.ID, "")
 	}
 }
 
@@ -467,6 +493,7 @@ func ForgotPassword(db *database.DB, cfg *config.Config) http.HandlerFunc {
 func ResetPassword(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	userSvc := services.NewUserService(db)
 	resetSvc := services.NewResetTokenService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req resetPasswordRequest
@@ -482,6 +509,7 @@ func ResetPassword(db *database.DB, cfg *config.Config) http.HandlerFunc {
 
 		userID, err := resetSvc.Validate(req.Token)
 		if err != nil {
+			auditEvent(r, logSvc, "password_reset_completed", "warn", nil, "invalid or expired token")
 			jsonError(w, "invalid or expired reset token", http.StatusUnauthorized)
 			return
 		}
@@ -499,6 +527,7 @@ func ResetPassword(db *database.DB, cfg *config.Config) http.HandlerFunc {
 
 		// password_changed_at is set by UpdatePassword — JWTs issued before
 		// this timestamp are rejected by the auth middleware.
+		auditEvent(r, logSvc, "password_reset_completed", "info", &userID, "")
 
 		jsonResponse(w, http.StatusOK, map[string]string{"message": "password reset successfully"})
 	}
@@ -516,6 +545,7 @@ func ResetPassword(db *database.DB, cfg *config.Config) http.HandlerFunc {
 // @Router /auth/verify-email [get]
 func VerifyEmail(db *database.DB) http.HandlerFunc {
 	verifySvc := services.NewEmailVerificationService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := r.URL.Query().Get("token")
@@ -524,11 +554,13 @@ func VerifyEmail(db *database.DB) http.HandlerFunc {
 			return
 		}
 
-		_, err := verifySvc.Validate(token)
+		userID, err := verifySvc.Validate(token)
 		if err != nil {
+			auditEvent(r, logSvc, "email_verified", "warn", nil, "invalid or expired token")
 			jsonError(w, "invalid or expired verification token", http.StatusUnauthorized)
 			return
 		}
+		auditEvent(r, logSvc, "email_verified", "info", &userID, "")
 
 		jsonResponse(w, http.StatusOK, map[string]string{"message": "email verified successfully"})
 	}
@@ -546,6 +578,7 @@ func VerifyEmail(db *database.DB) http.HandlerFunc {
 func ResendVerification(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	userSvc := services.NewUserService(db)
 	verifySvc := services.NewEmailVerificationService(db)
+	logSvc := services.NewLogService(db)
 	notifier := services.NewNotifier(cfg, db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -573,6 +606,7 @@ func ResendVerification(db *database.DB, cfg *config.Config) http.HandlerFunc {
 			baseURL = "http://localhost:8080"
 		}
 		_ = notifier.SendEmailVerification(user.Email, baseURL+"/verify-email?token="+token)
+		auditEvent(r, logSvc, "email_verification_requested", "info", &userID, "")
 
 		jsonResponse(w, http.StatusOK, map[string]string{"message": "verification email sent"})
 	}

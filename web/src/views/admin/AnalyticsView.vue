@@ -104,9 +104,9 @@ onMounted(fetchAll)
           <div v-if="tokenStats?.top_tokens?.length">
             <h3 class="text-sm font-medium mb-2">Top Tokens</h3>
             <div class="space-y-1">
-              <div v-for="t in tokenStats.top_tokens" :key="t.name" class="flex justify-between text-sm">
-                <span>{{ t.name }}</span>
-                <span class="text-surface-500">{{ t.request_count }} requests</span>
+              <div v-for="t in tokenStats.top_tokens" :key="t.token_uuid" class="flex justify-between text-sm">
+                <span>{{ t.token_name }}</span>
+                <span class="text-surface-500">{{ t.requests }} requests</span>
               </div>
             </div>
           </div>
@@ -117,14 +117,18 @@ onMounted(fetchAll)
       <Card>
         <template #title>Storage Costs</template>
         <template #content>
-          <div class="grid grid-cols-2 gap-4 mb-4">
+          <div class="grid grid-cols-3 gap-4 mb-4">
             <div>
-              <p class="text-xs text-surface-500 uppercase">Total Transactions</p>
-              <p class="text-2xl font-bold">{{ costStats?.total_transactions || 0 }}</p>
+              <p class="text-xs text-surface-500 uppercase">Total Uploads</p>
+              <p class="text-2xl font-bold">{{ costStats?.total_uploads || 0 }}</p>
             </div>
             <div>
               <p class="text-xs text-surface-500 uppercase">Total Spent (atto)</p>
-              <p class="text-2xl font-bold font-mono">{{ costStats?.total_amount || '0' }}</p>
+              <p class="text-2xl font-bold font-mono">{{ costStats?.total_cost || '0' }}</p>
+            </div>
+            <div>
+              <p class="text-xs text-surface-500 uppercase">Avg / Upload (atto)</p>
+              <p class="text-2xl font-bold font-mono">{{ costStats?.avg_cost_per_upload || '0' }}</p>
             </div>
           </div>
           <div v-if="costStats?.by_department?.length">
@@ -132,7 +136,7 @@ onMounted(fetchAll)
             <div class="space-y-1">
               <div v-for="d in costStats.by_department" :key="d.department" class="flex justify-between text-sm">
                 <span>{{ d.department || 'Unassigned' }}</span>
-                <span class="text-surface-500 font-mono">{{ d.total_amount }}</span>
+                <span class="text-surface-500 font-mono">{{ d.total_cost }}</span>
               </div>
             </div>
           </div>

@@ -434,6 +434,12 @@ func (s *WebhookDeliveryService) formatSlack(payload WebhookPayload) ([]byte, er
 		text = fmt.Sprintf("*%s*: `%s` — collection `%s`", payload.EventType, payload.Collection.UploadUUID, payload.Collection.CollectionName)
 	case payload.System != nil:
 		text = fmt.Sprintf("*%s*: %s (%.1f%%)", payload.EventType, payload.System.Message, payload.System.Value)
+	case payload.Auth != nil:
+		// Slack mrkdwn link format: <url|label>. The recipient address is sent
+		// verbatim — the Slack channel operator needs it to identify who the
+		// link belongs to.
+		text = fmt.Sprintf("*%s*\nDeliver to: `%s`\n<%s|Click here to continue>",
+			payload.EventType, payload.Auth.To, payload.Auth.URL)
 	default:
 		text = fmt.Sprintf("*%s* — Indelible test ping at %s", payload.EventType, payload.Timestamp)
 	}

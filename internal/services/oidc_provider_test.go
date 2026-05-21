@@ -220,3 +220,62 @@ func TestOIDCProviderSecretEncryptDecrypt(t *testing.T) {
 func decryptOIDCSecret(key, ciphertext string) (string, error) {
 	return (&WalletService{encryptionKey: key}).DecryptKey(&Wallet{EncryptedKey: ciphertext})
 }
+
+func TestOIDCProviderExtraAuthorizeParams_DefaultEmpty(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewOIDCProviderService(db, testEncKey)
+	p, _ := svc.Create("google", "Google", "https://accounts.google.com", "c1", "s1", "")
+	// A freshly created provider has no extras — nil map (column default '').
+	if len(p.ExtraAuthorizeParams) != 0 {
+		t.Errorf("new provider should have no extra params, got %v", p.ExtraAuthorizeParams)
+	}
+}
+
+func TestOIDCProviderSetExtraAuthorizeParams_RoundTrip(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewOIDCProviderService(db, testEncKey)
+	p, _ := svc.Create("google", "Google", "https://accounts.google.com", "c1", "s1", "")
+
+	want := map[string]string{"hd": "company.com", "prompt": "select_account"}
+	if err := svc.SetExtraAuthorizeParams(p.ID, want); err != nil {
+		t.Fatalf("SetExtraAuthorizeParams: %v", err)
+	}
+
+	got, err := svc.GetByID(p.ID)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if len(got.ExtraAuthorizeParams) != len(want) {
+		t.Fatalf("len = %d, want %d", len(got.ExtraAuthorizeParams), len(want))
+	}
+	for k, v := range want {
+		if got.ExtraAuthorizeParams[k] != v {
+			t.Errorf("params[%q] = %q, want %q", k, got.ExtraAuthorizeParams[k], v)
+		}
+	}
+}
+
+func TestOIDCProviderSetExtraAuthorizeParams_ClearsWithEmptyMap(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewOIDCProviderService(db, testEncKey)
+	p, _ := svc.Create("google", "Google", "https://accounts.google.com", "c1", "s1", "")
+	_ = svc.SetExtraAuthorizeParams(p.ID, map[string]string{"hd": "company.com"})
+
+	// Passing nil or empty map clears the column (stored as '').
+	if err := svc.SetExtraAuthorizeParams(p.ID, nil); err != nil {
+		t.Fatalf("SetExtraAuthorizeParams nil: %v", err)
+	}
+	got, _ := svc.GetByID(p.ID)
+	if len(got.ExtraAuthorizeParams) != 0 {
+		t.Errorf("expected no params after clear, got %v", got.ExtraAuthorizeParams)
+	}
+}
+
+func TestUnmarshalExtraAuthorizeParams_CorruptYieldsNil(t *testing.T) {
+	// A corrupt DB row degrades to "no extra params" rather than panicking the
+	// authorize flow. Defensive — empty default + JSON marshal/unmarshal makes
+	// this hard to hit in practice, but guards future manual SQL edits.
+	if got := unmarshalExtraAuthorizeParams("not json{"); got != nil {
+		t.Errorf("corrupt input yielded %v, want nil", got)
+	}
+}

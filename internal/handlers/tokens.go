@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -17,25 +18,29 @@ import (
 )
 
 type createTokenRequest struct {
-	Name          string   `json:"name"`
-	Description   string   `json:"description"`
-	Permissions   []string `json:"permissions"` // ["read"], ["read","write"], etc.
-	Department    string   `json:"department"`
-	ExpiresInDays *int     `json:"expires_in_days"` // null = use system default
+	Name             string   `json:"name"`
+	Description      string   `json:"description"`
+	Permissions      []string `json:"permissions"` // ["read"], ["read","write"], etc.
+	Department       string   `json:"department"`
+	ExpiresInDays    *int     `json:"expires_in_days"`     // null = use system default
+	MaxFileSizeBytes *int64   `json:"max_file_size_bytes"` // null = inherit user/system limit
+	AllowedFileTypes []string `json:"allowed_file_types"`  // empty = inherit user/system list
 }
 
 type tokenResponse struct {
-	UUID        string  `json:"uuid"`
-	Name        string  `json:"name"`
-	Description string  `json:"description"`
-	Permissions string  `json:"permissions"`
-	Department  *string `json:"department"`
-	UsageCount  int64   `json:"usage_count"`
-	LastUsedAt  *string `json:"last_used_at"`
-	ExpiresAt   *string `json:"expires_at"`
-	RevokedAt   *string `json:"revoked_at"`
-	CreatedAt   string  `json:"created_at"`
-	OwnerID     int64   `json:"owner_id"`
+	UUID             string   `json:"uuid"`
+	Name             string   `json:"name"`
+	Description      string   `json:"description"`
+	Permissions      string   `json:"permissions"`
+	Department       *string  `json:"department"`
+	MaxFileSizeBytes *int64   `json:"max_file_size_bytes"`
+	AllowedFileTypes []string `json:"allowed_file_types"`
+	UsageCount       int64    `json:"usage_count"`
+	LastUsedAt       *string  `json:"last_used_at"`
+	ExpiresAt        *string  `json:"expires_at"`
+	RevokedAt        *string  `json:"revoked_at"`
+	CreatedAt        string   `json:"created_at"`
+	OwnerID          int64    `json:"owner_id"`
 }
 
 type createTokenResponse struct {
@@ -54,16 +59,27 @@ type bulkRevokeRequest struct {
 
 func toTokenResponse(t *services.Token) tokenResponse {
 	r := tokenResponse{
-		UUID:        t.UUID,
-		Name:        t.Name,
-		Description: t.Description,
-		Permissions: t.Permissions,
-		UsageCount:  t.UsageCount,
-		CreatedAt:   t.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		OwnerID:     t.UserID,
+		UUID:             t.UUID,
+		Name:             t.Name,
+		Description:      t.Description,
+		Permissions:      t.Permissions,
+		AllowedFileTypes: []string{},
+		UsageCount:       t.UsageCount,
+		CreatedAt:        t.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		OwnerID:          t.UserID,
 	}
 	if t.Department.Valid {
 		r.Department = &t.Department.String
+	}
+	if t.MaxFileSizeBytes.Valid {
+		v := t.MaxFileSizeBytes.Int64
+		r.MaxFileSizeBytes = &v
+	}
+	if t.AllowedFileTypes.Valid && t.AllowedFileTypes.String != "" {
+		var types []string
+		if err := json.Unmarshal([]byte(t.AllowedFileTypes.String), &types); err == nil {
+			r.AllowedFileTypes = types
+		}
 	}
 	if t.LastUsedAt.Valid {
 		s := t.LastUsedAt.Time.Format("2006-01-02T15:04:05Z")
@@ -100,6 +116,7 @@ func CreateToken(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	tokenSvc := services.NewTokenService(db)
 	permSvc := services.NewPermissionService(db)
 	settingsSvc := services.NewSettingsService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID := middleware.GetUserID(r.Context())
@@ -155,15 +172,31 @@ func CreateToken(db *database.DB, cfg *config.Config) http.HandlerFunc {
 
 		permsJSON, _ := json.Marshal(req.Permissions)
 
+		// Restrictions: 0 or negative max means "no per-token limit" (inherit).
+		var maxFileSize *int64
+		if req.MaxFileSizeBytes != nil && *req.MaxFileSizeBytes > 0 {
+			maxFileSize = req.MaxFileSizeBytes
+		}
+		var allowedTypesJSON string
+		if len(req.AllowedFileTypes) > 0 {
+			b, _ := json.Marshal(req.AllowedFileTypes)
+			allowedTypesJSON = string(b)
+		}
+
 		secret, token, err := tokenSvc.Create(
 			userID, req.Name, req.Description,
 			string(permsJSON), req.Department,
-			nil, "", expiresAt,
+			maxFileSize, allowedTypesJSON, expiresAt,
 		)
 		if err != nil {
 			jsonError(w, "failed to create token", http.StatusInternalServerError)
 			return
 		}
+
+		// Audit the issuance. NEVER includes the secret. Detail records the
+		// token UUID + scopes so an incident-response operator can correlate.
+		auditEvent(r, logSvc, "api_token_issued", "info", &userID,
+			fmt.Sprintf("token=%s scopes=%s", token.UUID, string(permsJSON)))
 
 		jsonResponse(w, http.StatusCreated, createTokenResponse{
 			Secret: secret,
@@ -218,6 +251,7 @@ func ListTokens(db *database.DB) http.HandlerFunc {
 // @Router       /tokens/{id} [delete]
 func RevokeToken(db *database.DB) http.HandlerFunc {
 	tokenSvc := services.NewTokenService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID := middleware.GetUserID(r.Context())
@@ -247,6 +281,9 @@ func RevokeToken(db *database.DB) http.HandlerFunc {
 			jsonError(w, "failed to revoke token", http.StatusInternalServerError)
 			return
 		}
+
+		auditEvent(r, logSvc, "api_token_revoked", "info", &userID,
+			fmt.Sprintf("token=%s reason=%s", token.UUID, req.Reason))
 
 		jsonResponse(w, http.StatusOK, map[string]string{"message": "token revoked"})
 	}
@@ -307,6 +344,7 @@ func AdminListAllTokens(db *database.DB) http.HandlerFunc {
 // @Security     BearerAuth
 func AdminBulkRevokeTokens(db *database.DB) http.HandlerFunc {
 	tokenSvc := services.NewTokenService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		adminID := middleware.GetUserID(r.Context())
@@ -336,6 +374,9 @@ func AdminBulkRevokeTokens(db *database.DB) http.HandlerFunc {
 			jsonError(w, "failed to revoke tokens", http.StatusInternalServerError)
 			return
 		}
+
+		auditEvent(r, logSvc, "api_token_bulk_revoked", "info", &adminID,
+			fmt.Sprintf("count=%d reason=%s", revoked, req.Reason))
 
 		jsonResponse(w, http.StatusOK, map[string]any{
 			"message": "tokens revoked",

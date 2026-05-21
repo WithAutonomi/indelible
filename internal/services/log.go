@@ -21,6 +21,7 @@ type AuditLogEntry struct {
 	Detail    string
 	IPAddress sql.NullString
 	UserAgent sql.NullString
+	RequestID string // V2-317: chi X-Request-Id; empty when written outside HTTP path
 	CreatedAt time.Time
 }
 
@@ -31,6 +32,7 @@ type SystemLogEntry struct {
 	Component string
 	Message   string
 	Detail    sql.NullString
+	RequestID string
 	CreatedAt time.Time
 }
 
@@ -44,28 +46,32 @@ func NewLogService(db *database.DB) *LogService {
 	return &LogService{db: db}
 }
 
-// WriteAudit writes an entry to the audit log.
-func (s *LogService) WriteAudit(eventType, severity string, userID *int64, detail, ipAddress, userAgent string) error {
+// WriteAudit writes an entry to the audit log. requestID should be the chi
+// X-Request-Id for the originating request, or "" if written outside an HTTP
+// handler (e.g. workers). Callers in handlers should pass
+// chimw.GetReqID(r.Context()).
+func (s *LogService) WriteAudit(eventType, severity string, userID *int64, detail, ipAddress, userAgent, requestID string) error {
 	var uid sql.NullInt64
 	if userID != nil {
 		uid = sql.NullInt64{Int64: *userID, Valid: true}
 	}
 	_, err := s.db.Exec(
-		`INSERT INTO audit_log (event_type, severity, user_id, detail, ip_address, user_agent) VALUES (?, ?, ?, ?, ?, ?)`,
-		eventType, severity, uid, detail, ipAddress, userAgent,
+		`INSERT INTO audit_log (event_type, severity, user_id, detail, ip_address, user_agent, request_id) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		eventType, severity, uid, detail, ipAddress, userAgent, requestID,
 	)
 	return err
 }
 
-// WriteSystem writes an entry to the system log.
-func (s *LogService) WriteSystem(level, component, message, detail string) error {
+// WriteSystem writes an entry to the system log. requestID is "" for worker-
+// originated entries.
+func (s *LogService) WriteSystem(level, component, message, detail, requestID string) error {
 	var d sql.NullString
 	if detail != "" {
 		d = sql.NullString{String: detail, Valid: true}
 	}
 	_, err := s.db.Exec(
-		`INSERT INTO system_log (level, component, message, detail) VALUES (?, ?, ?, ?)`,
-		level, component, message, d,
+		`INSERT INTO system_log (level, component, message, detail, request_id) VALUES (?, ?, ?, ?, ?)`,
+		level, component, message, d, requestID,
 	)
 	return err
 }
@@ -83,7 +89,7 @@ func (s *LogService) QueryAuditLogs(eventType, severity string, userID *int64, s
 	s.db.QueryRow(`SELECT COUNT(*) FROM audit_log`+where, args...).Scan(&total)
 
 	rows, err := s.db.Query(
-		`SELECT id, event_type, severity, user_id, detail, ip_address, user_agent, created_at FROM audit_log`+where+` ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+		`SELECT id, event_type, severity, user_id, detail, ip_address, user_agent, request_id, created_at FROM audit_log`+where+` ORDER BY created_at DESC LIMIT ? OFFSET ?`,
 		append(args, limit, offset)...,
 	)
 	if err != nil {
@@ -94,7 +100,7 @@ func (s *LogService) QueryAuditLogs(eventType, severity string, userID *int64, s
 	var entries []*AuditLogEntry
 	for rows.Next() {
 		e := &AuditLogEntry{}
-		if err := rows.Scan(&e.ID, &e.EventType, &e.Severity, &e.UserID, &e.Detail, &e.IPAddress, &e.UserAgent, &e.CreatedAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.EventType, &e.Severity, &e.UserID, &e.Detail, &e.IPAddress, &e.UserAgent, &e.RequestID, &e.CreatedAt); err != nil {
 			return nil, 0, err
 		}
 		entries = append(entries, e)
@@ -132,7 +138,7 @@ func (s *LogService) QuerySystemLogs(level, component string, since, until *time
 	s.db.QueryRow(`SELECT COUNT(*) FROM system_log`+where, args...).Scan(&total)
 
 	rows, err := s.db.Query(
-		`SELECT id, level, component, message, detail, created_at FROM system_log`+where+` ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+		`SELECT id, level, component, message, detail, request_id, created_at FROM system_log`+where+` ORDER BY created_at DESC LIMIT ? OFFSET ?`,
 		append(args, limit, offset)...,
 	)
 	if err != nil {
@@ -143,7 +149,7 @@ func (s *LogService) QuerySystemLogs(level, component string, since, until *time
 	var entries []*SystemLogEntry
 	for rows.Next() {
 		e := &SystemLogEntry{}
-		if err := rows.Scan(&e.ID, &e.Level, &e.Component, &e.Message, &e.Detail, &e.CreatedAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.Level, &e.Component, &e.Message, &e.Detail, &e.RequestID, &e.CreatedAt); err != nil {
 			return nil, 0, err
 		}
 		entries = append(entries, e)

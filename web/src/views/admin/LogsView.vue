@@ -248,6 +248,16 @@ onMounted(fetchLogs)
                 <span class="text-xs text-surface-400">{{ data.ip_address || '-' }}</span>
               </template>
             </Column>
+            <Column field="request_id" header="Request" sortable>
+              <template #body="{ data }">
+                <span v-if="data.request_id"
+                  class="text-xs text-surface-400 font-mono cursor-help"
+                  v-tooltip.top="data.request_id">
+                  {{ data.request_id.slice(-8) }}
+                </span>
+                <span v-else class="text-xs text-surface-300">-</span>
+              </template>
+            </Column>
           </DataTable>
 
           <!-- Pagination -->

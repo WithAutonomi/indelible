@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -73,6 +74,7 @@ func ListOIDCProviders(db *database.DB) http.HandlerFunc {
 func OIDCAuthorize(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	providerSvc := services.NewOIDCProviderService(db, cfg.WalletEncryptionKey)
 	loginSvc := services.NewOIDCLoginService(db, providerSvc, cfg.WalletEncryptionKey)
+	logSvc := services.NewLogService(db)
 	return func(w http.ResponseWriter, r *http.Request) {
 		providerID, err := strconv.ParseInt(chi.URLParam(r, "providerId"), 10, 64)
 		if err != nil {
@@ -95,6 +97,7 @@ func OIDCAuthorize(db *database.DB, cfg *config.Config) http.HandlerFunc {
 			jsonError(w, "failed to build authorize URL: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
+		auditEvent(r, logSvc, "sso_authorize_started", "info", nil, fmt.Sprintf("provider=%d", providerID))
 		setOIDCStateCookie(w, r, cookieValue)
 		http.Redirect(w, r, authURL, http.StatusFound)
 	}
@@ -114,11 +117,13 @@ func OIDCCallback(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	loginSvc := services.NewOIDCLoginService(db, providerSvc, cfg.WalletEncryptionKey)
 	userSvc := services.NewUserService(db)
 	settingsSvc := services.NewSettingsService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Provider-side errors (user clicked Cancel, IdP refused, etc.) are
 		// returned with ?error=...&error_description=...  Just relay to /login.
 		if idpErr := r.URL.Query().Get("error"); idpErr != "" {
+			auditEvent(r, logSvc, "sso_login_failed", "warn", nil, "idp_error: "+idpErr)
 			clearOIDCStateCookie(w, r)
 			http.Redirect(w, r, "/login?error="+idpErr, http.StatusFound)
 			return
@@ -135,12 +140,15 @@ func OIDCCallback(db *database.DB, cfg *config.Config) http.HandlerFunc {
 		outcome, err := loginSvc.HandleCallback(r.Context(), cookieValue,
 			r.URL.Query().Get("state"), r.URL.Query().Get("code"))
 		if err != nil {
+			auditEvent(r, logSvc, "sso_login_failed", "warn", nil, oidcErrorCode(err))
 			http.Redirect(w, r, "/login?error="+oidcErrorCode(err), http.StatusFound)
 			return
 		}
 
 		// Linking flow — already logged in, just redirect to profile.
 		if outcome.LinkedUserID != 0 {
+			lid := outcome.LinkedUserID
+			auditEvent(r, logSvc, "sso_identity_linked", "info", &lid, "")
 			http.Redirect(w, r, "/profile?linked=1", http.StatusFound)
 			return
 		}
@@ -164,6 +172,12 @@ func OIDCCallback(db *database.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 		_ = userSvc.UpdateLastLogin(user.ID)
+
+		detail := "sso"
+		if outcome.IsNewUser {
+			detail = "sso auto-provisioned"
+		}
+		auditEvent(r, logSvc, "sso_login", "info", &user.ID, detail)
 
 		http.SetCookie(w, &http.Cookie{
 			Name:     "session",
@@ -243,6 +257,7 @@ func OIDCLinkStart(db *database.DB, cfg *config.Config) http.HandlerFunc {
 func OIDCUnlinkIdentity(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	providerSvc := services.NewOIDCProviderService(db, cfg.WalletEncryptionKey)
 	loginSvc := services.NewOIDCLoginService(db, providerSvc, cfg.WalletEncryptionKey)
+	logSvc := services.NewLogService(db)
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID := middleware.GetUserID(r.Context())
 		if userID == 0 {
@@ -262,6 +277,7 @@ func OIDCUnlinkIdentity(db *database.DB, cfg *config.Config) http.HandlerFunc {
 			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		auditEvent(r, logSvc, "sso_identity_unlinked", "info", &userID, fmt.Sprintf("identity=%d", identityID))
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
@@ -371,6 +387,53 @@ func oidcErrorCode(err error) string {
 	}
 }
 
+// --- Admin: set extra_authorize_params -------------------------------------
+
+type adminOIDCExtraAuthorizeParamsRequest struct {
+	ExtraAuthorizeParams map[string]string `json:"extra_authorize_params"`
+}
+
+// AdminSetOIDCExtraAuthorizeParams godoc
+// @Summary Set OIDC extra authorize-URL params
+// @Description Replace the IdP-specific params map appended to the authorize URL. Used to set Google Workspace hd=, Microsoft prompt=, AAD domain_hint, etc. Send an empty object to clear.
+// @Tags Admin: OIDC
+// @Accept json
+// @Produce json
+// @Param id path int true "Provider ID"
+// @Param body body adminOIDCExtraAuthorizeParamsRequest true "extra_authorize_params map (empty {} to clear)"
+// @Success 200 {object} map[string]bool
+// @Failure 400 {object} map[string]string
+// @Security BearerAuth
+// @Router /admin/oidc/providers/{id}/extra-params [put]
+func AdminSetOIDCExtraAuthorizeParams(db *database.DB, cfg *config.Config) http.HandlerFunc {
+	providerSvc := services.NewOIDCProviderService(db, cfg.WalletEncryptionKey)
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+		if err != nil {
+			jsonError(w, "invalid provider id", http.StatusBadRequest)
+			return
+		}
+		var req adminOIDCExtraAuthorizeParamsRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonError(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		// Empty/blank keys are user error — reject them up front rather than
+		// silently producing `?=value` in the authorize URL.
+		for k := range req.ExtraAuthorizeParams {
+			if strings.TrimSpace(k) == "" {
+				jsonError(w, "extra_authorize_params keys must be non-empty", http.StatusBadRequest)
+				return
+			}
+		}
+		if err := providerSvc.SetExtraAuthorizeParams(id, req.ExtraAuthorizeParams); err != nil {
+			jsonError(w, "failed to update provider: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
 // --- Admin: set auto_provision + default_group_id --------------------------
 
 type adminOIDCAutoProvisionRequest struct {
@@ -392,6 +455,7 @@ type adminOIDCAutoProvisionRequest struct {
 // @Router /admin/oidc/providers/{id}/auto-provision [put]
 func AdminSetOIDCAutoProvision(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	providerSvc := services.NewOIDCProviderService(db, cfg.WalletEncryptionKey)
+	logSvc := services.NewLogService(db)
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 		if err != nil {
@@ -407,6 +471,9 @@ func AdminSetOIDCAutoProvision(db *database.DB, cfg *config.Config) http.Handler
 			jsonError(w, "failed to update provider: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
+		callerID := middleware.GetUserID(r.Context())
+		auditEvent(r, logSvc, "oidc_auto_provision_changed", "info", &callerID,
+			fmt.Sprintf("provider=%d auto_provision=%t default_group=%d", id, req.AutoProvision, req.DefaultGroupID))
 		jsonResponse(w, http.StatusOK, map[string]bool{"ok": true})
 	}
 }
