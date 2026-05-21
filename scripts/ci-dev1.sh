@@ -98,10 +98,13 @@ echo "→ Streaming heavy CI from $DEV1_HOST..."
 echo ""
 
 # Feed the remote script over stdin. The remote receives positional args
-# from the ssh command after `bash -s --`.
-ssh "$DEV1_HOST" bash -s -- "$DEV1_PATH" "$BRANCH" "$SHA" "$STEPS" <<'REMOTE'
+# from the ssh command after `bash -s --`. STEPS is comma-encoded because
+# ssh flattens its argv into a single command string and the remote shell
+# re-splits on whitespace — a literal " docker e2e" arrives as two args,
+# silently dropping every step after the first.
+ssh "$DEV1_HOST" bash -s -- "$DEV1_PATH" "$BRANCH" "$SHA" "${STEPS// /,}" <<'REMOTE'
 set -uo pipefail
-DEV1_PATH=$1; BRANCH=$2; SHA=$3; STEPS=$4
+DEV1_PATH=$1; BRANCH=$2; SHA=$3; STEPS="${4//,/ }"
 
 # Non-interactive SSH skips ~/.profile and ~/.bashrc by default, so Go (and
 # anything else dropped in ~/.local/go/bin or ~/go/bin) isn't on PATH yet.
@@ -146,7 +149,14 @@ start_pg() {
   # fails to write to /proc/sys/net/ipv4/ip_unprivileged_port_start in
   # idmapped (unprivileged) Incus containers. Postgres listens on 5433
   # directly on the dev1 host (not 5432, to dodge any system pg install).
+  # --ulimit nofile bumps the FD ceiling above the rootless-docker default
+  # of 1024 (inherited from dev1's user shell). Pg's max_files_per_process
+  # defaults to 1000, and the full test suite spins up 200+ per-test
+  # databases — crossing the 1024 ceiling causes EMFILE in pg backends and
+  # the postmaster starts refusing connections (manifests as ECONNREFUSED
+  # in tests starting around DB #115). 65536 leaves comfortable headroom.
   docker run -d --name "$PG_CONTAINER" --network=host \
+    --ulimit nofile=65536:65536 \
     -e POSTGRES_PASSWORD=ci postgres:16-alpine \
     postgres -p 5433 >/dev/null
   for _ in $(seq 1 30); do
@@ -216,6 +226,9 @@ if have_step docker; then
     curl -fsS http://localhost:8080/health >/dev/null
     uid=$(docker exec '"$SMOKE_CONTAINER"' id -u)
     [ "$uid" = "65532" ] || { echo "expected uid 65532, got $uid"; exit 1; }
+    # Stop the smoke container so the subsequent e2e step can bind :8080.
+    # Without this the trap-on-EXIT cleanup is too late.
+    docker rm -f '"$SMOKE_CONTAINER"' >/dev/null 2>&1 || true
   '
   else
     skipped+=("Docker smoke (build failed)")
