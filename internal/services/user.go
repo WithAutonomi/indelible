@@ -205,6 +205,26 @@ func (s *UserService) Update(id int64, firstName, lastName string, isActive *boo
 	return err
 }
 
+// UpdateRestrictions sets per-user upload restrictions. Pass a nil max to clear
+// the per-user limit (falls back to system default at upload time). Pass an
+// empty allowedTypes string to clear the per-user content-type list.
+func (s *UserService) UpdateRestrictions(id int64, maxFileSize *int64, allowedTypes string) error {
+	var maxSize sql.NullInt64
+	if maxFileSize != nil {
+		maxSize = sql.NullInt64{Int64: *maxFileSize, Valid: true}
+	}
+	var types sql.NullString
+	if allowedTypes != "" {
+		types = sql.NullString{String: allowedTypes, Valid: true}
+	}
+	_, err := s.db.Exec(
+		`UPDATE users SET max_file_size_bytes = ?, allowed_file_types = ?, updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ?`,
+		maxSize, types, id,
+	)
+	return err
+}
+
 // SoftDelete marks a user as deleted.
 func (s *UserService) SoftDelete(id int64) error {
 	_, err := s.db.Exec(

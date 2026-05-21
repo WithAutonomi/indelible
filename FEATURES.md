@@ -101,7 +101,7 @@ No mutable network primitives (pointers, scratchpads, registers, graph entries) 
 - Fields: email (unique), first/last name, active status, email verified
 - Per-user upload restrictions:
   - `max_file_size_bytes` (nullable = use system default)
-  - `allowed_file_types` (array of extensions, empty = no restriction)
+  - `allowed_file_types` (array of content-type patterns with `*` wildcards, e.g. `image/*`, `application/pdf`; empty = use system default)
 - Soft delete (preserves upload history, prevents cascade data loss)
 - Last login tracking
 
@@ -149,9 +149,9 @@ Three permission levels: **read**, **write**, **admin**
 - Permission set: array of (read/write/admin)
 - Client department (optional, for cost allocation/analytics)
 - Expiry: configurable per-token, nullable = no expiry, capped at 10 years
-- Per-token upload restrictions:
-  - `max_file_size_bytes`
-  - `allowed_file_types`
+- Per-token upload restrictions (token override > user override > system default):
+  - `max_file_size_bytes` (nullable = inherit user/system limit)
+  - `allowed_file_types` (array of content-type patterns; empty = inherit user/system list)
 
 ### 4.2 Token Lifecycle
 - **Creation:** regular users get read/write tokens only; admins can create admin tokens

@@ -5100,6 +5100,12 @@ const docTemplate = `{
         "internal_handlers.adminUserResponse": {
             "type": "object",
             "properties": {
+                "allowed_file_types": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "created_at": {
                     "type": "string"
                 },
@@ -5126,6 +5132,9 @@ const docTemplate = `{
                 },
                 "last_name": {
                     "type": "string"
+                },
+                "max_file_size_bytes": {
+                    "type": "integer"
                 },
                 "permissions": {
                     "type": "string"
@@ -5280,6 +5289,13 @@ const docTemplate = `{
         "internal_handlers.createTokenRequest": {
             "type": "object",
             "properties": {
+                "allowed_file_types": {
+                    "description": "empty = inherit user/system list",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "department": {
                     "type": "string"
                 },
@@ -5288,6 +5304,10 @@ const docTemplate = `{
                 },
                 "expires_in_days": {
                     "description": "null = use system default",
+                    "type": "integer"
+                },
+                "max_file_size_bytes": {
+                    "description": "null = inherit user/system limit",
                     "type": "integer"
                 },
                 "name": {
@@ -5623,6 +5643,12 @@ const docTemplate = `{
         "internal_handlers.tokenResponse": {
             "type": "object",
             "properties": {
+                "allowed_file_types": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "created_at": {
                     "type": "string"
                 },
@@ -5637,6 +5663,9 @@ const docTemplate = `{
                 },
                 "last_used_at": {
                     "type": "string"
+                },
+                "max_file_size_bytes": {
+                    "type": "integer"
                 },
                 "name": {
                     "type": "string"
@@ -5727,6 +5756,13 @@ const docTemplate = `{
         "internal_handlers.updateUserRequest": {
             "type": "object",
             "properties": {
+                "allowed_file_types": {
+                    "description": "nullable; absent in body = leave unchanged; empty array = clear",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "first_name": {
                     "type": "string"
                 },
@@ -5735,6 +5771,10 @@ const docTemplate = `{
                 },
                 "last_name": {
                     "type": "string"
+                },
+                "max_file_size_bytes": {
+                    "description": "nullable; absent in body = leave unchanged",
+                    "type": "integer"
                 }
             }
         },

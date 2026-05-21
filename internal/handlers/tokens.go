@@ -17,25 +17,29 @@ import (
 )
 
 type createTokenRequest struct {
-	Name          string   `json:"name"`
-	Description   string   `json:"description"`
-	Permissions   []string `json:"permissions"` // ["read"], ["read","write"], etc.
-	Department    string   `json:"department"`
-	ExpiresInDays *int     `json:"expires_in_days"` // null = use system default
+	Name             string   `json:"name"`
+	Description      string   `json:"description"`
+	Permissions      []string `json:"permissions"` // ["read"], ["read","write"], etc.
+	Department       string   `json:"department"`
+	ExpiresInDays    *int     `json:"expires_in_days"`     // null = use system default
+	MaxFileSizeBytes *int64   `json:"max_file_size_bytes"` // null = inherit user/system limit
+	AllowedFileTypes []string `json:"allowed_file_types"`  // empty = inherit user/system list
 }
 
 type tokenResponse struct {
-	UUID        string  `json:"uuid"`
-	Name        string  `json:"name"`
-	Description string  `json:"description"`
-	Permissions string  `json:"permissions"`
-	Department  *string `json:"department"`
-	UsageCount  int64   `json:"usage_count"`
-	LastUsedAt  *string `json:"last_used_at"`
-	ExpiresAt   *string `json:"expires_at"`
-	RevokedAt   *string `json:"revoked_at"`
-	CreatedAt   string  `json:"created_at"`
-	OwnerID     int64   `json:"owner_id"`
+	UUID             string   `json:"uuid"`
+	Name             string   `json:"name"`
+	Description      string   `json:"description"`
+	Permissions      string   `json:"permissions"`
+	Department       *string  `json:"department"`
+	MaxFileSizeBytes *int64   `json:"max_file_size_bytes"`
+	AllowedFileTypes []string `json:"allowed_file_types"`
+	UsageCount       int64    `json:"usage_count"`
+	LastUsedAt       *string  `json:"last_used_at"`
+	ExpiresAt        *string  `json:"expires_at"`
+	RevokedAt        *string  `json:"revoked_at"`
+	CreatedAt        string   `json:"created_at"`
+	OwnerID          int64    `json:"owner_id"`
 }
 
 type createTokenResponse struct {
@@ -54,16 +58,27 @@ type bulkRevokeRequest struct {
 
 func toTokenResponse(t *services.Token) tokenResponse {
 	r := tokenResponse{
-		UUID:        t.UUID,
-		Name:        t.Name,
-		Description: t.Description,
-		Permissions: t.Permissions,
-		UsageCount:  t.UsageCount,
-		CreatedAt:   t.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		OwnerID:     t.UserID,
+		UUID:             t.UUID,
+		Name:             t.Name,
+		Description:      t.Description,
+		Permissions:      t.Permissions,
+		AllowedFileTypes: []string{},
+		UsageCount:       t.UsageCount,
+		CreatedAt:        t.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		OwnerID:          t.UserID,
 	}
 	if t.Department.Valid {
 		r.Department = &t.Department.String
+	}
+	if t.MaxFileSizeBytes.Valid {
+		v := t.MaxFileSizeBytes.Int64
+		r.MaxFileSizeBytes = &v
+	}
+	if t.AllowedFileTypes.Valid && t.AllowedFileTypes.String != "" {
+		var types []string
+		if err := json.Unmarshal([]byte(t.AllowedFileTypes.String), &types); err == nil {
+			r.AllowedFileTypes = types
+		}
 	}
 	if t.LastUsedAt.Valid {
 		s := t.LastUsedAt.Time.Format("2006-01-02T15:04:05Z")
@@ -155,10 +170,21 @@ func CreateToken(db *database.DB, cfg *config.Config) http.HandlerFunc {
 
 		permsJSON, _ := json.Marshal(req.Permissions)
 
+		// Restrictions: 0 or negative max means "no per-token limit" (inherit).
+		var maxFileSize *int64
+		if req.MaxFileSizeBytes != nil && *req.MaxFileSizeBytes > 0 {
+			maxFileSize = req.MaxFileSizeBytes
+		}
+		var allowedTypesJSON string
+		if len(req.AllowedFileTypes) > 0 {
+			b, _ := json.Marshal(req.AllowedFileTypes)
+			allowedTypesJSON = string(b)
+		}
+
 		secret, token, err := tokenSvc.Create(
 			userID, req.Name, req.Description,
 			string(permsJSON), req.Department,
-			nil, "", expiresAt,
+			maxFileSize, allowedTypesJSON, expiresAt,
 		)
 		if err != nil {
 			jsonError(w, "failed to create token", http.StatusInternalServerError)
