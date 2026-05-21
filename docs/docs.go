@@ -375,6 +375,62 @@ const docTemplate = `{
             }
         },
         "/admin/groups/{id}/members": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Return the resolved members of a group (id, email, display name). V2-304.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin: Groups"
+                ],
+                "summary": "List group members",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Group ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "array",
+                                "items": {
+                                    "$ref": "#/definitions/internal_handlers.groupMemberResponse"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
             "post": {
                 "security": [
                     {
@@ -5149,6 +5205,20 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_handlers.groupMemberResponse": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
         "internal_handlers.groupResponse": {
             "type": "object",
             "properties": {
@@ -5156,6 +5226,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "description": {
+                    "type": "string"
+                },
+                "external_id": {
+                    "description": "SCIM-provisioned groups carry this",
                     "type": "string"
                 },
                 "id": {
