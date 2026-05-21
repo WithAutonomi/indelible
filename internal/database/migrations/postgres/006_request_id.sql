@@ -1,6 +1,6 @@
 -- +goose Up
 
--- See sqlite/005_request_id.sql for rationale.
+-- See sqlite/006_request_id.sql for rationale.
 ALTER TABLE audit_log ADD COLUMN request_id TEXT NOT NULL DEFAULT '';
 ALTER TABLE system_log ADD COLUMN request_id TEXT NOT NULL DEFAULT '';
 
