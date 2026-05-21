@@ -2101,6 +2101,49 @@ paths:
       summary: Set default wallet
       tags:
       - 'Admin: Wallets'
+  /admin/wallets/{id}/transactions:
+    get:
+      description: List recorded transactions for a wallet (upload payments, refunds),
+        newest first. V2-321.
+      parameters:
+      - description: Wallet ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Max results (default 50, max 100)
+        in: query
+        name: limit
+        type: integer
+      - description: Offset for pagination
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Per-wallet transaction history
+      tags:
+      - 'Admin: Wallets'
   /admin/webhooks:
     get:
       description: Return all configured webhook endpoints
