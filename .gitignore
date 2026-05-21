@@ -12,6 +12,10 @@ vendor/
 # Node
 web/node_modules/
 web/dist/
+smoke/node_modules/
+smoke/playwright-report/
+smoke/test-results/
+smoke/.auth/
 e2e/node_modules/
 e2e/playwright-report/
 e2e/test-results/
