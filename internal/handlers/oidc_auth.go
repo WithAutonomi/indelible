@@ -371,6 +371,53 @@ func oidcErrorCode(err error) string {
 	}
 }
 
+// --- Admin: set extra_authorize_params -------------------------------------
+
+type adminOIDCExtraAuthorizeParamsRequest struct {
+	ExtraAuthorizeParams map[string]string `json:"extra_authorize_params"`
+}
+
+// AdminSetOIDCExtraAuthorizeParams godoc
+// @Summary Set OIDC extra authorize-URL params
+// @Description Replace the IdP-specific params map appended to the authorize URL. Used to set Google Workspace hd=, Microsoft prompt=, AAD domain_hint, etc. Send an empty object to clear.
+// @Tags Admin: OIDC
+// @Accept json
+// @Produce json
+// @Param id path int true "Provider ID"
+// @Param body body adminOIDCExtraAuthorizeParamsRequest true "extra_authorize_params map (empty {} to clear)"
+// @Success 200 {object} map[string]bool
+// @Failure 400 {object} map[string]string
+// @Security BearerAuth
+// @Router /admin/oidc/providers/{id}/extra-params [put]
+func AdminSetOIDCExtraAuthorizeParams(db *database.DB, cfg *config.Config) http.HandlerFunc {
+	providerSvc := services.NewOIDCProviderService(db, cfg.WalletEncryptionKey)
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+		if err != nil {
+			jsonError(w, "invalid provider id", http.StatusBadRequest)
+			return
+		}
+		var req adminOIDCExtraAuthorizeParamsRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonError(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		// Empty/blank keys are user error — reject them up front rather than
+		// silently producing `?=value` in the authorize URL.
+		for k := range req.ExtraAuthorizeParams {
+			if strings.TrimSpace(k) == "" {
+				jsonError(w, "extra_authorize_params keys must be non-empty", http.StatusBadRequest)
+				return
+			}
+		}
+		if err := providerSvc.SetExtraAuthorizeParams(id, req.ExtraAuthorizeParams); err != nil {
+			jsonError(w, "failed to update provider: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}
+
 // --- Admin: set auto_provision + default_group_id --------------------------
 
 type adminOIDCAutoProvisionRequest struct {
