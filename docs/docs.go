@@ -722,6 +722,40 @@ const docTemplate = `{
                 }
             }
         },
+        "/admin/logs/audit/stats": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Aggregate counts, date range, disk usage, and last-30-day buckets for audit_log (V2-319).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin: Logs"
+                ],
+                "summary": "Audit log statistics",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_WithAutonomi_indelible_internal_services.LogStats"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/admin/logs/config": {
             "get": {
                 "security": [
@@ -840,6 +874,39 @@ const docTemplate = `{
                         "description": "NDJSON stream",
                         "schema": {
                             "type": "string"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/logs/config/stats": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin: Logs"
+                ],
+                "summary": "Config-audit statistics",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_WithAutonomi_indelible_internal_services.LogStats"
                         }
                     },
                     "500": {
@@ -1007,6 +1074,39 @@ const docTemplate = `{
                         "description": "NDJSON stream",
                         "schema": {
                             "type": "string"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/logs/system/stats": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin: Logs"
+                ],
+                "summary": "System log statistics",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_WithAutonomi_indelible_internal_services.LogStats"
                         }
                     },
                     "500": {
@@ -5347,6 +5447,83 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "github_com_WithAutonomi_indelible_internal_services.DayCount": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer"
+                },
+                "date": {
+                    "description": "YYYY-MM-DD",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_WithAutonomi_indelible_internal_services.LogStats": {
+            "type": "object",
+            "properties": {
+                "by_component": {
+                    "description": "system_log (top 10)",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer",
+                        "format": "int64"
+                    }
+                },
+                "by_day": {
+                    "description": "last 30 days, ascending",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_WithAutonomi_indelible_internal_services.DayCount"
+                    }
+                },
+                "by_event_type": {
+                    "description": "audit_log (top 10)",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer",
+                        "format": "int64"
+                    }
+                },
+                "by_level": {
+                    "description": "system_log",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer",
+                        "format": "int64"
+                    }
+                },
+                "by_setting_key": {
+                    "description": "config_audit (top 10)",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer",
+                        "format": "int64"
+                    }
+                },
+                "by_severity": {
+                    "description": "One of these will be populated depending on the log type.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer",
+                        "format": "int64"
+                    }
+                },
+                "disk_usage_bytes": {
+                    "description": "DiskUsageBytes is 0 when the dialect doesn't expose a per-table size\n(SQLite has no straightforward way to break a whole-DB file down per\ntable). On Postgres it's pg_total_relation_size for the underlying table.",
+                    "type": "integer"
+                },
+                "earliest": {
+                    "type": "string"
+                },
+                "latest": {
+                    "type": "string"
+                },
+                "total_entries": {
+                    "type": "integer"
+                }
+            }
+        },
         "internal_handlers.addMemberRequest": {
             "type": "object",
             "properties": {

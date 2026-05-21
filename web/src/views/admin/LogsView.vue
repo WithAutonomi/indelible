@@ -85,6 +85,7 @@ function switchTab(tab: string | number) {
   activeTab.value = tab as string
   page.value = 1
   fetchLogs()
+  fetchStats()
 }
 
 function severitySeverity(sev: string): string {
@@ -140,7 +141,91 @@ async function exportCurrent() {
   }
 }
 
-onMounted(fetchLogs)
+// V2-319: stats per log type. Header card on each tab. The User tab is a
+// filtered view of the audit log and shares the audit stats.
+interface LogStats {
+  total_entries: number
+  earliest?: string
+  latest?: string
+  disk_usage_bytes: number
+  by_severity?: Record<string, number>
+  by_event_type?: Record<string, number>
+  by_level?: Record<string, number>
+  by_component?: Record<string, number>
+  by_setting_key?: Record<string, number>
+  by_day: Array<{ date: string; count: number }>
+}
+
+const stats = ref<LogStats | null>(null)
+const loadingStats = ref(false)
+
+function statsEndpointFor(tab: string): string {
+  if (tab === 'system') return '/api/v2/admin/logs/system/stats'
+  if (tab === 'config') return '/api/v2/admin/logs/config/stats'
+  return '/api/v2/admin/logs/audit/stats' // audit + user share the audit table
+}
+
+async function fetchStats() {
+  loadingStats.value = true
+  try {
+    const res = await api.get(statsEndpointFor(activeTab.value))
+    stats.value = res.data
+  } catch {
+    stats.value = null
+  } finally {
+    loadingStats.value = false
+  }
+}
+
+function formatBytes(n: number): string {
+  if (!n) return '—'
+  const units = ['B', 'KB', 'MB', 'GB']
+  let i = 0
+  let v = n
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++ }
+  return v.toFixed(v >= 100 ? 0 : 1) + ' ' + units[i]
+}
+
+function formatDateShort(s?: string): string {
+  if (!s) return '—'
+  return new Date(s).toLocaleDateString()
+}
+
+// Top-3 entries from a {key: count} map, ordered descending.
+function topEntries(m: Record<string, number> | undefined, n = 3): Array<[string, number]> {
+  if (!m) return []
+  return Object.entries(m).sort((a, b) => b[1] - a[1]).slice(0, n)
+}
+
+// Sparkline path for the by_day array. Returns an SVG polyline points string.
+function sparklinePoints(days: Array<{ date: string; count: number }> | undefined, width = 180, height = 32): string {
+  if (!days || days.length === 0) return ''
+  const max = Math.max(...days.map(d => d.count), 1)
+  const step = width / Math.max(days.length - 1, 1)
+  return days.map((d, i) => {
+    const x = i * step
+    const y = height - (d.count / max) * (height - 2) - 1
+    return `${x.toFixed(1)},${y.toFixed(1)}`
+  }).join(' ')
+}
+
+// Breakdown label per tab.
+const breakdownTitle = (tab: string) => tab === 'system' ? 'Top components' : tab === 'config' ? 'Top setting keys' : 'Top events'
+
+function breakdownEntries(tab: string): Array<[string, number]> {
+  if (!stats.value) return []
+  if (tab === 'system') return topEntries(stats.value.by_component)
+  if (tab === 'config') return topEntries(stats.value.by_setting_key)
+  return topEntries(stats.value.by_event_type)
+}
+
+// Refresh both list + stats whenever the tab changes or first mount.
+function refreshAll() {
+  fetchLogs()
+  fetchStats()
+}
+
+onMounted(refreshAll)
 </script>
 
 <template>
@@ -156,6 +241,40 @@ onMounted(fetchLogs)
       </TabList>
       <TabPanels>
         <TabPanel v-for="tab in ['audit', 'system', 'user', 'config']" :key="tab" :value="tab">
+          <!-- Stats header (V2-319) -->
+          <div class="grid grid-cols-1 md:grid-cols-4 gap-3 mt-3 mb-4 p-4 bg-surface-50 rounded-lg border border-surface-200">
+            <div>
+              <div class="text-xs uppercase text-surface-500 font-medium">Total entries</div>
+              <div class="text-xl font-semibold text-surface-800 mt-0.5">
+                {{ loadingStats ? '…' : (stats?.total_entries ?? 0).toLocaleString() }}
+              </div>
+              <div v-if="stats?.disk_usage_bytes" class="text-xs text-surface-400 mt-0.5">{{ formatBytes(stats.disk_usage_bytes) }} on disk</div>
+            </div>
+            <div>
+              <div class="text-xs uppercase text-surface-500 font-medium">Date range</div>
+              <div class="text-sm text-surface-700 mt-1">
+                {{ formatDateShort(stats?.earliest) }} → {{ formatDateShort(stats?.latest) }}
+              </div>
+            </div>
+            <div>
+              <div class="text-xs uppercase text-surface-500 font-medium">{{ breakdownTitle(activeTab) }}</div>
+              <div class="text-xs text-surface-600 mt-1 space-y-0.5">
+                <div v-for="[k, c] in breakdownEntries(activeTab)" :key="k" class="flex justify-between gap-2">
+                  <span class="truncate font-mono">{{ k }}</span>
+                  <span class="text-surface-400">{{ c }}</span>
+                </div>
+                <div v-if="!breakdownEntries(activeTab).length" class="text-surface-400">—</div>
+              </div>
+            </div>
+            <div>
+              <div class="text-xs uppercase text-surface-500 font-medium">Last 30 days</div>
+              <svg :viewBox="`0 0 180 32`" class="w-full h-8 mt-1" preserveAspectRatio="none">
+                <polyline :points="sparklinePoints(stats?.by_day)" fill="none" stroke="currentColor"
+                  stroke-width="1.5" class="text-primary" />
+              </svg>
+            </div>
+          </div>
+
           <!-- Filters -->
           <div class="flex flex-wrap gap-3 items-end mb-4 mt-2">
             <div v-if="activeTab === 'audit'">

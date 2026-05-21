@@ -436,6 +436,67 @@ func AdminExportConfigAuditLogs(db *database.DB) http.HandlerFunc {
 	}
 }
 
+// @Summary      Audit log statistics
+// @Description  Aggregate counts, date range, disk usage, and last-30-day buckets for audit_log (V2-319).
+// @Tags         Admin: Logs
+// @Produce      json
+// @Success      200 {object} services.LogStats
+// @Failure      500 {object} map[string]string
+// @Router       /admin/logs/audit/stats [get]
+// @Security     BearerAuth
+// AdminAuditStats returns aggregate audit_log statistics (V2-319).
+func AdminAuditStats(db *database.DB) http.HandlerFunc {
+	logSvc := services.NewLogService(db)
+	return func(w http.ResponseWriter, r *http.Request) {
+		st, err := logSvc.QueryAuditStats()
+		if err != nil {
+			jsonError(w, "failed to compute audit stats", http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, http.StatusOK, st)
+	}
+}
+
+// @Summary      System log statistics
+// @Tags         Admin: Logs
+// @Produce      json
+// @Success      200 {object} services.LogStats
+// @Failure      500 {object} map[string]string
+// @Router       /admin/logs/system/stats [get]
+// @Security     BearerAuth
+// AdminSystemStats returns aggregate system_log statistics (V2-319).
+func AdminSystemStats(db *database.DB) http.HandlerFunc {
+	logSvc := services.NewLogService(db)
+	return func(w http.ResponseWriter, r *http.Request) {
+		st, err := logSvc.QuerySystemStats()
+		if err != nil {
+			jsonError(w, "failed to compute system stats", http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, http.StatusOK, st)
+	}
+}
+
+// @Summary      Config-audit statistics
+// @Tags         Admin: Logs
+// @Produce      json
+// @Success      200 {object} services.LogStats
+// @Failure      500 {object} map[string]string
+// @Router       /admin/logs/config/stats [get]
+// @Security     BearerAuth
+// AdminConfigAuditStats returns aggregate config_audit statistics (V2-319).
+func AdminConfigAuditStats(db *database.DB) http.HandlerFunc {
+	logSvc := services.NewLogService(db)
+	return func(w http.ResponseWriter, r *http.Request) {
+		st, err := logSvc.QueryConfigAuditStats()
+		if err != nil {
+			jsonError(w, "failed to compute config audit stats", http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, http.StatusOK, st)
+	}
+}
+
 // @Summary      Export user activity logs as JSON Lines
 // @Tags         Admin: Logs
 // @Produce      application/x-ndjson
