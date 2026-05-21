@@ -2,12 +2,26 @@
 # Use the default gitleaks config as a base
 useDefault = true
 
-# Suppress false positives from documentation curl examples
-[[allowlist]]
-description = "Documentation curl examples with placeholder tokens"
+# Singular [allowlist] is the gitleaks v8 schema. The v7 [[allowlist]] form
+# fails with "expected a map, got 'slice'" on v8.30+.
+[allowlist]
+description = "Documentation placeholders and test/dev fixtures"
 paths = [
   '''USER-GUIDE\.md''',
   '''README\.md''',
   '''docs/.*''',
   '''.*_test\.go''',
+  # Playwright e2e tests use the well-known Anvil/Hardhat/Foundry default
+  # private key (ac0974...f2ff80) as a devnet wallet. Public, not a secret.
+  '''e2e/.*''',
+  # Local dev scripts hardcode a placeholder JWT secret (literal string
+  # "e2e-test-secret-key-at-least-32-characters-long"). Not used in prod.
+  '''scripts/dev-e2e.*\.ps1''',
+]
+regexes = [
+  # Public Arbitrum ANT-token contract addresses (mainnet + sepolia). These
+  # are on-chain identifiers, not credentials. Allowlisting the specific
+  # strings (not "any 0x address") so a future real key paste still triggers.
+  '''0xa78d8321B20c4Ef90eCd72f2588AA985A4BDb684''',
+  '''0x4bc1aCE0E66170375462cB4E6Af42Ad4D5EC689C''',
 ]
