@@ -13,6 +13,7 @@ import Select from 'primevue/select'
 import Dialog from 'primevue/dialog'
 import Card from 'primevue/card'
 import Chip from 'primevue/chip'
+import Tag from 'primevue/tag'
 import ConfirmDialog from 'primevue/confirmdialog'
 
 const confirm = useConfirm()
@@ -216,9 +217,20 @@ onMounted(fetchTokens)
               <span class="text-gray-400">{{ new Date(data.expires_at).toLocaleDateString() }}</span>
             </template>
           </Column>
+          <Column header="Status">
+            <template #body="{ data }">
+              <div v-if="data.revoked_at" class="flex flex-col gap-0.5">
+                <Tag value="Revoked" severity="danger" />
+                <span v-if="data.revoke_reason" class="text-xs text-gray-400" v-tooltip.top="data.revoke_reason">
+                  {{ data.revoke_reason }}
+                </span>
+              </div>
+              <Tag v-else value="Active" severity="success" />
+            </template>
+          </Column>
           <Column header="Actions">
             <template #body="{ data }">
-              <Button label="Revoke" icon="pi pi-trash" text severity="danger" size="small"
+              <Button v-if="!data.revoked_at" label="Revoke" icon="pi pi-trash" text severity="danger" size="small"
                 @click="revokeToken(data.id)" />
             </template>
           </Column>

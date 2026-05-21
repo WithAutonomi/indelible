@@ -20,9 +20,10 @@ import (
 // NewSCIMServer creates a configured SCIM 2.0 server as an http.Handler.
 func NewSCIMServer(db *database.DB) (http.Handler, error) {
 	userHandler := &scimUserHandler{
-		userSvc: services.NewUserService(db),
-		permSvc: services.NewPermissionService(db),
-		logSvc:  services.NewLogService(db),
+		userSvc:  services.NewUserService(db),
+		permSvc:  services.NewPermissionService(db),
+		tokenSvc: services.NewTokenService(db),
+		logSvc:   services.NewLogService(db),
 	}
 	groupHandler := &scimGroupHandler{
 		groupSvc: services.NewGroupService(db),
@@ -72,9 +73,10 @@ func NewSCIMServer(db *database.DB) (http.Handler, error) {
 // --- User Resource Handler ---
 
 type scimUserHandler struct {
-	userSvc *services.UserService
-	permSvc *services.PermissionService
-	logSvc  *services.LogService
+	userSvc  *services.UserService
+	permSvc  *services.PermissionService
+	tokenSvc *services.TokenService
+	logSvc   *services.LogService
 }
 
 func (h *scimUserHandler) Create(r *http.Request, attributes scim.ResourceAttributes) (scim.Resource, error) {
@@ -162,8 +164,21 @@ func (h *scimUserHandler) Replace(r *http.Request, id string, attributes scim.Re
 		extPtr = &externalID
 	}
 
+	// V2-328: detect transition from active to inactive so we can revoke
+	// all of the user's tokens after the update succeeds.
+	deactivating := false
+	if isActive != nil && !*isActive {
+		if pre, err := h.userSvc.GetByID(uid); err == nil && pre.IsActive {
+			deactivating = true
+		}
+	}
+
 	if err := h.userSvc.UpdateFromSCIM(uid, email, firstName, lastName, extPtr, isActive); err != nil {
 		return scim.Resource{}, err
+	}
+
+	if deactivating {
+		_, _ = h.tokenSvc.RevokeAllByUser(uid, 0, "user deactivated via SCIM")
 	}
 
 	user, err := h.userSvc.GetByID(uid)
@@ -179,6 +194,11 @@ func (h *scimUserHandler) Delete(r *http.Request, id string) error {
 	uid, err := strconv.ParseInt(id, 10, 64)
 	if err != nil {
 		return scimerrors.ScimErrorResourceNotFound(id)
+	}
+	// V2-328: revoke tokens before the soft-delete so the bulk update still
+	// matches on user_id.
+	if _, err := h.tokenSvc.RevokeAllByUser(uid, 0, "user deleted via SCIM"); err != nil {
+		return err
 	}
 	if err := h.userSvc.SoftDelete(uid); err != nil {
 		return err
@@ -200,6 +220,7 @@ func (h *scimUserHandler) Patch(r *http.Request, id string, operations []scim.Pa
 
 	firstName := user.FirstName
 	lastName := user.LastName
+	preActive := user.IsActive
 	active := user.IsActive
 	email := user.Email
 	extID := ""
@@ -248,6 +269,12 @@ func (h *scimUserHandler) Patch(r *http.Request, id string, operations []scim.Pa
 	extPtr := &extID
 	if err := h.userSvc.UpdateFromSCIM(uid, email, firstName, lastName, extPtr, &active); err != nil {
 		return scim.Resource{}, err
+	}
+
+	// V2-328: if this patch deactivated a previously-active user, revoke
+	// their API tokens.
+	if preActive && !active {
+		_, _ = h.tokenSvc.RevokeAllByUser(uid, 0, "user deactivated via SCIM")
 	}
 
 	user, err = h.userSvc.GetByID(uid)

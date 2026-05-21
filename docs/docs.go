@@ -6174,8 +6174,14 @@ const docTemplate = `{
                 "permissions": {
                     "type": "string"
                 },
+                "revoke_reason": {
+                    "type": "string"
+                },
                 "revoked_at": {
                     "type": "string"
+                },
+                "revoked_by": {
+                    "type": "integer"
                 },
                 "usage_count": {
                     "type": "integer"

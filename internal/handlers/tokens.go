@@ -39,6 +39,8 @@ type tokenResponse struct {
 	LastUsedAt       *string  `json:"last_used_at"`
 	ExpiresAt        *string  `json:"expires_at"`
 	RevokedAt        *string  `json:"revoked_at"`
+	RevokedBy        *int64   `json:"revoked_by"`
+	RevokeReason     *string  `json:"revoke_reason"`
 	CreatedAt        string   `json:"created_at"`
 	OwnerID          int64    `json:"owner_id"`
 }
@@ -92,6 +94,14 @@ func toTokenResponse(t *services.Token) tokenResponse {
 	if t.RevokedAt.Valid {
 		s := t.RevokedAt.Time.Format("2006-01-02T15:04:05Z")
 		r.RevokedAt = &s
+	}
+	if t.RevokedBy.Valid {
+		v := t.RevokedBy.Int64
+		r.RevokedBy = &v
+	}
+	if t.RevokeReason.Valid {
+		v := t.RevokeReason.String
+		r.RevokeReason = &v
 	}
 	return r
 }
