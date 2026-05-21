@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -115,6 +116,7 @@ func CreateToken(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	tokenSvc := services.NewTokenService(db)
 	permSvc := services.NewPermissionService(db)
 	settingsSvc := services.NewSettingsService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID := middleware.GetUserID(r.Context())
@@ -191,6 +193,11 @@ func CreateToken(db *database.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
+		// Audit the issuance. NEVER includes the secret. Detail records the
+		// token UUID + scopes so an incident-response operator can correlate.
+		auditEvent(r, logSvc, "api_token_issued", "info", &userID,
+			fmt.Sprintf("token=%s scopes=%s", token.UUID, string(permsJSON)))
+
 		jsonResponse(w, http.StatusCreated, createTokenResponse{
 			Secret: secret,
 			Token:  toTokenResponse(token),
@@ -244,6 +251,7 @@ func ListTokens(db *database.DB) http.HandlerFunc {
 // @Router       /tokens/{id} [delete]
 func RevokeToken(db *database.DB) http.HandlerFunc {
 	tokenSvc := services.NewTokenService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID := middleware.GetUserID(r.Context())
@@ -273,6 +281,9 @@ func RevokeToken(db *database.DB) http.HandlerFunc {
 			jsonError(w, "failed to revoke token", http.StatusInternalServerError)
 			return
 		}
+
+		auditEvent(r, logSvc, "api_token_revoked", "info", &userID,
+			fmt.Sprintf("token=%s reason=%s", token.UUID, req.Reason))
 
 		jsonResponse(w, http.StatusOK, map[string]string{"message": "token revoked"})
 	}
@@ -333,6 +344,7 @@ func AdminListAllTokens(db *database.DB) http.HandlerFunc {
 // @Security     BearerAuth
 func AdminBulkRevokeTokens(db *database.DB) http.HandlerFunc {
 	tokenSvc := services.NewTokenService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		adminID := middleware.GetUserID(r.Context())
@@ -362,6 +374,9 @@ func AdminBulkRevokeTokens(db *database.DB) http.HandlerFunc {
 			jsonError(w, "failed to revoke tokens", http.StatusInternalServerError)
 			return
 		}
+
+		auditEvent(r, logSvc, "api_token_bulk_revoked", "info", &adminID,
+			fmt.Sprintf("count=%d reason=%s", revoked, req.Reason))
 
 		jsonResponse(w, http.StatusOK, map[string]any{
 			"message": "tokens revoked",
