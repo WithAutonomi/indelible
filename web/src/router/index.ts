@@ -95,6 +95,12 @@ const router = createRouter({
       meta: { auth: true, admin: true },
     },
     {
+      path: '/admin/sso',
+      name: 'admin-sso',
+      component: () => import('../views/admin/SsoView.vue'),
+      meta: { auth: true, admin: true },
+    },
+    {
       path: '/admin/tag-rules',
       name: 'admin-tag-rules',
       component: () => import('../views/admin/TagRulesView.vue'),
