@@ -118,6 +118,13 @@ test.describe('SSO end-to-end via Dex', () => {
     expect(page.url()).not.toMatch(/[?&]error=/)
     expect(page.url()).toContain('localhost:8080')
 
+    // Visible UI assertion — the SPA must pick up the SSO session cookie on
+    // bootstrap and render the authenticated layout. Without this assertion
+    // the test passes purely on backend cookie auth (the /me call below uses
+    // the browser cookie jar regardless of SPA state) and a regression of
+    // SPA-side session bootstrap would go undetected.
+    await expect(page.getByText(DEX_USER_EMAIL, { exact: false })).toBeVisible({ timeout: 10000 })
+
     const meRes = await page.request.get('/api/v2/me')
     expect(meRes.ok()).toBeTruthy()
     const me = await meRes.json()
