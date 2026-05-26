@@ -477,3 +477,46 @@ func AdminSetOIDCAutoProvision(db *database.DB, cfg *config.Config) http.Handler
 		jsonResponse(w, http.StatusOK, map[string]bool{"ok": true})
 	}
 }
+
+// --- Admin: set require_email_verified -------------------------------------
+
+type adminOIDCRequireEmailVerifiedRequest struct {
+	RequireEmailVerified bool `json:"require_email_verified"`
+}
+
+// AdminSetOIDCRequireEmailVerified godoc
+// @Summary Toggle OIDC email_verified enforcement
+// @Description When true (default), auto-provisioning rejects id_tokens without email_verified=true. Turn off for IdPs that don't emit the optional claim (Okta integrator, Azure AD, generic OIDC).
+// @Tags Admin: OIDC
+// @Accept json
+// @Produce json
+// @Param id path int true "Provider ID"
+// @Param body body adminOIDCRequireEmailVerifiedRequest true "require_email_verified flag"
+// @Success 200 {object} map[string]bool
+// @Failure 400 {object} map[string]string
+// @Security BearerAuth
+// @Router /admin/oidc/providers/{id}/require-email-verified [put]
+func AdminSetOIDCRequireEmailVerified(db *database.DB, cfg *config.Config) http.HandlerFunc {
+	providerSvc := services.NewOIDCProviderService(db, cfg.WalletEncryptionKey)
+	logSvc := services.NewLogService(db)
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+		if err != nil {
+			jsonError(w, "invalid provider id", http.StatusBadRequest)
+			return
+		}
+		var req adminOIDCRequireEmailVerifiedRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonError(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		if err := providerSvc.SetRequireEmailVerified(id, req.RequireEmailVerified); err != nil {
+			jsonError(w, "failed to update provider: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		callerID := middleware.GetUserID(r.Context())
+		auditEvent(r, logSvc, "oidc_require_email_verified_changed", "info", &callerID,
+			fmt.Sprintf("provider=%d require_email_verified=%t", id, req.RequireEmailVerified))
+		jsonResponse(w, http.StatusOK, map[string]bool{"ok": true})
+	}
+}

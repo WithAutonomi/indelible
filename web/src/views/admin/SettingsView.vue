@@ -298,10 +298,15 @@ async function fetchGroups() {
 async function saveProviderAutoProvision(p: any) {
   savingProviderID.value = p.id
   try {
-    await api.put(`/api/v2/admin/oidc/providers/${p.id}/auto-provision`, {
-      auto_provision: !!p.auto_provision,
-      default_group_id: p.default_group_id || 0,
-    })
+    await Promise.all([
+      api.put(`/api/v2/admin/oidc/providers/${p.id}/auto-provision`, {
+        auto_provision: !!p.auto_provision,
+        default_group_id: p.default_group_id || 0,
+      }),
+      api.put(`/api/v2/admin/oidc/providers/${p.id}/require-email-verified`, {
+        require_email_verified: !!p.require_email_verified,
+      }),
+    ])
     toast.add({ severity: 'success', summary: 'Saved', detail: `${p.display_name} provisioning updated`, life: 3000 })
   } catch (e: any) {
     toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to save', life: 5000 })
@@ -544,6 +549,23 @@ onMounted(async () => {
                     optionValue="id"
                     class="w-full max-w-md"
                   />
+                </div>
+              </div>
+
+              <div class="grid grid-cols-3 gap-6 py-3 pl-4">
+                <div>
+                  <label class="text-sm font-medium">Require verified email</label>
+                  <p class="text-xs text-surface-400 mt-1">
+                    When on, auto-provisioning requires <code>email_verified: true</code> in the IdP's id_token.
+                    Turn off only for IdPs that don't emit the claim — Okta integrator tenants, Azure AD, and generic OIDC providers per §5.1 of OIDC Core (where the claim is optional).
+                    <span class="block mt-1 text-orange-500">
+                      Email-collision is always blocked even with this off.
+                    </span>
+                  </p>
+                </div>
+                <div class="col-span-2 flex items-center gap-3">
+                  <ToggleSwitch v-model="p.require_email_verified" />
+                  <span class="text-sm text-surface-500">{{ p.require_email_verified ? 'Required' : 'Not required' }}</span>
                 </div>
               </div>
 

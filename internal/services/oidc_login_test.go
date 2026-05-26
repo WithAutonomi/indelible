@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -570,6 +571,69 @@ func TestHandleCallback_AutoProvisionsNewUserWithDefaultGroup(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("auto-provisioned user not in default group; members=%v", members)
+	}
+}
+
+func TestHandleCallback_RequireEmailVerified_StrictRejectsMissingClaim(t *testing.T) {
+	db := setupTestDB(t)
+	providerSvc := NewOIDCProviderService(db, testCookieKey)
+	loginSvc := NewOIDCLoginService(db, providerSvc, testCookieKey)
+
+	idp := newFakeIDP(t, "test-client")
+	provider, _ := providerSvc.Create("test", "Test", idp.server.URL, "test-client", "test-secret", "openid,email,profile")
+	if err := providerSvc.SetAutoProvision(provider.ID, true, 0); err != nil {
+		t.Fatalf("SetAutoProvision: %v", err)
+	}
+	// require_email_verified defaults to true; sanity-check, then drive an
+	// id_token that omits the claim (modeled here as emailVerified=false).
+	if p, _ := providerSvc.GetByID(provider.ID); !p.RequireEmailVerified {
+		t.Fatalf("expected default require_email_verified=true")
+	}
+
+	state, cookie, nonce, code := idpClientHelper(t, loginSvc, provider.ID, idp.server.URL+"/cb", 0)
+	idp.nextSub = "sub-no-ev"
+	idp.nextEmail = "user@example.com"
+	idp.nextEV = false
+	idp.nextNonce = nonce
+
+	_, err := loginSvc.HandleCallback(context.Background(), cookie, state, code)
+	if !errors.Is(err, ErrOIDCMissingEmail) {
+		t.Errorf("expected ErrOIDCMissingEmail, got %v", err)
+	}
+}
+
+func TestHandleCallback_RequireEmailVerified_LooseAcceptsMissingClaim(t *testing.T) {
+	db := setupTestDB(t)
+	providerSvc := NewOIDCProviderService(db, testCookieKey)
+	loginSvc := NewOIDCLoginService(db, providerSvc, testCookieKey)
+
+	idp := newFakeIDP(t, "test-client")
+	provider, _ := providerSvc.Create("test", "Test", idp.server.URL, "test-client", "test-secret", "openid,email,profile")
+	if err := providerSvc.SetAutoProvision(provider.ID, true, 0); err != nil {
+		t.Fatalf("SetAutoProvision: %v", err)
+	}
+	if err := providerSvc.SetRequireEmailVerified(provider.ID, false); err != nil {
+		t.Fatalf("SetRequireEmailVerified: %v", err)
+	}
+
+	state, cookie, nonce, code := idpClientHelper(t, loginSvc, provider.ID, idp.server.URL+"/cb", 0)
+	idp.nextSub = "sub-loose"
+	idp.nextEmail = "loose@example.com"
+	idp.nextEV = false
+	idp.nextNonce = nonce
+
+	outcome, err := loginSvc.HandleCallback(context.Background(), cookie, state, code)
+	if err != nil {
+		t.Fatalf("HandleCallback with loose verification: %v", err)
+	}
+	if outcome.LoggedInUser == nil {
+		t.Fatal("expected provisioned user with require_email_verified=false")
+	}
+	if !outcome.IsNewUser {
+		t.Error("expected IsNewUser=true on auto-provision")
+	}
+	if outcome.LoggedInUser.Email != "loose@example.com" {
+		t.Errorf("provisioned user email = %q, want loose@example.com", outcome.LoggedInUser.Email)
 	}
 }
 
