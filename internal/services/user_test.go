@@ -98,6 +98,46 @@ func TestUserGetByID_SoftDeletedReturnsNotFound(t *testing.T) {
 	}
 }
 
+func TestUserSoftDelete_DropsOIDCIdentities(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewUserService(db)
+	providerSvc := NewOIDCProviderService(db, testCookieKey)
+	loginSvc := NewOIDCLoginService(db, providerSvc, testCookieKey)
+
+	provider, err := providerSvc.Create("okta", "Okta", "https://issuer.example.com", "cid", "cs", "openid,email,profile")
+	if err != nil {
+		t.Fatalf("create provider: %v", err)
+	}
+	u := createTestUser(t, svc, "del-with-identity@example.com", "Del", "User")
+	if err := loginSvc.LinkIdentity(u.ID, provider.ID, "sub-to-orphan"); err != nil {
+		t.Fatalf("LinkIdentity: %v", err)
+	}
+
+	// Sanity: identity exists pre-delete.
+	var pre int
+	db.QueryRow(`SELECT COUNT(*) FROM oidc_identities WHERE user_id = ?`, u.ID).Scan(&pre)
+	if pre != 1 {
+		t.Fatalf("expected 1 identity before delete, got %d", pre)
+	}
+
+	if err := svc.SoftDelete(u.ID); err != nil {
+		t.Fatalf("SoftDelete: %v", err)
+	}
+
+	// User is soft-deleted, identity is hard-deleted.
+	var post int
+	db.QueryRow(`SELECT COUNT(*) FROM oidc_identities WHERE user_id = ?`, u.ID).Scan(&post)
+	if post != 0 {
+		t.Errorf("expected 0 identities after SoftDelete, got %d", post)
+	}
+
+	// Re-using the same (provider, sub) must look unlinked now — auto-provision
+	// path is unblocked.
+	if _, err := db.Exec(`SELECT id FROM oidc_identities WHERE provider_id = ? AND subject = ?`, provider.ID, "sub-to-orphan"); err != nil {
+		t.Fatalf("identity lookup query failed: %v", err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // GetByEmail
 // ---------------------------------------------------------------------------
