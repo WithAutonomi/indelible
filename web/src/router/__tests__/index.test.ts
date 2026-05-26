@@ -25,12 +25,10 @@ describe('router guards', () => {
   })
 
   it('redirects authenticated user away from guest routes', async () => {
-    // Set token so isAuthenticated is true
-    localStorage.setItem('token', 'valid-token')
-
+    // isAuthenticated derives from user, not token: SSO users have no token
+    // but are fully authenticated via the session cookie.
     const { useAuthStore } = await import('../../stores/auth')
     const auth = useAuthStore()
-    auth.token = 'valid-token'
     auth.user = { permissions: 'read' }
 
     const { default: router } = await import('../index')
@@ -45,7 +43,6 @@ describe('router guards', () => {
   it('redirects non-admin away from admin routes', async () => {
     const { useAuthStore } = await import('../../stores/auth')
     const auth = useAuthStore()
-    auth.token = 'valid-token'
     auth.user = { permissions: 'read' }
 
     const { default: router } = await import('../index')
@@ -60,7 +57,6 @@ describe('router guards', () => {
   it('allows admin to access admin routes', async () => {
     const { useAuthStore } = await import('../../stores/auth')
     const auth = useAuthStore()
-    auth.token = 'valid-token'
     auth.user = { permissions: 'admin' }
 
     const { default: router } = await import('../index')

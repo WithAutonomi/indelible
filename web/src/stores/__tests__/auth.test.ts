@@ -89,12 +89,52 @@ describe('auth store', () => {
     expect(auth.user).toBeNull()
   })
 
-  it('isAuthenticated is true when token exists', () => {
+  it('isAuthenticated is true when user is loaded', () => {
     const auth = useAuthStore()
     expect(auth.isAuthenticated).toBe(false)
 
+    // Having a token alone is not enough — bootstrap may still be in flight
+    // and we don't yet know if the cookie/token is valid.
     auth.token = 'some-token'
+    expect(auth.isAuthenticated).toBe(false)
+
+    auth.user = { id: 1, email: 'user@test.com' }
     expect(auth.isAuthenticated).toBe(true)
+  })
+
+  it('isAuthenticated is true for cookie-only SSO users (no token)', () => {
+    const auth = useAuthStore()
+    expect(auth.token).toBeNull()
+
+    auth.user = { id: 1, email: 'sso@test.com' }
+    expect(auth.isAuthenticated).toBe(true)
+  })
+
+  it('bootstrap resolves session from /me without a localStorage token', async () => {
+    mockApi.get.mockResolvedValueOnce({
+      data: { id: 7, email: 'sso@test.com', permissions: 'read' },
+    })
+
+    const auth = useAuthStore()
+    expect(auth.token).toBeNull()
+
+    await auth.bootstrap()
+
+    expect(mockApi.get).toHaveBeenCalledWith('/api/v2/me')
+    expect(auth.user).toEqual({ id: 7, email: 'sso@test.com', permissions: 'read' })
+    expect(auth.isAuthenticated).toBe(true)
+  })
+
+  it('bootstrap swallows 401 and clears stale localStorage token', async () => {
+    localStorage.setItem('token', 'stale')
+    mockApi.get.mockRejectedValueOnce(new Error('401'))
+
+    const auth = useAuthStore()
+    await auth.bootstrap()
+
+    expect(auth.user).toBeNull()
+    expect(auth.isAuthenticated).toBe(false)
+    expect(localStorage.removeItem).toHaveBeenCalledWith('token')
   })
 
   it('isAdmin checks permissions array', () => {

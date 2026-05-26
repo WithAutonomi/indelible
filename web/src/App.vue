@@ -22,17 +22,9 @@ function onSessionExpiring(e: Event) {
   toast.add({ severity: 'warn', summary: 'Session Expiring', detail: `Your session expires in ${minutes} minute${minutes === 1 ? '' : 's'}. Save your work.`, life: 10000 })
 }
 
-onMounted(async () => {
+onMounted(() => {
   window.addEventListener('session-expired', onSessionExpired)
   window.addEventListener('session-expiring', onSessionExpiring)
-
-  if (auth.token && !auth.user) {
-    try {
-      await auth.fetchProfile()
-    } catch {
-      auth.logout()
-    }
-  }
 })
 
 onUnmounted(() => {
