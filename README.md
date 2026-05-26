@@ -96,7 +96,7 @@ cd indelible
 export INDELIBLE_JWT_SECRET=$(openssl rand -hex 32)
 export INDELIBLE_WALLET_ENCRYPTION_KEY=$(openssl rand -hex 32)
 
-# Pull and run (when the published image is available; tracked as V2-298).
+# Pull and run published images (multi-arch, mirrored on Docker Hub + GHCR):
 docker compose up -d
 
 # Or build locally from source:
