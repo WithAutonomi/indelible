@@ -1,6 +1,7 @@
 package services
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -95,6 +96,28 @@ func TestUserGetByID_SoftDeletedReturnsNotFound(t *testing.T) {
 	_, err := svc.GetByID(u.ID)
 	if err != ErrUserNotFound {
 		t.Fatalf("expected ErrUserNotFound for soft-deleted user, got %v", err)
+	}
+}
+
+func TestUserSoftDelete_FreesEmailSlot(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewUserService(db)
+
+	u := createTestUser(t, svc, "reused@example.com", "First", "Owner")
+	if err := svc.SoftDelete(u.ID); err != nil {
+		t.Fatalf("SoftDelete: %v", err)
+	}
+
+	// Same email must be claimable again — soft-delete frees the unique slot.
+	if _, err := svc.Create("reused@example.com", "hash2", "Second", "Owner"); err != nil {
+		t.Errorf("Create with reused email should succeed after soft-delete, got %v", err)
+	}
+
+	// The soft-deleted row keeps a suffixed email for audit recoverability.
+	var deletedEmail string
+	db.QueryRow(`SELECT email FROM users WHERE id = ?`, u.ID).Scan(&deletedEmail)
+	if !strings.HasPrefix(deletedEmail, "reused@example.com.deleted.") {
+		t.Errorf("soft-deleted email should start with original + .deleted., got %q", deletedEmail)
 	}
 }
 
