@@ -3,6 +3,7 @@ package services
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/WithAutonomi/indelible/internal/database"
@@ -227,12 +228,15 @@ func (s *UserService) UpdateRestrictions(id int64, maxFileSize *int64, allowedTy
 
 // SoftDelete marks a user as deleted.
 //
-// Atomic: drops OIDC identities first so the same IdP subject doesn't
-// dead-end on the soft-deleted row when they sign in again. Without this,
-// the callback's identity lookup returns the deleted user's ID, GetByID
-// filters it out as soft-deleted, and the caller sees a generic "internal"
-// error with no recovery path. After cleanup, the same subject hits the
-// auto-provision branch and gets a fresh local user.
+// Atomic with two cleanups:
+//
+//  1. Drops OIDC identities so the same IdP subject doesn't dead-end on
+//     the soft-deleted row when they sign in again.
+//  2. Suffixes the email with ".deleted.<unix-ts>" so the original slot
+//     is free for re-provisioning. Without this, the column-level
+//     UNIQUE(email) constraint blocks any new user (via SSO auto-provision
+//     or SCIM Create) using the same address. The original email is
+//     recoverable as the substring before the suffix.
 func (s *UserService) SoftDelete(id int64) error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -242,9 +246,10 @@ func (s *UserService) SoftDelete(id int64) error {
 	if _, err := tx.Exec(`DELETE FROM oidc_identities WHERE user_id = ?`, id); err != nil {
 		return err
 	}
+	suffix := fmt.Sprintf(".deleted.%d", time.Now().Unix())
 	if _, err := tx.Exec(
-		`UPDATE users SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		id,
+		`UPDATE users SET email = email || ?, deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		suffix, id,
 	); err != nil {
 		return err
 	}
