@@ -471,7 +471,11 @@ func splitScopes(s string) []string {
 	if s == "" {
 		return []string{oidc.ScopeOpenID, "email", "profile"}
 	}
-	parts := strings.Split(s, ",")
+	// Accept both comma- and whitespace-separated lists. The OIDC spec uses
+	// whitespace in /authorize URLs; operators frequently paste either form.
+	parts := strings.FieldsFunc(s, func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\t' || r == '\n'
+	})
 	out := make([]string, 0, len(parts))
 	seenOpenID := false
 	for _, p := range parts {
