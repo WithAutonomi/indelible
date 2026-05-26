@@ -65,10 +65,14 @@ func TestOIDCCookieDecode_RejectsWrongKey(t *testing.T) {
 
 func TestSplitScopes(t *testing.T) {
 	cases := map[string][]string{
-		"":                                   {"openid", "email", "profile"},
-		"openid,email,profile":               {"openid", "email", "profile"},
-		"email, profile":                     {"openid", "email", "profile"}, // openid auto-prepended
+		"":                                    {"openid", "email", "profile"},
+		"openid,email,profile":                {"openid", "email", "profile"},
+		"openid email profile":                {"openid", "email", "profile"},  // space-separated (OIDC spec)
+		"openid, email, profile":              {"openid", "email", "profile"},  // mixed comma+space
+		"email, profile":                      {"openid", "email", "profile"},  // openid auto-prepended (commas)
+		"email profile":                       {"openid", "email", "profile"},  // openid auto-prepended (spaces)
 		"openid,email,profile,offline_access": {"openid", "email", "profile", "offline_access"},
+		"openid email profile offline_access": {"openid", "email", "profile", "offline_access"},
 	}
 	for in, want := range cases {
 		got := splitScopes(in)
