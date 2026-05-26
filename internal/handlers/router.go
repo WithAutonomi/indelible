@@ -48,8 +48,13 @@ func NewRouter(cfg *config.Config, db *database.DB, antdInfo AntdInfoProvider) h
 	// Health check (no auth)
 	r.Get("/health", Health(db, cfg, antdInfo))
 
-	// Swagger API docs
-	r.Get("/api/docs/*", httpSwagger.WrapHandler)
+	// Swagger API docs — needs a relaxed CSP because the swag-generated UI
+	// boots from an inline <script> tag. Scoped to /api/docs only; the rest
+	// of the app keeps the strict default.
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.SwaggerCSP())
+		r.Get("/api/docs/*", httpSwagger.WrapHandler)
+	})
 
 	// API v2 routes
 	r.Route("/api/v2", func(r chi.Router) {
