@@ -6,7 +6,10 @@ export const useAuthStore = defineStore('auth', () => {
   const token = ref<string | null>(localStorage.getItem('token'))
   const user = ref<any>(null)
 
-  const isAuthenticated = computed(() => !!token.value)
+  // Auth state is the loaded user profile, not the localStorage token: SSO
+  // logins put the JWT in an HttpOnly cookie the SPA can't read, so token is
+  // null but the user is fully authenticated via cookie auth on every request.
+  const isAuthenticated = computed(() => !!user.value)
   const isAdmin = computed(() => user.value?.permissions?.includes('admin') ?? false)
 
   async function login(email: string, password: string) {
@@ -33,6 +36,19 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = res.data
   }
 
+  // Called from main.ts before mount. Tries to resolve the current session
+  // from either localStorage (password flow) or the session cookie (SSO flow).
+  // Swallows 401: a missing/expired session just means "not logged in".
+  async function bootstrap() {
+    if (user.value) return
+    try {
+      await fetchProfile()
+    } catch {
+      token.value = null
+      localStorage.removeItem('token')
+    }
+  }
+
   async function logout() {
     try {
       await api.post('/api/v2/auth/logout')
@@ -44,5 +60,5 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.removeItem('token')
   }
 
-  return { token, user, isAuthenticated, isAdmin, login, register, fetchProfile, logout }
+  return { token, user, isAuthenticated, isAdmin, login, register, fetchProfile, bootstrap, logout }
 })
