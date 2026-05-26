@@ -38,11 +38,14 @@ export const useAuthStore = defineStore('auth', () => {
 
   // Called from main.ts before mount. Tries to resolve the current session
   // from either localStorage (password flow) or the session cookie (SSO flow).
-  // Swallows 401: a missing/expired session just means "not logged in".
+  // Swallows 401: a missing/expired session just means "not logged in" — we
+  // must opt out of the client's global 401 redirect-to-/login behavior or
+  // it'd loop on every page load before login.
   async function bootstrap() {
     if (user.value) return
     try {
-      await fetchProfile()
+      const res = await api.get('/api/v2/me', { _skipAuthRedirect: true } as any)
+      user.value = res.data
     } catch {
       token.value = null
       localStorage.removeItem('token')
