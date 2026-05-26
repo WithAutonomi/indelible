@@ -30,6 +30,12 @@ type OIDCProvider struct {
 	// AutoProvision controls whether an unknown (sub, email) pair creates a new
 	// local user on first login (true) or is rejected with no_account (false).
 	AutoProvision bool
+	// RequireEmailVerified gates the email_verified claim check during
+	// auto-provisioning. Strict by default. Operators turn this off for IdPs
+	// that don't emit the claim — Okta integrator tenants, Azure AD, and
+	// generic OIDC providers per §5.1 of OIDC Core (where the claim is
+	// optional). The email-collision guard still applies regardless.
+	RequireEmailVerified bool
 	// ExtraAuthorizeParams are appended as query params to the IdP authorize
 	// URL. Primary use case is Google Workspace domain restriction via
 	// hd=company.com — without this an "External" Google OAuth client would
@@ -78,8 +84,8 @@ func (s *OIDCProviderService) GetByID(id int64) (*OIDCProvider, error) {
 	p := &OIDCProvider{}
 	var rawExtra string
 	err := s.db.QueryRow(
-		`SELECT id, name, display_name, issuer_url, client_id, client_secret, scopes, is_enabled, default_group_id, auto_provision, extra_authorize_params, created_at, updated_at FROM oidc_providers WHERE id = ?`, id,
-	).Scan(&p.ID, &p.Name, &p.DisplayName, &p.IssuerURL, &p.ClientID, &p.EncryptedSecret, &p.Scopes, &p.IsEnabled, &p.DefaultGroupID, &p.AutoProvision, &rawExtra, &p.CreatedAt, &p.UpdatedAt)
+		`SELECT id, name, display_name, issuer_url, client_id, client_secret, scopes, is_enabled, default_group_id, auto_provision, require_email_verified, extra_authorize_params, created_at, updated_at FROM oidc_providers WHERE id = ?`, id,
+	).Scan(&p.ID, &p.Name, &p.DisplayName, &p.IssuerURL, &p.ClientID, &p.EncryptedSecret, &p.Scopes, &p.IsEnabled, &p.DefaultGroupID, &p.AutoProvision, &p.RequireEmailVerified, &rawExtra, &p.CreatedAt, &p.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrOIDCProviderNotFound
@@ -93,7 +99,7 @@ func (s *OIDCProviderService) GetByID(id int64) (*OIDCProvider, error) {
 // List returns all OIDC providers.
 func (s *OIDCProviderService) List() ([]*OIDCProvider, error) {
 	rows, err := s.db.Query(
-		`SELECT id, name, display_name, issuer_url, client_id, client_secret, scopes, is_enabled, default_group_id, auto_provision, extra_authorize_params, created_at, updated_at FROM oidc_providers ORDER BY name`,
+		`SELECT id, name, display_name, issuer_url, client_id, client_secret, scopes, is_enabled, default_group_id, auto_provision, require_email_verified, extra_authorize_params, created_at, updated_at FROM oidc_providers ORDER BY name`,
 	)
 	if err != nil {
 		return nil, err
@@ -104,7 +110,7 @@ func (s *OIDCProviderService) List() ([]*OIDCProvider, error) {
 	for rows.Next() {
 		p := &OIDCProvider{}
 		var rawExtra string
-		if err := rows.Scan(&p.ID, &p.Name, &p.DisplayName, &p.IssuerURL, &p.ClientID, &p.EncryptedSecret, &p.Scopes, &p.IsEnabled, &p.DefaultGroupID, &p.AutoProvision, &rawExtra, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.DisplayName, &p.IssuerURL, &p.ClientID, &p.EncryptedSecret, &p.Scopes, &p.IsEnabled, &p.DefaultGroupID, &p.AutoProvision, &p.RequireEmailVerified, &rawExtra, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
 		p.ExtraAuthorizeParams = unmarshalExtraAuthorizeParams(rawExtra)
@@ -163,6 +169,17 @@ func (s *OIDCProviderService) SetAutoProvision(id int64, autoProvision bool, def
 	_, err := s.db.Exec(
 		`UPDATE oidc_providers SET auto_provision = ?, default_group_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 		autoProvision, gid, id,
+	)
+	return err
+}
+
+// SetRequireEmailVerified toggles whether auto-provisioning enforces the
+// id_token's email_verified claim for this provider. Mirrors SetAutoProvision's
+// partial-update pattern.
+func (s *OIDCProviderService) SetRequireEmailVerified(id int64, require bool) error {
+	_, err := s.db.Exec(
+		`UPDATE oidc_providers SET require_email_verified = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		require, id,
 	)
 	return err
 }

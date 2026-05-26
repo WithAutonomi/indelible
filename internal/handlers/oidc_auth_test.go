@@ -494,3 +494,29 @@ func TestAdminSetOIDCAutoProvision_PersistsChanges(t *testing.T) {
 		t.Error("auto_provision was not persisted")
 	}
 }
+
+func TestAdminSetOIDCRequireEmailVerified_PersistsChanges(t *testing.T) {
+	env := setupOIDCTest(t)
+	adminToken := registerAndGetToken(t, env.router, "admin@test.com", "password123", "Admin", "U")
+
+	providerSvc := services.NewOIDCProviderService(env.db, env.cfg.WalletEncryptionKey)
+	if before, _ := providerSvc.GetByID(env.providerID); !before.RequireEmailVerified {
+		t.Fatalf("expected default require_email_verified=true, got false")
+	}
+
+	body, _ := json.Marshal(map[string]any{"require_email_verified": false})
+	req := httptest.NewRequest("PUT",
+		fmt.Sprintf("/api/v2/admin/oidc/providers/%d/require-email-verified", env.providerID),
+		strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+	w := httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d body=%s", w.Code, w.Body.String())
+	}
+	p, _ := providerSvc.GetByID(env.providerID)
+	if p.RequireEmailVerified {
+		t.Error("require_email_verified was not persisted to false")
+	}
+}

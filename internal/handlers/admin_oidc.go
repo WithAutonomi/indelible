@@ -24,6 +24,7 @@ type oidcProviderResponse struct {
 	Scopes               string            `json:"scopes"`
 	IsEnabled            bool              `json:"is_enabled"`
 	AutoProvision        bool              `json:"auto_provision"`
+	RequireEmailVerified bool              `json:"require_email_verified"`
 	DefaultGroupID       *int64            `json:"default_group_id"`
 	ExtraAuthorizeParams map[string]string `json:"extra_authorize_params"`
 	CreatedAt            string            `json:"created_at"`
@@ -46,6 +47,7 @@ func toOIDCProviderResponse(p *services.OIDCProvider) oidcProviderResponse {
 		Scopes:               p.Scopes,
 		IsEnabled:            p.IsEnabled,
 		AutoProvision:        p.AutoProvision,
+		RequireEmailVerified: p.RequireEmailVerified,
 		ExtraAuthorizeParams: params,
 		CreatedAt:            p.CreatedAt.Format("2006-01-02T15:04:05Z"),
 		UpdatedAt:            p.UpdatedAt.Format("2006-01-02T15:04:05Z"),

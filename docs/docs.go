@@ -1599,6 +1599,64 @@ const docTemplate = `{
                 }
             }
         },
+        "/admin/oidc/providers/{id}/require-email-verified": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "When true (default), auto-provisioning rejects id_tokens without email_verified=true. Turn off for IdPs that don't emit the optional claim (Okta integrator, Azure AD, generic OIDC).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin: OIDC"
+                ],
+                "summary": "Toggle OIDC email_verified enforcement",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Provider ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "require_email_verified flag",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handlers.adminOIDCRequireEmailVerifiedRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "boolean"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/admin/quotas": {
             "get": {
                 "security": [
@@ -5595,6 +5653,14 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_handlers.adminOIDCRequireEmailVerifiedRequest": {
+            "type": "object",
+            "properties": {
+                "require_email_verified": {
+                    "type": "boolean"
+                }
+            }
+        },
         "internal_handlers.adminUserResponse": {
             "type": "object",
             "properties": {
@@ -6023,6 +6089,9 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
+                },
+                "require_email_verified": {
+                    "type": "boolean"
                 },
                 "scopes": {
                     "type": "string"

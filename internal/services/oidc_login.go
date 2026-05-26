@@ -291,7 +291,10 @@ func (s *OIDCLoginService) resolveOrProvisionUser(providerID int64, sub, email s
 	if !provider.AutoProvision {
 		return nil, false, ErrOIDCNoAccount
 	}
-	if email == "" || !emailVerified {
+	if email == "" {
+		return nil, false, ErrOIDCMissingEmail
+	}
+	if provider.RequireEmailVerified && !emailVerified {
 		return nil, false, ErrOIDCMissingEmail
 	}
 
