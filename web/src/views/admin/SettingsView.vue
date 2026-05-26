@@ -18,27 +18,6 @@ import Skeleton from 'primevue/skeleton'
 const toast = useToast()
 const loading = ref(true)
 
-// OIDC state
-const oidcProviders = ref<any[]>([])
-const adminGroups = ref<{ id: number; name: string }[]>([])
-const savingProviderID = ref<number | null>(null)
-const savingExtraParamsID = ref<number | null>(null)
-
-// Extra-authorize-params editor uses an array of {key, value} rows per provider
-// for ergonomic add/remove; we convert back to the API's object shape on save.
-function rowsFromExtraParams(obj: Record<string, string> | null | undefined): { key: string; value: string }[] {
-  if (!obj) return []
-  return Object.entries(obj).map(([key, value]) => ({ key, value }))
-}
-function rowsToExtraParams(rows: { key: string; value: string }[]): Record<string, string> {
-  const out: Record<string, string> = {}
-  for (const row of rows) {
-    const k = row.key.trim()
-    if (k) out[k] = row.value
-  }
-  return out
-}
-
 // --- Per-card dirty tracking ---
 // We store the "saved" snapshot and the "draft" for each card.
 // Dirty = draft differs from saved.
@@ -257,67 +236,8 @@ async function importSettings(e: Event) {
   }
 }
 
-async function fetchOIDC() {
-  try {
-    const res = await api.get('/api/v2/admin/oidc/providers')
-    const providers = res.data.providers || []
-    // Attach the editable rows view of extra_authorize_params for the inline editor.
-    providers.forEach((p: any) => {
-      p._extraParamsRows = rowsFromExtraParams(p.extra_authorize_params)
-    })
-    oidcProviders.value = providers
-  } catch {
-    // ignore
-  }
-}
-
-async function saveExtraParams(p: any) {
-  savingExtraParamsID.value = p.id
-  try {
-    await api.put(`/api/v2/admin/oidc/providers/${p.id}/extra-params`, {
-      extra_authorize_params: rowsToExtraParams(p._extraParamsRows),
-    })
-    toast.add({ severity: 'success', summary: 'Saved', detail: `${p.display_name} params updated`, life: 3000 })
-  } catch (e: any) {
-    toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to save', life: 5000 })
-    await fetchOIDC()
-  } finally {
-    savingExtraParamsID.value = null
-  }
-}
-
-async function fetchGroups() {
-  try {
-    const res = await api.get('/api/v2/admin/groups')
-    adminGroups.value = (res.data.groups || []).map((g: any) => ({ id: g.id, name: g.name }))
-  } catch {
-    // ignore — auto-provision dropdown will fall back to "None" only.
-  }
-}
-
-async function saveProviderAutoProvision(p: any) {
-  savingProviderID.value = p.id
-  try {
-    await Promise.all([
-      api.put(`/api/v2/admin/oidc/providers/${p.id}/auto-provision`, {
-        auto_provision: !!p.auto_provision,
-        default_group_id: p.default_group_id || 0,
-      }),
-      api.put(`/api/v2/admin/oidc/providers/${p.id}/require-email-verified`, {
-        require_email_verified: !!p.require_email_verified,
-      }),
-    ])
-    toast.add({ severity: 'success', summary: 'Saved', detail: `${p.display_name} provisioning updated`, life: 3000 })
-  } catch (e: any) {
-    toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to save', life: 5000 })
-    await fetchOIDC() // re-sync to backend truth
-  } finally {
-    savingProviderID.value = null
-  }
-}
-
 onMounted(async () => {
-  await Promise.all([fetchSettings(), fetchOIDC(), fetchGroups()])
+  await fetchSettings()
 })
 </script>
 
@@ -350,7 +270,6 @@ onMounted(async () => {
         <Tab value="0">General</Tab>
         <Tab value="1">Upload Limits</Tab>
         <Tab value="2">Operations</Tab>
-        <Tab value="3">SSO / OIDC</Tab>
       </TabList>
       <TabPanels>
         <!-- General -->
@@ -503,127 +422,6 @@ onMounted(async () => {
             <div class="flex gap-2">
               <Button label="Discard" severity="secondary" outlined @click="discardCard('notifier')" />
               <Button :label="notifierSaving ? 'Saving...' : 'Save'" :loading="notifierSaving" @click="saveCard('notifier')" />
-            </div>
-          </div>
-        </TabPanel>
-
-        <!-- SSO / OIDC -->
-        <TabPanel value="3">
-          <div v-if="oidcProviders.length === 0" class="py-6 text-sm text-surface-400">No OIDC providers configured.</div>
-          <div v-else class="divide-y divide-surface-100">
-            <div v-for="p in oidcProviders" :key="p.id" class="py-5">
-              <div class="flex items-center justify-between mb-4">
-                <div>
-                  <p class="text-sm font-medium">{{ p.display_name }}</p>
-                  <p class="text-xs text-surface-400">{{ p.issuer_url }} &middot; {{ p.is_enabled ? 'Enabled' : 'Disabled' }}</p>
-                </div>
-              </div>
-
-              <div class="grid grid-cols-3 gap-6 py-3 pl-4">
-                <div>
-                  <label class="text-sm font-medium">Auto-provision</label>
-                  <p class="text-xs text-surface-400 mt-1">
-                    When on, an unknown sub or email pair signs in by creating a new local user.
-                    When off, the same login is rejected with <code>no_account</code>.
-                    <span class="block mt-1 text-orange-500">
-                      Email-collision is always blocked — never auto-link by email alone.
-                    </span>
-                  </p>
-                </div>
-                <div class="col-span-2 flex items-center gap-3">
-                  <ToggleSwitch v-model="p.auto_provision" />
-                  <span class="text-sm text-surface-500">{{ p.auto_provision ? 'Enabled' : 'Disabled' }}</span>
-                </div>
-              </div>
-
-              <div class="grid grid-cols-3 gap-6 py-3 pl-4">
-                <div>
-                  <label class="text-sm font-medium">Default group</label>
-                  <p class="text-xs text-surface-400 mt-1">Auto-provisioned users join this group. Leave at <em>None</em> for no group assignment.</p>
-                </div>
-                <div class="col-span-2">
-                  <Select
-                    v-model="p.default_group_id"
-                    :options="[{ id: 0, name: 'None' }, ...adminGroups]"
-                    optionLabel="name"
-                    optionValue="id"
-                    class="w-full max-w-md"
-                  />
-                </div>
-              </div>
-
-              <div class="grid grid-cols-3 gap-6 py-3 pl-4">
-                <div>
-                  <label class="text-sm font-medium">Require verified email</label>
-                  <p class="text-xs text-surface-400 mt-1">
-                    When on, auto-provisioning requires <code>email_verified: true</code> in the IdP's id_token.
-                    Turn off only for IdPs that don't emit the claim — Okta integrator tenants, Azure AD, and generic OIDC providers per §5.1 of OIDC Core (where the claim is optional).
-                    <span class="block mt-1 text-orange-500">
-                      Email-collision is always blocked even with this off.
-                    </span>
-                  </p>
-                </div>
-                <div class="col-span-2 flex items-center gap-3">
-                  <ToggleSwitch v-model="p.require_email_verified" />
-                  <span class="text-sm text-surface-500">{{ p.require_email_verified ? 'Required' : 'Not required' }}</span>
-                </div>
-              </div>
-
-              <div class="flex justify-end mt-3">
-                <Button
-                  :label="savingProviderID === p.id ? 'Saving...' : 'Save provisioning'"
-                  :loading="savingProviderID === p.id"
-                  size="small"
-                  @click="saveProviderAutoProvision(p)"
-                />
-              </div>
-
-              <div class="grid grid-cols-3 gap-6 py-3 pl-4 border-t border-surface-100 mt-3">
-                <div>
-                  <label class="text-sm font-medium">Extra authorize params</label>
-                  <p class="text-xs text-surface-400 mt-1">
-                    Extra query parameters appended to the IdP authorize URL. Most providers need none.
-                    <span class="block mt-1">
-                      <strong>Google Workspace:</strong> set <code>hd</code> = <code>your-domain.com</code> to restrict signin to your tenant
-                      (without this, an "External" OAuth client accepts any personal <code>@gmail.com</code> account).
-                    </span>
-                    <span class="block mt-1"><strong>Microsoft / AAD:</strong> e.g. <code>prompt</code> = <code>select_account</code>, <code>domain_hint</code> = <code>your-domain.com</code>.</span>
-                  </p>
-                </div>
-                <div class="col-span-2 space-y-2">
-                  <div v-for="(row, i) in p._extraParamsRows" :key="i" class="flex gap-2 items-center">
-                    <InputText v-model="row.key" placeholder="key (e.g. hd)" class="flex-1 max-w-xs" />
-                    <InputText v-model="row.value" placeholder="value (e.g. company.com)" class="flex-1 max-w-xs" />
-                    <Button
-                      icon="pi pi-times"
-                      severity="secondary"
-                      outlined
-                      size="small"
-                      aria-label="Remove param"
-                      @click="p._extraParamsRows.splice(i, 1)"
-                    />
-                  </div>
-                  <Button
-                    label="Add param"
-                    icon="pi pi-plus"
-                    severity="secondary"
-                    outlined
-                    size="small"
-                    @click="p._extraParamsRows.push({ key: '', value: '' })"
-                  />
-                </div>
-              </div>
-
-              <div class="flex justify-end mt-3">
-                <Button
-                  :label="savingExtraParamsID === p.id ? 'Saving...' : 'Save params'"
-                  :loading="savingExtraParamsID === p.id"
-                  size="small"
-                  severity="secondary"
-                  outlined
-                  @click="saveExtraParams(p)"
-                />
-              </div>
             </div>
           </div>
         </TabPanel>
