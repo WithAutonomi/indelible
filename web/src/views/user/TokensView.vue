@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useConfirm } from 'primevue/useconfirm'
 import { useToast } from 'primevue/usetoast'
 import { api } from '../../api/client'
+import { useAuthStore } from '../../stores/auth'
 import type { ApiToken } from '../../types/api'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
@@ -18,6 +19,7 @@ import ConfirmDialog from 'primevue/confirmdialog'
 
 const confirm = useConfirm()
 const toast = useToast()
+const auth = useAuthStore()
 
 const tokens = ref<ApiToken[]>([])
 const loading = ref(true)
@@ -31,11 +33,19 @@ const newTokenAllowedTypesInput = ref('')
 const createdTokenValue = ref('')
 const creating = ref(false)
 
-const scopeOptions = [
-  { label: 'Read', value: 'read' },
-  { label: 'Write', value: 'write' },
-  { label: 'Admin', value: 'admin' },
-]
+// Backend rejects non-admin requests for admin-scoped tokens with 403
+// (handlers/tokens.go), so hide the option to match. Stays exposed for
+// admins.
+const scopeOptions = computed(() => {
+  const opts = [
+    { label: 'Read', value: 'read' },
+    { label: 'Write', value: 'write' },
+  ]
+  if (auth.isAdmin) {
+    opts.push({ label: 'Admin', value: 'admin' })
+  }
+  return opts
+})
 
 async function fetchTokens() {
   loading.value = true
