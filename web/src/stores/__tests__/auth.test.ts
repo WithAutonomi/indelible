@@ -120,7 +120,10 @@ describe('auth store', () => {
 
     await auth.bootstrap()
 
-    expect(mockApi.get).toHaveBeenCalledWith('/api/v2/me')
+    // Bootstrap passes a config that opts out of the global 401 redirect
+    // interceptor — a 401 on boot means "not logged in yet", not "session
+    // expired". See web/src/api/client.ts.
+    expect(mockApi.get).toHaveBeenCalledWith('/api/v2/me', { _skipAuthRedirect: true })
     expect(auth.user).toEqual({ id: 7, email: 'sso@test.com', permissions: 'read' })
     expect(auth.isAuthenticated).toBe(true)
   })
