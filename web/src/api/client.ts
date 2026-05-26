@@ -17,11 +17,13 @@ api.interceptors.request.use((config) => {
   return config
 })
 
-// Handle 401 responses globally
+// Handle 401 responses globally. Callers that probe auth state on boot
+// (the SSO/cookie session check) set `_skipAuthRedirect: true` to opt out:
+// a 401 there just means "not logged in", not "session expired."
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    if (error.response?.status === 401 && !error.config?._skipAuthRedirect) {
       localStorage.removeItem('token')
       // Clear server-side cookie too (best-effort)
       api.post('/api/v2/auth/logout').catch(() => {})
