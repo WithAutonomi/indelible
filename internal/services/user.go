@@ -226,12 +226,29 @@ func (s *UserService) UpdateRestrictions(id int64, maxFileSize *int64, allowedTy
 }
 
 // SoftDelete marks a user as deleted.
+//
+// Atomic: drops OIDC identities first so the same IdP subject doesn't
+// dead-end on the soft-deleted row when they sign in again. Without this,
+// the callback's identity lookup returns the deleted user's ID, GetByID
+// filters it out as soft-deleted, and the caller sees a generic "internal"
+// error with no recovery path. After cleanup, the same subject hits the
+// auto-provision branch and gets a fresh local user.
 func (s *UserService) SoftDelete(id int64) error {
-	_, err := s.db.Exec(
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM oidc_identities WHERE user_id = ?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(
 		`UPDATE users SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 		id,
-	)
-	return err
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // UpdatePassword changes a user's password hash and records the timestamp
