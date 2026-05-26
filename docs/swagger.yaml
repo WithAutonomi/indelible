@@ -104,6 +104,11 @@ definitions:
           type: string
         type: object
     type: object
+  internal_handlers.adminOIDCRequireEmailVerifiedRequest:
+    properties:
+      require_email_verified:
+        type: boolean
+    type: object
   internal_handlers.adminUserResponse:
     properties:
       allowed_file_types:
@@ -386,6 +391,8 @@ definitions:
         type: string
       name:
         type: string
+      require_email_verified:
+        type: boolean
       scopes:
         type: string
       updated_at:
@@ -1694,6 +1701,45 @@ paths:
       security:
       - BearerAuth: []
       summary: Set OIDC extra authorize-URL params
+      tags:
+      - 'Admin: OIDC'
+  /admin/oidc/providers/{id}/require-email-verified:
+    put:
+      consumes:
+      - application/json
+      description: When true (default), auto-provisioning rejects id_tokens without
+        email_verified=true. Turn off for IdPs that don't emit the optional claim
+        (Okta integrator, Azure AD, generic OIDC).
+      parameters:
+      - description: Provider ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: require_email_verified flag
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handlers.adminOIDCRequireEmailVerifiedRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: boolean
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Toggle OIDC email_verified enforcement
       tags:
       - 'Admin: OIDC'
   /admin/quotas:
