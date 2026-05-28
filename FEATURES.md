@@ -129,7 +129,7 @@ Three permission levels: **read**, **write**, **admin**
 
 **Safety:**
 - System prevents removing the last admin
-- Warning on group changes that would orphan users (can force override)
+- Users who lose their last group membership fall back to the system-wide `default_user_permissions` setting (see section 10)
 
 ### 3.4 Groups
 - Named groups with description
@@ -193,9 +193,8 @@ Three permission levels: **read**, **write**, **admin**
 
 ### 5.3 Queue Management
 - Configurable concurrent upload limit (default 1, max 100)
-- Crash recovery: on startup, requeue Queued uploads from DB
-- Reconciliation worker: periodic check (5 min) for stuck uploads
-  - Queued > 2 minutes and not in queue → re-enqueue or mark failed
+- Crash recovery: on startup, any uploads left in `processing` state from a previous run are requeued immediately
+- Reconciliation worker: every 5 min, requeues uploads stuck in `processing` longer than 60 min (covers worker crash mid-upload)
 - Queue status monitoring
 
 ### 5.4 Download
@@ -307,14 +306,15 @@ Three permission levels: **read**, **write**, **admin**
 ## 9. Logging & Audit
 
 ### 9.1 Three-Tier Logging
-| Type | Purpose | Retention |
-|------|---------|-----------|
-| **Audit** | Security events, permission changes, config changes | Never deleted (compliance) |
-| **System** | Internal operations (workers, webhooks, errors) | Configurable retention (default 30 days) |
-| **User** | User activity (uploads, token creation, logins) | Configurable retention |
+| Type | Purpose | Storage | Retention |
+|------|---------|---------|-----------|
+| **Audit** | Security + identity events, permission changes, config changes | `audit_log` table | Never deleted (compliance) |
+| **System** | Internal operations (workers, webhooks, errors) | `system_log` table | Configurable retention (default 30 days) |
+| **User** | User-facing view over audit events filtered by `user_id` (logins, uploads, token ops) | Logical view over `audit_log` | Inherits Audit (permanent) |
+
+Logs are also written to stdout as slog JSON for container log aggregation. No file-based logging or rotation — the DB tables are the durable store.
 
 ### 9.2 Features
-- Daily rotating log files
 - Searchable and filterable (by date, user, event type, severity)
 - Downloadable by date (JSON Lines format)
 - Statistics per log type (entry count, disk usage, date range, breakdown by level/event)
@@ -363,22 +363,24 @@ All settings stored in DB, changeable at runtime without restart.
 - OIDC callback handler
 
 ### 11.2 User Pages
-- **Dashboard** — drag-and-drop file upload, upload status monitor
-- **Uploads** — list/filter uploads, view status, download completed files
-- **Profile** — edit name, change password, manage linked SSO identities
-- **API Tokens** — create/revoke personal tokens, view usage
+- **Dashboard** (`/`) — drag-and-drop file upload, upload status monitor
+- **Uploads** (`/uploads`) — list/filter uploads, view status, download completed files
+- **Collections** (`/collections`) — organize uploads into named collections, manage tags
+- **API Tokens** (`/tokens`) — create/revoke personal tokens, view usage
+- **Profile** (`/profile`) — edit name, change password, manage linked SSO identities
 
 ### 11.3 Admin Pages
-- **User Management** — list users, edit permissions, activate/deactivate, soft-delete
-- **Group Management** — create/edit groups, manage membership
-- **Wallet Management** — create wallets, set default, view balances, transaction history
-- **System Settings** — all runtime config from section 10, per-card save/discard
-- **Webhooks** — dedicated page: create/edit/delete endpoints, integration type, event subscriptions, test ping, delivery history
-- **OIDC Settings** — provider management, auto-provision toggle
-- **Analytics: Tokens** — usage charts, active token stats
-- **Analytics: Uploads** — upload volume, success rates, processing times
-- **Analytics: Costs** — per-token, per-department, system-wide cost breakdowns
-- **Logs** — tabbed view (audit/system/user), search, filter, download
+- **User Management** (`/admin/users`) — list users, edit permissions, activate/deactivate, soft-delete
+- **Group Management** (`/admin/groups`) — create/edit groups, manage membership
+- **Wallet Management** (`/admin/wallets`) — create wallets, set default, view balances, transaction history
+- **Quotas** (`/admin/quotas`) — per-user / per-group / per-department storage and upload-rate limits
+- **Webhooks** (`/admin/webhooks`) — create/edit/delete endpoints, integration type, event subscriptions, test ping, delivery history
+- **SCIM Provisioning** (`/admin/scim`) — provisioning toggle, token mint/revoke, base-URL display
+- **SSO Providers** (`/admin/sso`) — OIDC provider management, auto-provision toggle, identity-linking policy
+- **Tag Rules** (`/admin/tag-rules`) — auto-tag rules for uploads (pattern + metadata based)
+- **System Settings** (`/admin/settings`) — all runtime config from section 10, per-card save/discard
+- **Analytics** (`/admin/analytics`) — combined view with cards for token usage, upload volume + success rate, and cost breakdown (per-token / per-department / system-wide)
+- **Logs** (`/admin/logs`) — tabbed view (audit/system/user), search, filter, download
 
 ---
 
@@ -419,10 +421,8 @@ All settings stored in DB, changeable at runtime without restart.
 - **PostgreSQL** (14+) — only if opting out of default SQLite
 
 ### 13.4 Data Directory
-- Temp upload storage (configurable path)
-- Log files (daily rotation)
-- SQLite database file (when using default DB)
-- Cleaned up on completion/failure
+- Temp upload storage (configurable path), cleaned up on completion/failure
+- SQLite database file (when using default DB) — logs and audit data live in DB tables, not flat files
 
 ### 13.5 Domain Setup & Reverse Proxy
 
