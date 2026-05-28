@@ -89,6 +89,21 @@ describe('auth store', () => {
     expect(auth.user).toBeNull()
   })
 
+  it('logout opts out of the global 401 handler', async () => {
+    // Logout often races the cookie clear and the POST itself can return
+    // 401. Without _skipAuthRedirect, the interceptor recurses into another
+    // logout + session-expired toast — the bug this flag prevents.
+    mockApi.post.mockResolvedValueOnce({})
+    const auth = useAuthStore()
+    await auth.logout()
+
+    expect(mockApi.post).toHaveBeenCalledWith(
+      '/api/v2/auth/logout',
+      undefined,
+      expect.objectContaining({ _skipAuthRedirect: true })
+    )
+  })
+
   it('isAuthenticated is true when user is loaded', () => {
     const auth = useAuthStore()
     expect(auth.isAuthenticated).toBe(false)

@@ -12,6 +12,11 @@ const auth = useAuthStore()
 const toast = useToast()
 
 const showLayout = computed(() => route.meta.auth && auth.isAuthenticated)
+// During logout, isAuthenticated flips before the route changes to /login,
+// which would otherwise render the previous view (UploadsView etc.) without
+// the AppLayout chrome for a brief moment. Hide the route content entirely
+// while the auth route is mounted but the user is no longer authenticated.
+const showGuestView = computed(() => !route.meta.auth)
 
 function onSessionExpired() {
   toast.add({ severity: 'error', summary: 'Session Expired', detail: 'Your session has expired. Redirecting to login...', life: 3000 })
@@ -39,5 +44,5 @@ onUnmounted(() => {
   <AppLayout v-if="showLayout">
     <RouterView />
   </AppLayout>
-  <RouterView v-else />
+  <RouterView v-else-if="showGuestView" />
 </template>
