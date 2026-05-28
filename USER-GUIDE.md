@@ -22,13 +22,13 @@ Indelible is an enterprise gateway for the Autonomi decentralized storage networ
 14. [Provisioning with Okta](#provisioning-with-okta)
 15. [Provisioning with Azure AD](#provisioning-with-azure-ad)
 16. [Admin: Analytics](#admin-analytics)
-15. [Admin: Logs](#admin-logs)
-16. [Maintenance Mode](#maintenance-mode)
-17. [Rate Limiting](#rate-limiting)
-18. [Disk Space Monitoring](#disk-space-monitoring)
-19. [API Consumer Guide](#api-consumer-guide)
-20. [Deployment](#deployment)
-19. [API Reference](#api-reference)
+17. [Admin: Logs](#admin-logs)
+18. [Maintenance Mode](#maintenance-mode)
+19. [Rate Limiting](#rate-limiting)
+20. [Disk Space Monitoring](#disk-space-monitoring)
+21. [API Consumer Guide](#api-consumer-guide)
+22. [Deployment](#deployment)
+23. [API Reference](#api-reference)
 
 ---
 
@@ -671,6 +671,8 @@ Indelible supports OpenID Connect for single sign-on with identity providers lik
 
 Client secrets are encrypted at rest using AES-256-GCM.
 
+> For a step-by-step walkthrough against Okta — including provisioning behavior toggles, integrator-tenant gotchas, and a troubleshooting table — see [Provisioning with Okta](#provisioning-with-okta).
+
 ---
 
 ## Admin: SCIM Provisioning
@@ -744,6 +746,8 @@ SCIM 2.0 enables automatic user and group provisioning from identity providers s
 - SCIM-provisioned users have no password and should authenticate via OIDC/SSO
 - SCIM-provisioned groups default to "read" permission level
 - SCIM DELETE performs a soft-delete to preserve audit history
+
+> For a complete Okta SCIM walkthrough — App Catalog setup, Header Auth token format, assignment + group push flows — see [Provisioning with Okta](#provisioning-with-okta).
 
 ---
 
