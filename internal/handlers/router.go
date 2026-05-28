@@ -83,10 +83,10 @@ func NewRouter(cfg *config.Config, db *database.DB, antdInfo AntdInfoProvider) h
 		// Authenticated routes
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.Authenticate(db, cfg))
-			// CSRF defence for cookie-authenticated mutations. Currently in
-			// report-only mode — logs mismatches but does not reject. Flip the
-			// argument to true once the SPA is shipping X-CSRF-Token reliably.
-			r.Use(middleware.CSRF(false))
+			// CSRF defence for cookie-authenticated mutations. Cookie callers
+			// must echo the csrf_token cookie back as X-CSRF-Token; mismatches
+			// 403. Bearer / API-token callers are exempt — see csrf.go.
+			r.Use(middleware.CSRF(true))
 
 			// System status (available to all authenticated users)
 			r.Get("/system/wallet-status", WalletStatus(db, cfg))
@@ -150,7 +150,7 @@ func NewRouter(cfg *config.Config, db *database.DB, antdInfo AntdInfoProvider) h
 		// Admin routes
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.Authenticate(db, cfg))
-			r.Use(middleware.CSRF(false))
+			r.Use(middleware.CSRF(true))
 			r.Use(middleware.RequireAdmin(db))
 
 			// Tag rules (admin)
