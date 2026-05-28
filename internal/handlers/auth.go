@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -13,6 +15,64 @@ import (
 	"github.com/WithAutonomi/indelible/internal/middleware"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
+
+// setSessionCookies sets the HttpOnly session cookie carrying the JWT and a
+// non-HttpOnly csrf_token cookie carrying a random per-session token. The
+// SPA reads csrf_token and echoes it back as X-CSRF-Token on mutations,
+// where the CSRF middleware compares the two halves of the double-submit
+// pair. Returns the generated CSRF token (callers may include it in the
+// response body for clients that aren't browsers and so can't read cookies).
+func setSessionCookies(w http.ResponseWriter, r *http.Request, jwtToken string, expiryHours int) (string, error) {
+	csrfToken, err := newCSRFToken()
+	if err != nil {
+		return "", err
+	}
+	secure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+	maxAge := expiryHours * 3600
+	http.SetCookie(w, &http.Cookie{
+		Name:     "session",
+		Value:    jwtToken,
+		Path:     "/",
+		MaxAge:   maxAge,
+		HttpOnly: true,
+		Secure:   secure,
+		SameSite: http.SameSiteLaxMode,
+	})
+	http.SetCookie(w, &http.Cookie{
+		Name:     middleware.CSRFCookieName,
+		Value:    csrfToken,
+		Path:     "/",
+		MaxAge:   maxAge,
+		HttpOnly: false, // SPA must read this to echo on mutations
+		Secure:   secure,
+		SameSite: http.SameSiteLaxMode,
+	})
+	return csrfToken, nil
+}
+
+// clearSessionCookies expires both cookies set by setSessionCookies.
+func clearSessionCookies(w http.ResponseWriter, r *http.Request) {
+	secure := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+	for _, name := range []string{"session", middleware.CSRFCookieName} {
+		http.SetCookie(w, &http.Cookie{
+			Name:     name,
+			Value:    "",
+			Path:     "/",
+			MaxAge:   -1,
+			HttpOnly: name == "session",
+			Secure:   secure,
+			SameSite: http.SameSiteLaxMode,
+		})
+	}
+}
+
+func newCSRFToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}
 
 // --- Request/Response types ---
 
@@ -141,16 +201,10 @@ func Login(db *database.DB, cfg *config.Config) http.HandlerFunc {
 		_ = userSvc.UpdateLastLogin(user.ID)
 		auditEvent(r, logSvc, "login", "info", &user.ID, "password")
 
-		// Set httpOnly session cookie (browser auth)
-		http.SetCookie(w, &http.Cookie{
-			Name:     "session",
-			Value:    token,
-			Path:     "/",
-			MaxAge:   expiryHours * 3600,
-			HttpOnly: true,
-			Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
-			SameSite: http.SameSiteLaxMode,
-		})
+		if _, err := setSessionCookies(w, r, token, expiryHours); err != nil {
+			jsonError(w, "failed to set session cookies", http.StatusInternalServerError)
+			return
+		}
 
 		perms, _ := permSvc.GetEffective(user.ID)
 
@@ -245,15 +299,10 @@ func Register(db *database.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		http.SetCookie(w, &http.Cookie{
-			Name:     "session",
-			Value:    token,
-			Path:     "/",
-			MaxAge:   expiryHours * 3600,
-			HttpOnly: true,
-			Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
-			SameSite: http.SameSiteLaxMode,
-		})
+		if _, err := setSessionCookies(w, r, token, expiryHours); err != nil {
+			jsonError(w, "failed to set session cookies", http.StatusInternalServerError)
+			return
+		}
 
 		jsonResponse(w, http.StatusCreated, authResponse{
 			Token: token,
@@ -276,15 +325,7 @@ func Logout(db *database.DB) http.HandlerFunc {
 		}
 		auditEvent(r, logSvc, "logout", "info", uidPtr, "")
 
-		http.SetCookie(w, &http.Cookie{
-			Name:     "session",
-			Value:    "",
-			Path:     "/",
-			MaxAge:   -1,
-			HttpOnly: true,
-			Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
-			SameSite: http.SameSiteLaxMode,
-		})
+		clearSessionCookies(w, r)
 		jsonResponse(w, http.StatusOK, map[string]string{"status": "logged out"})
 	}
 }

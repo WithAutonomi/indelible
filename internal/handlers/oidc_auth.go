@@ -179,15 +179,10 @@ func OIDCCallback(db *database.DB, cfg *config.Config) http.HandlerFunc {
 		}
 		auditEvent(r, logSvc, "sso_login", "info", &user.ID, detail)
 
-		http.SetCookie(w, &http.Cookie{
-			Name:     "session",
-			Value:    token,
-			Path:     "/",
-			MaxAge:   expiryHours * 3600,
-			HttpOnly: true,
-			Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
-			SameSite: http.SameSiteLaxMode,
-		})
+		if _, err := setSessionCookies(w, r, token, expiryHours); err != nil {
+			http.Redirect(w, r, "/login?error=internal", http.StatusFound)
+			return
+		}
 
 		redirect := "/"
 		if outcome.IsNewUser {
