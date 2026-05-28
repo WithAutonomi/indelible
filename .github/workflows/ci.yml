@@ -261,16 +261,6 @@ jobs:
             VERSION=ci-multiarch
           cache-from: type=gha,scope=docker-ci
 
-      - name: Verify antd companion image builds (amd64 only until V2-275)
-        uses: docker/build-push-action@v6
-        with:
-          context: ./deploy/antd
-          push: false
-          tags: antd:ci
-          platforms: linux/amd64
-          cache-from: type=gha,scope=docker-ci-antd
-          cache-to: type=gha,scope=docker-ci-antd,mode=max
-
   # Browser-level smoke suite — verifies server boots, frontend renders,
   # auth/admin round-trips work via Playwright. Despite the directory living
   # under smoke/, the SSO Dex round-trip on PR #34 (when it merges) is a

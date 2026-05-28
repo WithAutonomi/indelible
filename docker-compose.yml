@@ -59,8 +59,10 @@ services:
       retries: 3
 
   antd:
-    image: ghcr.io/withautonomi/antd:latest
-    build: ./deploy/antd
+    # Pinned to a known-good ant-sdk release. Bump alongside .antd-version
+    # so the bundled binary in indelible releases matches what containerised
+    # operators get from compose.
+    image: ghcr.io/withautonomi/antd:v0.9.0
     ports:
       - "8082:8082"
     volumes:
@@ -107,7 +109,7 @@ volumes:
 #       depends_on:
 #         - antd
 #     antd:
-#       image: ghcr.io/withautonomi/antd:latest
+#       image: ghcr.io/withautonomi/antd:v0.9.0
 #       ports: ["8082:8082"]
 #       volumes: ["antd-data:/var/lib/antd"]
 #   volumes:
