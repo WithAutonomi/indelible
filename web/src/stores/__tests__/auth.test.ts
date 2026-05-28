@@ -20,11 +20,10 @@ describe('auth store', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
-    localStorage.clear()
   })
 
-  it('login sets token and fetches profile', async () => {
-    mockApi.post.mockResolvedValueOnce({ data: { token: 'jwt-test-token' } })
+  it('login posts credentials and fetches profile via cookie', async () => {
+    mockApi.post.mockResolvedValueOnce({})
     mockApi.get.mockResolvedValueOnce({
       data: { id: 1, email: 'user@test.com', permissions: 'read' },
     })
@@ -36,13 +35,15 @@ describe('auth store', () => {
       email: 'user@test.com',
       password: 'password123',
     })
-    expect(auth.token).toBe('jwt-test-token')
-    expect(localStorage.setItem).toHaveBeenCalledWith('token', 'jwt-test-token')
+    // Profile is fetched via /me — the session cookie set by the login
+    // response is automatically attached by the browser. No JWT is read
+    // from the response body.
+    expect(mockApi.get).toHaveBeenCalledWith('/api/v2/me')
     expect(auth.user).toEqual({ id: 1, email: 'user@test.com', permissions: 'read' })
   })
 
-  it('register sets token and fetches profile', async () => {
-    mockApi.post.mockResolvedValueOnce({ data: { token: 'jwt-register-token' } })
+  it('register posts credentials and fetches profile via cookie', async () => {
+    mockApi.post.mockResolvedValueOnce({})
     mockApi.get.mockResolvedValueOnce({
       data: { id: 2, email: 'new@test.com', permissions: 'read' },
     })
@@ -56,12 +57,11 @@ describe('auth store', () => {
       first_name: 'Test',
       last_name: 'User',
     })
-    expect(auth.token).toBe('jwt-register-token')
     expect(auth.user).toEqual({ id: 2, email: 'new@test.com', permissions: 'read' })
   })
 
-  it('logout clears token and user', async () => {
-    mockApi.post.mockResolvedValueOnce({ data: { token: 'jwt-token' } })
+  it('logout clears user state', async () => {
+    mockApi.post.mockResolvedValueOnce({})
     mockApi.get.mockResolvedValueOnce({
       data: { id: 1, email: 'user@test.com', permissions: 'read' },
     })
@@ -72,20 +72,17 @@ describe('auth store', () => {
     mockApi.post.mockResolvedValueOnce({})
     await auth.logout()
 
-    expect(auth.token).toBeNull()
     expect(auth.user).toBeNull()
-    expect(localStorage.removeItem).toHaveBeenCalledWith('token')
+    expect(auth.isAuthenticated).toBe(false)
   })
 
   it('logout clears state even if API call fails', async () => {
     const auth = useAuthStore()
-    auth.token = 'some-token'
     auth.user = { id: 1 }
 
     mockApi.post.mockRejectedValueOnce(new Error('network error'))
     await auth.logout()
 
-    expect(auth.token).toBeNull()
     expect(auth.user).toBeNull()
   })
 
@@ -104,47 +101,31 @@ describe('auth store', () => {
     )
   })
 
-  it('isAuthenticated is true when user is loaded', () => {
+  it('isAuthenticated reflects user presence', () => {
     const auth = useAuthStore()
-    expect(auth.isAuthenticated).toBe(false)
-
-    // Having a token alone is not enough — bootstrap may still be in flight
-    // and we don't yet know if the cookie/token is valid.
-    auth.token = 'some-token'
     expect(auth.isAuthenticated).toBe(false)
 
     auth.user = { id: 1, email: 'user@test.com' }
     expect(auth.isAuthenticated).toBe(true)
   })
 
-  it('isAuthenticated is true for cookie-only SSO users (no token)', () => {
-    const auth = useAuthStore()
-    expect(auth.token).toBeNull()
-
-    auth.user = { id: 1, email: 'sso@test.com' }
-    expect(auth.isAuthenticated).toBe(true)
-  })
-
-  it('bootstrap resolves session from /me without a localStorage token', async () => {
+  it('bootstrap resolves session from /me via the session cookie', async () => {
     mockApi.get.mockResolvedValueOnce({
-      data: { id: 7, email: 'sso@test.com', permissions: 'read' },
+      data: { id: 7, email: 'cookie@test.com', permissions: 'read' },
     })
 
     const auth = useAuthStore()
-    expect(auth.token).toBeNull()
-
     await auth.bootstrap()
 
     // Bootstrap passes a config that opts out of the global 401 redirect
     // interceptor — a 401 on boot means "not logged in yet", not "session
-    // expired". See web/src/api/client.ts.
+    // expired." See web/src/api/client.ts.
     expect(mockApi.get).toHaveBeenCalledWith('/api/v2/me', { _skipAuthRedirect: true })
-    expect(auth.user).toEqual({ id: 7, email: 'sso@test.com', permissions: 'read' })
+    expect(auth.user).toEqual({ id: 7, email: 'cookie@test.com', permissions: 'read' })
     expect(auth.isAuthenticated).toBe(true)
   })
 
-  it('bootstrap swallows 401 and clears stale localStorage token', async () => {
-    localStorage.setItem('token', 'stale')
+  it('bootstrap swallows 401 and leaves user null', async () => {
     mockApi.get.mockRejectedValueOnce(new Error('401'))
 
     const auth = useAuthStore()
@@ -152,7 +133,6 @@ describe('auth store', () => {
 
     expect(auth.user).toBeNull()
     expect(auth.isAuthenticated).toBe(false)
-    expect(localStorage.removeItem).toHaveBeenCalledWith('token')
   })
 
   it('isAdmin checks permissions array', () => {
