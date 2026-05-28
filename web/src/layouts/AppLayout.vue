@@ -18,8 +18,8 @@ const initials = computed(() => {
   return `${auth.user.first_name?.[0] ?? ''}${auth.user.last_name?.[0] ?? ''}`
 })
 
-function logout() {
-  auth.logout()
+async function logout() {
+  await auth.logout()
   router.push('/login')
 }
 

@@ -53,8 +53,13 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function logout() {
+    // Explicit logout: a 401 from this POST is expected (the cookie may
+    // already be cleared, or the request races the server's invalidate).
+    // Opt out of the global 401 handler so logout doesn't recurse into
+    // itself and surface a "session expired" toast for what the user
+    // intentionally triggered.
     try {
-      await api.post('/api/v2/auth/logout')
+      await api.post('/api/v2/auth/logout', undefined, { _skipAuthRedirect: true } as any)
     } catch {
       // best-effort — clear local state regardless
     }
