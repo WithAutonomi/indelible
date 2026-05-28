@@ -19,14 +19,16 @@ Indelible is an enterprise gateway for the Autonomi decentralized storage networ
 11. [Admin: Webhooks](#admin-webhooks)
 12. [Admin: OIDC / SSO Providers](#admin-oidc--sso-providers)
 13. [Admin: SCIM Provisioning](#admin-scim-provisioning)
-14. [Admin: Analytics](#admin-analytics)
-15. [Admin: Logs](#admin-logs)
-16. [Maintenance Mode](#maintenance-mode)
-17. [Rate Limiting](#rate-limiting)
-18. [Disk Space Monitoring](#disk-space-monitoring)
-19. [API Consumer Guide](#api-consumer-guide)
-20. [Deployment](#deployment)
-19. [API Reference](#api-reference)
+14. [Provisioning with Okta](#provisioning-with-okta)
+15. [Provisioning with Azure AD](#provisioning-with-azure-ad)
+16. [Admin: Analytics](#admin-analytics)
+17. [Admin: Logs](#admin-logs)
+18. [Maintenance Mode](#maintenance-mode)
+19. [Rate Limiting](#rate-limiting)
+20. [Disk Space Monitoring](#disk-space-monitoring)
+21. [API Consumer Guide](#api-consumer-guide)
+22. [Deployment](#deployment)
+23. [API Reference](#api-reference)
 
 ---
 
@@ -669,6 +671,8 @@ Indelible supports OpenID Connect for single sign-on with identity providers lik
 
 Client secrets are encrypted at rest using AES-256-GCM.
 
+> For a step-by-step walkthrough against Okta — including provisioning behavior toggles, integrator-tenant gotchas, and a troubleshooting table — see [Provisioning with Okta](#provisioning-with-okta).
+
 ---
 
 ## Admin: SCIM Provisioning
@@ -742,6 +746,279 @@ SCIM 2.0 enables automatic user and group provisioning from identity providers s
 - SCIM-provisioned users have no password and should authenticate via OIDC/SSO
 - SCIM-provisioned groups default to "read" permission level
 - SCIM DELETE performs a soft-delete to preserve audit history
+
+> For a complete Okta SCIM walkthrough — App Catalog setup, Header Auth token format, assignment + group push flows — see [Provisioning with Okta](#provisioning-with-okta).
+
+---
+
+## Provisioning with Okta
+
+End-to-end walkthrough for connecting Indelible to an Okta tenant. Covers two integrations that work together but can be deployed independently:
+
+- **SSO (OIDC)** — users sign in to Indelible with their Okta credentials.
+- **SCIM** — Okta provisions, updates, and deactivates users in Indelible automatically as assignments change.
+
+Most enterprise deployments use both. SSO handles authentication; SCIM handles the user-and-group lifecycle. The two are linked automatically: when SCIM creates a user with an `externalId` that matches an SSO `sub` claim from the same tenant, the SSO login finds the SCIM-provisioned account.
+
+### Prerequisites
+
+- Admin access to an Okta tenant (developer or production).
+- A publicly reachable URL for Indelible. During evaluation, [`cloudflared`](https://github.com/cloudflare/cloudflared) tunnels work well: `cloudflared tunnel --url http://localhost:8080` returns an ephemeral `https://*.trycloudflare.com` URL Okta can call back to. For production, a stable hostname behind a reverse proxy is required.
+- An Indelible admin account (the first registered user is auto-promoted to admin).
+
+> Throughout this section, `https://your-indelible` stands in for whatever public URL Indelible is reachable at. Replace it with your tunnel URL or production hostname.
+
+---
+
+### Part A — Single Sign-On (OIDC)
+
+#### 1. Create an Okta OIDC application
+
+In the Okta admin console:
+
+1. **Applications → Applications → Create App Integration**.
+2. Sign-in method: **OIDC — OpenID Connect**. Application type: **Web Application**. Click **Next**.
+3. Name the integration (for example, `Indelible`).
+4. **Sign-in redirect URIs**: add `https://your-indelible/api/v2/auth/oidc/callback`.
+5. **Sign-out redirect URIs**: leave blank (Indelible handles logout locally in v1).
+6. **Assignments**: choose **Skip group assignment for now**. You will assign yourself explicitly in the next step.
+7. Save. On the resulting screen, copy the **Client ID** and **Client Secret** — you will paste them into Indelible shortly.
+
+<!-- screenshot: Okta "Create a new app integration" dialog with OIDC + Web Application selected -->
+
+<!-- screenshot: Okta application General tab showing Client ID and Client Secret fields -->
+
+#### 2. Assign yourself to the application
+
+Okta's "Allow everyone in your organization to access" toggle is frequently a no-op on developer/integrator tenants — even tenant admins must be explicitly assigned. To avoid a confusing `403` later:
+
+1. Open the application → **Assignments** tab.
+2. **Assign → Assign to People** → select your own account → **Save and Go Back**.
+
+<!-- screenshot: Okta Assignments tab with an explicitly-assigned user row -->
+
+#### 3. Note the issuer URL
+
+Okta exposes two authorization servers; pick the right one:
+
+- **Org authorization server** — `https://<tenant>.okta.com` (no trailing path). Simpler; no per-client access policy. **Recommended for first-time integrations.**
+- **Default custom authorization server** — `https://<tenant>.okta.com/oauth2/default`. Requires you to add the new client to the default access policy under **Security → API → Authorization Servers**, otherwise the token exchange fails with `Policy evaluation failed`.
+
+For the remainder of this walkthrough, the org auth server form is used.
+
+#### 4. Add the provider in Indelible
+
+1. Log into Indelible as an admin.
+2. Navigate to **Admin → SSO** (the dedicated provider-management page at `/admin/sso`).
+3. Click **Add provider** and fill in:
+
+| Field | Value |
+|---|---|
+| Name | `okta` (internal identifier; lowercase, no spaces) |
+| Display name | `Sign in with Okta` (appears on the login page) |
+| Issuer URL | `https://<tenant>.okta.com` |
+| Client ID | from step 1 |
+| Client secret | from step 1 |
+| Scopes | `openid email profile` (the default) |
+
+The client secret is encrypted at rest with AES-256-GCM.
+
+<!-- screenshot: Indelible Admin → SSO "Add provider" form filled in -->
+
+4. Save the provider. It appears in the list with a status indicator.
+
+#### 5. Configure provisioning behavior
+
+For each saved provider you can tune four behaviors from the same screen:
+
+- **Auto-provision** — when on, an unknown but verified Okta user signing in for the first time becomes an Indelible user automatically. When off, they get an "account not found" error and an admin must create the user first.
+- **Default group** — when auto-provision is on, new users join this group. The group's permission level determines what they can do on first login.
+- **Require verified email** — when on, only Okta users whose ID token carries `"email_verified": true` are accepted. When off, the email-verification claim is not required.
+- **Extra authorize params** — key/value pairs appended to the authorize URL. Useful for vendor-specific options like `prompt=login` or `hd=<workspace-domain>`.
+
+**Important: the "Require verified email" default is on (strict).** Okta developer/integrator tenants frequently do not emit the `email_verified` claim at all (the default custom authorization server reserves `email` and `email_verified` as protected claim names — you cannot add them manually, and the org auth server omits the field on integrator tenants). With the strict default, auto-provision will refuse with `did not return a verified email` even though the user is real.
+
+For Okta developer/integrator tenants, **turn "Require verified email" off** on the Okta provider. For production Okta tenants that emit the claim correctly, leave it on.
+
+<!-- screenshot: Provider settings panel showing the four toggles -->
+
+#### 6. Test sign-in
+
+1. Log out of Indelible.
+2. On the login page, click the **Sign in with Okta** button.
+3. You should be redirected to Okta, see the standard sign-in screen, then land on the Indelible dashboard.
+
+If you get bounced back to the login page silently, check the network tab — a `/api/v2/auth/oidc/callback` returning `200` followed by an immediate `/login` redirect indicates the cookie was set but the SPA could not read it. This was fixed in recent releases; ensure you are on the latest version.
+
+#### 7. Manually link an existing local account (optional)
+
+If you already have a local Indelible account and want to add Okta sign-in to it (instead of creating a fresh SSO user):
+
+1. Sign in with your local password.
+2. **Profile → Connected Accounts → Connect Okta**.
+3. You are redirected through Okta; on return the two accounts are linked. You can now sign in with either credential.
+
+> Indelible never auto-links by email address alone — if an SSO email matches an existing local user but no explicit link exists, sign-in is refused. This is a deliberate safeguard against an attacker registering an Okta account at the same email to take over a local one.
+
+### Part B — SCIM provisioning
+
+SCIM and SSO are independent — you can run SCIM without SSO (users get provisioned but have no way to sign in), or SSO without SCIM (users self-provision via auto-provision on first sign-in). They are most useful together.
+
+#### 1. Enable SCIM in Indelible
+
+1. Navigate to **Admin → SCIM** (`/admin/scim`).
+2. Toggle **SCIM provisioning** to enabled. The page now displays the **SCIM base URL** for your deployment, e.g. `https://your-indelible/scim/v2`.
+
+<!-- screenshot: Indelible Admin → SCIM page with provisioning enabled and the base URL visible -->
+
+#### 2. Mint a SCIM token
+
+1. Click **Generate token**.
+2. Give it a descriptive name (for example, `Okta Production`).
+3. **Copy the token immediately** — it is shown only once. Tokens have the form `scim_<64-hex-chars>`.
+
+#### 3. Add the SCIM 2.0 Test App in Okta
+
+1. Okta admin → **Applications → Browse App Catalog**.
+2. Search for **SCIM 2.0 Test App (Header Auth)** and select it.
+3. Click **Add Integration**.
+
+<!-- screenshot: Okta App Catalog tile for "SCIM 2.0 Test App (Header Auth)" -->
+
+4. Give the integration a name (for example, `Indelible SCIM`). Accept the defaults on the **General Settings** step and click **Next**, then **Done**.
+
+#### 4. Save before enabling provisioning
+
+A non-obvious Okta quirk: the **Provisioning** tab does not appear until SCIM has been enabled and the page has been saved. On the application's **General** tab:
+
+1. Locate the **Provisioning** section (or **App Settings → Provisioning**) and switch it to **SCIM**.
+2. Click **Save**. The **Provisioning** tab now appears in the top nav.
+
+<!-- screenshot: Okta application General tab with Provisioning set to SCIM -->
+
+#### 5. Sign-on Options
+
+On the **Sign On** tab:
+
+- SAML / SWA fields can be left blank — SCIM uses Header Auth, not SAML.
+- Under **Credential Details**, set **Application username format** to **Okta username**.
+- Save.
+
+<!-- screenshot: Okta Sign On Options page with Application username format = Okta username -->
+
+#### 6. Connect Okta to Indelible's SCIM endpoint
+
+On the **Provisioning → Integration** sub-tab → **Edit**:
+
+| Field | Value |
+|---|---|
+| SCIM connector base URL | `https://your-indelible/scim/v2` |
+| Unique identifier field for users | `userName` |
+| Supported provisioning actions | check **Push New Users**, **Push Profile Updates**, **Push Groups** |
+| Authentication Mode | **HTTP Header** |
+| Authorization (header) | `scim_<your-token>` |
+
+> The Authorization field is passed verbatim by the Header Auth variant — Okta does not prepend `Bearer `. Indelible's SCIM middleware accepts both `Bearer scim_<token>` and bare `scim_<token>`, so the simplest form (just the token) works. Older documentation may instruct you to type `Bearer scim_<token>` literally; that still works but is no longer required.
+
+Click **Test API Credentials** → expect a green confirmation banner.
+
+<!-- screenshot: Okta SCIM Integration config screen filled in -->
+
+<!-- screenshot: Okta "Test API Credentials" green success banner -->
+
+Save.
+
+#### 7. Enable provisioning actions
+
+On the **Provisioning → To App** sub-tab → **Edit**, enable:
+
+- **Create Users**
+- **Update User Attributes**
+- **Deactivate Users**
+
+Save.
+
+<!-- screenshot: Okta Provisioning → To App with Create / Update / Deactivate all enabled -->
+
+#### 8. Assign a user
+
+On the **Assignments** tab:
+
+1. **Assign → Assign to People** → pick a user → **Save and Go Back** → **Done**.
+2. Okta first sends a `GET /Users?filter=userName eq "..."` existence check, then a `POST /Users` if no match is found.
+3. The user should appear in Indelible's **Admin → Users** within seconds (visible refresh: SCIM events show up in the user list immediately).
+
+<!-- screenshot: Indelible Admin → Users list showing the newly SCIM-provisioned user -->
+
+> **SCIM-provisioned users have no password.** Okta includes an initial random password in the `POST /Users` payload; Indelible ignores it. SCIM users must sign in via SSO (Part A) or have an admin reset their password manually.
+
+#### 9. Push a group
+
+On the **Push Groups** tab:
+
+1. **Push Groups → Find groups by name** (avoid **Find groups by rule** for evaluation).
+2. Type the name of an Okta group, select it, choose **Create Group** (not **Link Group** — use Link only if the group already exists in Indelible and you want to map them).
+3. Save. Okta sends a `POST /Groups` followed by `PATCH /Groups/{id}` for each member.
+4. The group appears in **Admin → Groups** in Indelible with members populated.
+
+<!-- screenshot: Okta Push Groups tab with one linked group -->
+
+> SCIM-provisioned groups default to **read** permission level. To grant more, edit the group in Indelible after provisioning — the permission level is local-only and is not overwritten by subsequent SCIM updates.
+
+#### 10. Deactivation
+
+When an Okta user is unassigned from the application (or their Okta account is deactivated), Okta sends `PATCH /Users/{id}` with `active: false`. Indelible soft-deletes the user — they can no longer sign in, but their audit history is preserved. Re-assigning them in Okta restores access.
+
+### Combined SSO + SCIM
+
+Run both Part A and Part B against the same Okta tenant. The linkage happens automatically: SCIM stores the Okta user ID as `externalId`; when the user signs in via SSO, the OIDC `sub` claim is matched against `externalId` and the existing user is reused (no duplicate created).
+
+For this auto-link to work, both integrations must be configured against the same Okta tenant — `sub` and SCIM `id` are only globally meaningful within a single tenant.
+
+### Troubleshooting
+
+| Symptom | Likely cause |
+|---|---|
+| `Policy evaluation failed` during SSO | Using the default custom authorization server without adding the new client to the access policy. Switch to the org auth server, or edit **Security → API → Authorization Servers → default → Access Policies**. |
+| `did not return a verified email` on first sign-in | Okta integrator tenants omit `email_verified`. Turn off **Require verified email** on the provider. |
+| SSO returns `Sign-in failed unexpectedly` after deleting a user | Resolved in recent releases — ensure you are on the latest version. Symptom was a soft-deleted user blocking the email or OIDC-identity slot. |
+| SCIM `401 invalid authorization format` | Token is mistyped or missing. The Authorization field should contain either `scim_<hex>` or `Bearer scim_<hex>` — anything else (no scheme, wrong prefix) is rejected. |
+| Okta keeps retrying an old base URL after you change it | Okta's SCIM endpoint config caches. Wait a few minutes, or disable and re-enable provisioning on the Okta side to force a refresh. |
+| Sign-in succeeds in incognito but auto-picks an account in your regular browser | Okta vendor behavior — `prompt=select_account` is honored only when no active session exists. Use `prompt=login` in **Extra authorize params** for QA flows where you need re-authentication every time. |
+
+---
+
+## Provisioning with Azure AD
+
+A full Azure AD / Entra walkthrough mirrors the Okta one above but is **not yet validated end-to-end against a real tenant** — the rehearsal is planned but currently blocked on test-tenant access. Until that rehearsal completes, the following is a sketch of the configuration shape. Use it as a starting point but expect minor field-name differences from current Azure portal copy.
+
+### SSO (OIDC)
+
+1. **Azure Portal → App registrations → New registration**.
+2. Redirect URI: **Web** → `https://your-indelible/api/v2/auth/oidc/callback`.
+3. After registration, capture the **Application (client) ID** and the **Directory (tenant) ID**. The issuer URL is `https://login.microsoftonline.com/<tenant-id>/v2.0`.
+4. **Certificates & secrets → New client secret** → copy the secret **value** (not the ID) immediately.
+5. **API permissions → Microsoft Graph → Delegated → openid, email, profile** → grant admin consent.
+6. In Indelible: **Admin → SSO → Add provider** with the values above. Scopes: `openid email profile`.
+7. Azure AD reliably emits `email_verified`, so leave **Require verified email** on.
+
+### SCIM
+
+1. **Azure Portal → Enterprise applications → New application → Create your own → Integrate any other application (non-gallery)**.
+2. Open the application → **Provisioning → Get started**.
+3. **Provisioning Mode**: Automatic.
+4. **Tenant URL**: `https://your-indelible/scim/v2`.
+5. **Secret Token**: `scim_<your-token>` (Azure AD accepts the bare form).
+6. **Test Connection** → expect success → **Save**.
+7. **Provisioning → Start provisioning**.
+
+Azure AD-specific behaviors to expect (validated indirectly via Okta captures, but not yet against a real Azure tenant):
+
+- Azure issues `GET /Users?filter=userName eq "..."` before every `POST /Users` as an existence check.
+- Group membership removal uses the `members[value eq "X"]` filter form in `PATCH /Groups/{id}` payloads.
+- The provisioning cycle runs every **40 minutes by default**. Use the **Provision on demand** button on the Provisioning page to force an immediate sync during testing.
+
+This section will be expanded with screenshots and a confirmed step list once the Azure AD rehearsal completes.
 
 ---
 
