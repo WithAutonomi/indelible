@@ -101,6 +101,78 @@ func TestRegisterAndLogin(t *testing.T) {
 	}
 }
 
+// TestLoginSetsCookies asserts the V2-366 Phase 1 contract: a successful
+// login lands both the HttpOnly session cookie carrying the JWT and the
+// non-HttpOnly csrf_token cookie the SPA reads for double-submit defence.
+func TestLoginSetsSessionAndCSRFCookies(t *testing.T) {
+	router := setupTestRouter(t)
+
+	regBody, _ := json.Marshal(map[string]string{
+		"email": "cookies@test.com", "password": "password123",
+		"first_name": "C", "last_name": "K",
+	})
+	req := httptest.NewRequest("POST", "/api/v2/auth/register", bytes.NewReader(regBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("register: %d", w.Code)
+	}
+
+	var sawSession, sawCSRF bool
+	for _, c := range w.Result().Cookies() {
+		switch c.Name {
+		case "session":
+			sawSession = true
+			if !c.HttpOnly {
+				t.Errorf("session cookie must be HttpOnly")
+			}
+			if c.Value == "" {
+				t.Errorf("session cookie must carry a value")
+			}
+		case "csrf_token":
+			sawCSRF = true
+			if c.HttpOnly {
+				t.Errorf("csrf_token cookie must NOT be HttpOnly (SPA must read it)")
+			}
+			if c.Value == "" {
+				t.Errorf("csrf_token cookie must carry a value")
+			}
+		}
+	}
+	if !sawSession {
+		t.Error("register did not set session cookie")
+	}
+	if !sawCSRF {
+		t.Error("register did not set csrf_token cookie")
+	}
+
+	// Same assertions on Login.
+	loginBody, _ := json.Marshal(map[string]string{
+		"email": "cookies@test.com", "password": "password123",
+	})
+	req = httptest.NewRequest("POST", "/api/v2/auth/login", bytes.NewReader(loginBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("login: %d", w.Code)
+	}
+
+	sawSession, sawCSRF = false, false
+	for _, c := range w.Result().Cookies() {
+		if c.Name == "session" {
+			sawSession = true
+		}
+		if c.Name == "csrf_token" {
+			sawCSRF = true
+		}
+	}
+	if !sawSession || !sawCSRF {
+		t.Errorf("login cookies: session=%v csrf=%v", sawSession, sawCSRF)
+	}
+}
+
 func TestRegisterDuplicateEmail(t *testing.T) {
 	router := setupTestRouter(t)
 

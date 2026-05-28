@@ -17,6 +17,15 @@ const (
 	UserIDKey     contextKey = "user_id"
 	TokenIDKey    contextKey = "token_id"
 	AuthMethodKey contextKey = "auth_method" // "jwt" or "api_token"
+	AuthSourceKey contextKey = "auth_source" // "cookie" or "header"
+)
+
+// AuthSource constants identify where the credential was carried.
+// CSRF defence applies only to AuthSourceCookie — Bearer callers are not
+// browsers and cannot be tricked into cross-origin POSTs.
+const (
+	AuthSourceCookie = "cookie"
+	AuthSourceHeader = "header"
 )
 
 // Authenticate validates JWT session tokens or API bearer tokens.
@@ -25,10 +34,13 @@ func Authenticate(db *database.DB, cfg *config.Config) func(http.Handler) http.H
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Extract token: try httpOnly cookie first, then Authorization header
-			var tokenStr string
+			// Extract token: try httpOnly cookie first, then Authorization header.
+			// authSource is propagated on the context so CSRF middleware can
+			// enforce double-submit-token only on cookie-authenticated mutations.
+			var tokenStr, authSource string
 			if cookie, err := r.Cookie("session"); err == nil && cookie.Value != "" {
 				tokenStr = cookie.Value
+				authSource = AuthSourceCookie
 			} else {
 				authHeader := r.Header.Get("Authorization")
 				if authHeader == "" {
@@ -40,6 +52,7 @@ func Authenticate(db *database.DB, cfg *config.Config) func(http.Handler) http.H
 					http.Error(w, `{"error":"invalid authorization format","code":"unauthorized"}`, http.StatusUnauthorized)
 					return
 				}
+				authSource = AuthSourceHeader
 			}
 
 			// Try JWT first
@@ -67,6 +80,7 @@ func Authenticate(db *database.DB, cfg *config.Config) func(http.Handler) http.H
 
 				ctx := context.WithValue(r.Context(), UserIDKey, claims.UserID)
 				ctx = context.WithValue(ctx, AuthMethodKey, "jwt")
+				ctx = context.WithValue(ctx, AuthSourceKey, authSource)
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
@@ -88,6 +102,7 @@ func Authenticate(db *database.DB, cfg *config.Config) func(http.Handler) http.H
 				ctx := context.WithValue(r.Context(), UserIDKey, apiToken.UserID)
 				ctx = context.WithValue(ctx, TokenIDKey, apiToken.ID)
 				ctx = context.WithValue(ctx, AuthMethodKey, "api_token")
+				ctx = context.WithValue(ctx, AuthSourceKey, authSource)
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
@@ -124,4 +139,11 @@ func GetUserID(ctx context.Context) int64 {
 func GetTokenID(ctx context.Context) int64 {
 	id, _ := ctx.Value(TokenIDKey).(int64)
 	return id
+}
+
+// GetAuthSource returns the auth credential source (AuthSourceCookie or
+// AuthSourceHeader). Empty if Authenticate has not run for this request.
+func GetAuthSource(ctx context.Context) string {
+	s, _ := ctx.Value(AuthSourceKey).(string)
+	return s
 }
