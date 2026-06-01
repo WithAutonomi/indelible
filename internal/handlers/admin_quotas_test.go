@@ -107,4 +107,52 @@ func TestAdminCreateQuotaValidation(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for zero max_bytes, got %d", w.Code)
 	}
+
+	// User quota with blank entity_id — would enforce on no one (V2-397).
+	body, _ = json.Marshal(map[string]any{
+		"entity_type": "user",
+		"max_bytes":   1024,
+	})
+	req = httptest.NewRequest("POST", "/api/v2/admin/quotas", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for blank user entity_id, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// User quota referencing a non-existent user — silently inert (V2-396).
+	body, _ = json.Marshal(map[string]any{
+		"entity_type": "user",
+		"entity_id":   "99999",
+		"max_bytes":   1024,
+	})
+	req = httptest.NewRequest("POST", "/api/v2/admin/quotas", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for unknown user entity_id, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestAdminListDepartments(t *testing.T) {
+	router := setupTestRouter(t)
+	adminToken := registerAndGetToken(t, router, "admin@test.com", "password123", "Admin", "User")
+
+	req := httptest.NewRequest("GET", "/api/v2/admin/departments", nil)
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("list departments: got %d, body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	if _, ok := resp["departments"]; !ok {
+		t.Errorf("expected 'departments' key in response, got %s", w.Body.String())
+	}
 }

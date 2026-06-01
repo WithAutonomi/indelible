@@ -3,6 +3,7 @@ package services
 import (
 	"database/sql"
 	"errors"
+	"strconv"
 	"time"
 
 	"github.com/WithAutonomi/indelible/internal/database"
@@ -12,6 +13,16 @@ var (
 	ErrQuotaNotFound  = errors.New("quota not found")
 	ErrQuotaExceeded  = errors.New("quota exceeded")
 	ErrQuotaDuplicate = errors.New("quota already exists for this entity")
+	// ErrQuotaEntityRequired is returned when a user/group/department quota is
+	// created without an entity_id. Such a row would match no entity and
+	// enforce nothing (only a system quota may omit entity_id).
+	ErrQuotaEntityRequired = errors.New("entity_id is required for user, group, and department quotas")
+	// ErrQuotaEntityNotFound is returned when the entity_id of a user/group
+	// quota doesn't reference an existing user/group — a typo'd id would
+	// otherwise create a silently inert quota.
+	ErrQuotaEntityNotFound = errors.New("no user or group exists with that entity_id")
+	// ErrQuotaInvalidEntityType is returned for an unrecognised entity_type.
+	ErrQuotaInvalidEntityType = errors.New("entity_type must be one of: system, user, group, department")
 )
 
 // Quota represents a storage quota.
@@ -36,15 +47,22 @@ func NewQuotaService(db *database.DB) *QuotaService {
 	return &QuotaService{db: db}
 }
 
-// Create adds a new quota.
+// Create adds a new quota. The entity is validated first: only a system quota
+// may omit entity_id, and user/group ids must reference an existing row, so a
+// blank or typo'd id can't create a quota that silently enforces nothing.
 func (s *QuotaService) Create(entityType, entityID string, maxBytes int64) (*Quota, error) {
+	entityType, entityID, err := s.validateEntity(entityType, entityID)
+	if err != nil {
+		return nil, err
+	}
+
 	var eID sql.NullString
 	if entityID != "" {
 		eID = sql.NullString{String: entityID, Valid: true}
 	}
 
 	var id int64
-	err := s.db.QueryRow(
+	err = s.db.QueryRow(
 		`INSERT INTO quotas (entity_type, entity_id, max_bytes) VALUES (?, ?, ?) RETURNING id`,
 		entityType, eID, maxBytes,
 	).Scan(&id)
@@ -55,6 +73,76 @@ func (s *QuotaService) Create(entityType, entityID string, maxBytes int64) (*Quo
 		return nil, err
 	}
 	return s.GetByID(id)
+}
+
+// validateEntity normalises and validates an (entityType, entityID) pair for a
+// new quota. It returns the canonical pair to store, or a typed error:
+//   - system: entity_id is cleared (a system quota applies to everyone).
+//   - user/group/department: entity_id is required (ErrQuotaEntityRequired).
+//   - user/group: entity_id must reference an existing row (ErrQuotaEntityNotFound).
+//
+// Department ids are free-text labels (matched against api_tokens.department)
+// and may legitimately predate any token, so their existence is not checked.
+func (s *QuotaService) validateEntity(entityType, entityID string) (string, string, error) {
+	switch entityType {
+	case "system":
+		return entityType, "", nil
+	case "user", "group", "department":
+		if entityID == "" {
+			return "", "", ErrQuotaEntityRequired
+		}
+	default:
+		return "", "", ErrQuotaInvalidEntityType
+	}
+
+	switch entityType {
+	case "user":
+		if !s.entityExists(`SELECT 1 FROM users WHERE id = ?`, entityID) {
+			return "", "", ErrQuotaEntityNotFound
+		}
+	case "group":
+		if !s.entityExists(`SELECT 1 FROM groups WHERE id = ?`, entityID) {
+			return "", "", ErrQuotaEntityNotFound
+		}
+	}
+	return entityType, entityID, nil
+}
+
+// entityExists reports whether query (a `SELECT 1 ... WHERE id = ?`) matches a
+// row for the given id. A non-numeric id can't reference a user/group, so it's
+// rejected before hitting the DB (CAST behaviour differs across dialects).
+func (s *QuotaService) entityExists(query, id string) bool {
+	if _, err := strconv.ParseInt(id, 10, 64); err != nil {
+		return false
+	}
+	var one int
+	err := s.db.QueryRow(query, id).Scan(&one)
+	return err == nil
+}
+
+// Departments returns the distinct, non-empty department labels currently in
+// use across API tokens, sorted — used to populate the quota dialog's
+// department picker with suggestions (free-text entry is still allowed).
+func (s *QuotaService) Departments() ([]string, error) {
+	rows, err := s.db.Query(
+		`SELECT DISTINCT department FROM api_tokens
+		  WHERE department IS NOT NULL AND department != ''
+		  ORDER BY department`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	depts := []string{}
+	for rows.Next() {
+		var d string
+		if err := rows.Scan(&d); err != nil {
+			return nil, err
+		}
+		depts = append(depts, d)
+	}
+	return depts, rows.Err()
 }
 
 // GetByID retrieves a quota with current usage.
