@@ -166,11 +166,29 @@ func GetCollection(db *database.DB) http.HandlerFunc {
 			return
 		}
 
-		// Include files
-		files, total, _ := collSvc.ListFiles(id, 50, 0)
-		fileResp := make([]uploadResponse, 0, len(files))
+		// Include files — paginated; the frontend drives limit/offset. ListFiles
+		// clamps limit to 1..100 (0 -> default 50), so a missing limit is safe.
+		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+		offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+		if offset < 0 {
+			offset = 0
+		}
+		files, total, _ := collSvc.ListFiles(id, limit, offset)
+		addedTimes, _ := collSvc.AddedTimes(id)
+
+		// Carry the membership added_at alongside the upload fields so the UI's
+		// "Added" column isn't "Invalid Date".
+		type collectionFileResponse struct {
+			uploadResponse
+			AddedAt string `json:"added_at"`
+		}
+		fileResp := make([]collectionFileResponse, 0, len(files))
 		for _, f := range files {
-			fileResp = append(fileResp, toUploadResponse(f))
+			cfr := collectionFileResponse{uploadResponse: toUploadResponse(f)}
+			if t, ok := addedTimes[f.ID]; ok {
+				cfr.AddedAt = t.Format("2006-01-02T15:04:05Z")
+			}
+			fileResp = append(fileResp, cfr)
 		}
 
 		jsonResponse(w, http.StatusOK, map[string]any{

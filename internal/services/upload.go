@@ -359,6 +359,29 @@ func (s *UploadService) MarkCompletedPublic(id int64, datamapAddress, actualCost
 	return err
 }
 
+// MarkAlreadyStored transitions a private upload to "already_stored": the
+// content was already on the network (finalize reported 0 new chunks), so it's
+// an idempotent no-op re-upload and nothing was paid. Mirrors MarkCompleted but
+// with the dedup status so the UI shows "already on network" rather than a
+// fresh store (V2-399).
+func (s *UploadService) MarkAlreadyStored(id int64, dataMap, actualCost string) error {
+	_, err := s.db.Exec(
+		`UPDATE uploads SET status = 'already_stored', data_map = ?, actual_cost = ?, completed_at = CURRENT_TIMESTAMP, temp_path = NULL WHERE id = ?`,
+		dataMap, actualCost, id,
+	)
+	return err
+}
+
+// MarkAlreadyStoredPublic is MarkCompletedPublic's content-addressed-dedup
+// counterpart (V2-399).
+func (s *UploadService) MarkAlreadyStoredPublic(id int64, datamapAddress, actualCost string) error {
+	_, err := s.db.Exec(
+		`UPDATE uploads SET status = 'already_stored', datamap_address = ?, actual_cost = ?, completed_at = CURRENT_TIMESTAMP, temp_path = NULL WHERE id = ?`,
+		datamapAddress, actualCost, id,
+	)
+	return err
+}
+
 // MarkPublished flips a previously-private completed upload to visibility='public'
 // with its now-published DataMap address. The existing data_map column is preserved
 // for idempotency and as a belt-and-suspenders fallback — both forms address the

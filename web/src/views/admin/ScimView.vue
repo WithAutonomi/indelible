@@ -10,7 +10,6 @@ import InputText from 'primevue/inputtext'
 import Tag from 'primevue/tag'
 import ToggleSwitch from 'primevue/toggleswitch'
 import Dialog from 'primevue/dialog'
-import ConfirmDialog from 'primevue/confirmdialog'
 import Message from 'primevue/message'
 
 interface ScimToken {
@@ -131,7 +130,6 @@ onMounted(() => {
 
 <template>
   <div class="p-6">
-    <ConfirmDialog />
 
     <div class="flex items-center justify-between mb-6">
       <h1 class="text-2xl font-bold">SCIM Provisioning</h1>

@@ -15,7 +15,6 @@ import Dialog from 'primevue/dialog'
 import Card from 'primevue/card'
 import Chip from 'primevue/chip'
 import Tag from 'primevue/tag'
-import ConfirmDialog from 'primevue/confirmdialog'
 
 const confirm = useConfirm()
 const toast = useToast()
@@ -32,6 +31,7 @@ const newTokenAllowedTypes = ref<string[]>([])
 const newTokenAllowedTypesInput = ref('')
 const createdTokenValue = ref('')
 const creating = ref(false)
+const copied = ref(false)
 
 // Backend rejects non-admin requests for admin-scoped tokens with 403
 // (handlers/tokens.go), so hide the option to match. Stays exposed for
@@ -119,18 +119,36 @@ function revokeToken(id: number) {
   })
 }
 
-function copyToken() {
-  navigator.clipboard.writeText(createdTokenValue.value)
+async function copyToken() {
+  try {
+    // navigator.clipboard is only defined in secure contexts (HTTPS/localhost);
+    // optional-chain so an insecure-context call lands in catch rather than
+    // throwing a different error.
+    await navigator.clipboard?.writeText(createdTokenValue.value)
+    if (!navigator.clipboard) throw new Error('clipboard unavailable')
+    copied.value = true
+    toast.add({ severity: 'success', summary: 'Copied', detail: 'Token copied to clipboard', life: 2000 })
+    setTimeout(() => { copied.value = false }, 2000)
+  } catch {
+    toast.add({
+      severity: 'error',
+      summary: 'Copy failed',
+      detail: 'Could not access the clipboard — select the token and copy it manually.',
+      life: 6000,
+    })
+  }
 }
 
 function openCreate() {
   createdTokenValue.value = ''
+  copied.value = false
   showCreate.value = true
 }
 
 function closeCreate() {
   showCreate.value = false
   createdTokenValue.value = ''
+  copied.value = false
 }
 
 onMounted(fetchTokens)
@@ -138,7 +156,6 @@ onMounted(fetchTokens)
 
 <template>
   <div class="p-6">
-    <ConfirmDialog />
 
     <div class="flex items-center justify-between mb-6">
       <h1 class="text-2xl font-bold">API Tokens</h1>
@@ -153,7 +170,8 @@ onMounted(fetchTokens)
         <p class="text-sm text-green-700">Token created! Copy it now -- you won't see it again.</p>
         <div class="flex gap-2">
           <code class="flex-1 bg-gray-100 px-3 py-2 rounded text-sm font-mono break-all">{{ createdTokenValue }}</code>
-          <Button icon="pi pi-copy" severity="secondary" @click="copyToken" v-tooltip.top="'Copy'" />
+          <Button :icon="copied ? 'pi pi-check' : 'pi pi-copy'" :severity="copied ? 'success' : 'secondary'"
+            @click="copyToken" v-tooltip.top="copied ? 'Copied' : 'Copy'" />
         </div>
         <div class="flex justify-end">
           <Button label="Done" @click="closeCreate" />

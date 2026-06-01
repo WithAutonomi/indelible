@@ -13,7 +13,6 @@ import RadioButton from 'primevue/radiobutton'
 import Checkbox from 'primevue/checkbox'
 import Dialog from 'primevue/dialog'
 import Drawer from 'primevue/drawer'
-import ConfirmDialog from 'primevue/confirmdialog'
 import Message from 'primevue/message'
 
 interface Webhook {
@@ -262,7 +261,6 @@ onMounted(fetchWebhooks)
 
 <template>
   <div class="p-6">
-    <ConfirmDialog />
 
     <div class="flex items-center justify-between mb-6">
       <h1 class="text-2xl font-bold">Webhooks</h1>

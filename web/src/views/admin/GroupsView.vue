@@ -13,7 +13,6 @@ import Select from 'primevue/select'
 import Tag from 'primevue/tag'
 import Dialog from 'primevue/dialog'
 import Drawer from 'primevue/drawer'
-import ConfirmDialog from 'primevue/confirmdialog'
 
 const confirm = useConfirm()
 const toast = useToast()
@@ -196,7 +195,6 @@ onMounted(fetchGroups)
 
 <template>
   <div class="p-6">
-    <ConfirmDialog />
 
     <div class="flex items-center justify-between mb-6">
       <div>

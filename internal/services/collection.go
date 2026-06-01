@@ -258,3 +258,29 @@ func (s *CollectionService) ListFiles(collectionID int64, limit, offset int) ([]
 
 	return scanUploads(rows, total)
 }
+
+// AddedTimes returns the added_at timestamp for each file in the collection,
+// keyed by upload ID. ListFiles returns plain Upload rows (no membership
+// metadata), so the per-file "Added" date is fetched separately and merged by
+// the handler.
+func (s *CollectionService) AddedTimes(collectionID int64) (map[int64]time.Time, error) {
+	rows, err := s.db.Query(
+		`SELECT upload_id, added_at FROM collection_files WHERE collection_id = ?`,
+		collectionID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make(map[int64]time.Time)
+	for rows.Next() {
+		var id int64
+		var t time.Time
+		if err := rows.Scan(&id, &t); err != nil {
+			return nil, err
+		}
+		out[id] = t
+	}
+	return out, rows.Err()
+}
