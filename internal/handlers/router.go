@@ -239,6 +239,9 @@ func NewRouter(cfg *config.Config, db *database.DB, antdInfo AntdInfoProvider) h
 			r.Put("/admin/quotas/{id}", AdminUpdateQuota(db))
 			r.Delete("/admin/quotas/{id}", AdminDeleteQuota(db))
 			r.Get("/admin/departments", AdminListDepartments(db))
+
+			// System status
+			r.Get("/admin/version-check", AdminVersionCheck(cfg, antdInfo))
 		})
 	})
 
