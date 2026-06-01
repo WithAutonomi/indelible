@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { api } from '../../api/client'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
@@ -29,14 +29,37 @@ const settingKey = ref('') // V2-316
 const sinceDate = ref<Date | null>(null)
 const untilDate = ref<Date | null>(null)
 
-const levelOptions = [
+// V2-408: the level/severity dropdowns must match the values actually stored,
+// which differ per tab — system_log uses info/warning/critical, while
+// audit_log uses info/warn. Hard-coding one list (the old info/warn/error)
+// meant "Critical" was unselectable and "Warn"/"Error" matched nothing. Build
+// each list from the stats count maps (by_level / by_severity) so it always
+// reflects the real vocabulary; fall back to a sane static list if stats
+// haven't loaded.
+const FALLBACK_LEVEL_OPTIONS = [
+  { label: 'All', value: '' },
+  { label: 'Info', value: 'info' },
+  { label: 'Warning', value: 'warning' },
+  { label: 'Critical', value: 'critical' },
+]
+const FALLBACK_SEVERITY_OPTIONS = [
   { label: 'All', value: '' },
   { label: 'Info', value: 'info' },
   { label: 'Warn', value: 'warn' },
-  { label: 'Error', value: 'error' },
 ]
 
-const severityOptions = levelOptions // audit_log severity uses the same vocab
+function titleCase(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1)
+}
+
+function optionsFromCounts(
+  counts: Record<string, number> | undefined,
+  fallback: Array<{ label: string; value: string }>,
+): Array<{ label: string; value: string }> {
+  const keys = counts ? Object.keys(counts).filter(k => k) : []
+  if (!keys.length) return fallback
+  return [{ label: 'All', value: '' }, ...keys.sort().map(k => ({ label: titleCase(k), value: k }))]
+}
 
 function formatDateParam(d: Date | null): string {
   if (!d) return ''
@@ -88,11 +111,36 @@ function switchTab(tab: string | number) {
   fetchStats()
 }
 
+// V2-408: one-click reset of every filter on the current tab. Resets all
+// filter refs (not just the ones the active tab shows) so nothing lingers
+// when switching tabs, then refetches from page 1.
+function clearFilters() {
+  eventType.value = ''
+  level.value = ''
+  severity.value = ''
+  settingKey.value = ''
+  sinceDate.value = null
+  untilDate.value = null
+  page.value = 1
+  fetchLogs()
+}
+
+// Map a stored level/severity to a PrimeVue Tag severity. Must cover both
+// vocabularies (system: critical/warning/info; audit: warn/info) — matched
+// case-insensitively — or genuine criticals render blue and look like info
+// (V2-407).
 function severitySeverity(sev: string): string {
-  switch (sev) {
-    case 'error': return 'danger'
-    case 'warn': return 'warn'
-    default: return 'info'
+  switch ((sev || '').toLowerCase()) {
+    case 'critical':
+    case 'fatal':
+    case 'error':
+      return 'danger'
+    case 'warning':
+    case 'warn':
+      return 'warn'
+    case 'info':
+    default:
+      return 'info'
   }
 }
 
@@ -158,6 +206,11 @@ interface LogStats {
 
 const stats = ref<LogStats | null>(null)
 const loadingStats = ref(false)
+
+// Built from the current tab's stats: by_level on the system tab, by_severity
+// on audit/user. See FALLBACK_*_OPTIONS / optionsFromCounts above.
+const levelOptions = computed(() => optionsFromCounts(stats.value?.by_level, FALLBACK_LEVEL_OPTIONS))
+const severityOptions = computed(() => optionsFromCounts(stats.value?.by_severity, FALLBACK_SEVERITY_OPTIONS))
 
 function statsEndpointFor(tab: string): string {
   if (tab === 'system') return '/api/v2/admin/logs/system/stats'
@@ -302,6 +355,7 @@ onMounted(refreshAll)
               <DatePicker v-model="untilDate" dateFormat="yy-mm-dd" showIcon class="w-40" />
             </div>
             <Button icon="pi pi-search" label="Filter" severity="secondary" @click="page = 1; fetchLogs()" />
+            <Button icon="pi pi-filter-slash" label="Clear" severity="secondary" text @click="clearFilters" />
             <Button icon="pi pi-download" label="Export JSONL" severity="secondary" outlined
               :loading="exporting" @click="exportCurrent" />
           </div>
