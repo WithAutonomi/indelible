@@ -1,12 +1,25 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, watch, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
+import { useHealthStore } from '../stores/health'
 import Button from 'primevue/button'
 import Avatar from 'primevue/avatar'
 
 const auth = useAuthStore()
 const router = useRouter()
+const health = useHealthStore()
+
+// Poll antd/network health only while an admin is signed in — the status
+// banner and System view are admin-only, and /health is a cheap unauthenticated
+// probe. immediate so it kicks off as soon as the (already-authenticated)
+// layout mounts; the watcher also handles a role change within the session.
+watch(
+  () => auth.isAdmin,
+  (isAdmin) => (isAdmin ? health.start() : health.stop()),
+  { immediate: true },
+)
+onUnmounted(() => health.stop())
 
 const userName = computed(() => {
   if (!auth.user) return ''
@@ -43,6 +56,7 @@ const navItems = computed(() => {
       { label: 'Settings', icon: 'pi pi-cog', to: '/admin/settings' },
       { label: 'Analytics', icon: 'pi pi-chart-bar', to: '/admin/analytics' },
       { label: 'Logs', icon: 'pi pi-list', to: '/admin/logs' },
+      { label: 'System', icon: 'pi pi-server', to: '/admin/system' },
     )
   }
   return items
@@ -85,6 +99,31 @@ const navItems = computed(() => {
 
     <!-- Main content -->
     <main class="flex-1 overflow-auto">
+      <!-- Network/daemon health banner (admins only). The reported condition
+           is otherwise invisible in the UI — without this it only shows up in
+           the container logs. -->
+      <div
+        v-if="auth.isAdmin && health.networkDegraded"
+        class="flex items-center gap-3 px-6 py-3 bg-amber-50 border-b border-amber-200 text-amber-800 text-sm"
+        role="alert"
+      >
+        <i class="pi pi-exclamation-triangle text-amber-500"></i>
+        <span class="flex-1">
+          <template v-if="!health.serverReachable">
+            Can't reach the Indelible backend — the service may be down or restarting.
+          </template>
+          <template v-else>
+            The Autonomi daemon (antd) isn't reaching the network. Uploads and downloads
+            will fail until it reconnects.
+          </template>
+        </span>
+        <router-link
+          to="/admin/system"
+          class="font-medium underline hover:no-underline whitespace-nowrap"
+        >
+          View status
+        </router-link>
+      </div>
       <slot />
     </main>
   </div>
