@@ -34,10 +34,18 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     -o /indelible ./cmd/indelible
 
 # Runtime — non-root, persistent volume on /var/lib/indelible.
-FROM alpine:3.21
-RUN apk add --no-cache ca-certificates tzdata \
- && addgroup -g 65532 -S indelible \
- && adduser -u 65532 -S -G indelible -h /var/lib/indelible -s /sbin/nologin indelible \
+#
+# glibc base (NOT alpine/musl): the bundled antd daemon is a dynamically
+# linked glibc binary (interpreter /lib64/ld-linux-x86-64.so.2, NEEDED
+# libc.so.6). It cannot exec on a musl runtime — `exec .../antd: no such
+# file or directory`. indelible's own binary is static (CGO_ENABLED=0) and
+# runs anywhere, so debian-slim costs us nothing and lets antd run.
+FROM debian:trixie-slim
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates tzdata wget \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd -g 65532 indelible \
+ && useradd -u 65532 -g indelible -M -s /usr/sbin/nologin -d /var/lib/indelible indelible \
  && mkdir -p /var/lib/indelible \
  && chown -R indelible:indelible /var/lib/indelible
 COPY --from=backend /indelible /usr/local/bin/indelible
