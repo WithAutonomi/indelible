@@ -1,5 +1,15 @@
 # syntax=docker/dockerfile:1.7
 
+# antd daemon is bundled into the image so indelible ships as a complete,
+# self-sufficient product — the network daemon is essential to its function
+# regardless of which Autonomi network is targeted. Pulled from ant-sdk's
+# published multi-arch image (buildx selects the matching arch per target
+# platform); keep ANTD_IMAGE in lockstep with .antd-version. release.yml
+# passes the pinned tag explicitly; this default keeps `docker compose
+# up --build` and bare `docker build` working out of the box.
+ARG ANTD_IMAGE=ghcr.io/withautonomi/antd:v0.9.0
+FROM ${ANTD_IMAGE} AS antd
+
 # Build frontend on the native arch — JS output is arch-independent.
 FROM --platform=$BUILDPLATFORM node:22-alpine AS frontend
 WORKDIR /app/web
@@ -31,6 +41,15 @@ RUN apk add --no-cache ca-certificates tzdata \
  && mkdir -p /var/lib/indelible \
  && chown -R indelible:indelible /var/lib/indelible
 COPY --from=backend /indelible /usr/local/bin/indelible
+# Bundled antd daemon (see ANTD_IMAGE note at top). Lands in PATH with its
+# executable bit preserved, so indelible's managed mode (and a bare
+# `docker run`) can spawn it without an external daemon.
+COPY --from=antd /usr/local/bin/antd /usr/local/bin/antd
+# Be self-sufficient by default: a bare `docker run` of this image manages its
+# own antd child process and connects to mainnet with zero extra config.
+# docker-compose overrides this to "false" and points INDELIBLE_ANTD_URL at a
+# dedicated antd container so the daemon restarts independently.
+ENV INDELIBLE_ANTD_MANAGED=true
 USER indelible
 WORKDIR /var/lib/indelible
 VOLUME ["/var/lib/indelible"]
