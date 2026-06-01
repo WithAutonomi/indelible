@@ -144,6 +144,46 @@ const docTemplate = `{
                 }
             }
         },
+        "/admin/departments": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Return the distinct department labels in use across API tokens, for the quota dialog's department picker",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin: Quotas"
+                ],
+                "summary": "List known departments",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/admin/groups": {
             "get": {
                 "security": [

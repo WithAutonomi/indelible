@@ -7,11 +7,21 @@ import (
 	"github.com/WithAutonomi/indelible/internal/database"
 )
 
+// seedUserID creates a user and returns its id as the string entity_id a quota
+// references. Quota creation validates that user/group entities exist
+// (V2-396), so CRUD tests must reference a real user rather than a literal id.
+func seedUserID(t *testing.T, db *database.DB, email string) string {
+	t.Helper()
+	u := createTestUser(t, NewUserService(db), email, "T", "U")
+	return int64ToString(u.ID)
+}
+
 func TestQuotaCreate(t *testing.T) {
 	db := setupTestDB(t)
 	svc := NewQuotaService(db)
 
-	q, err := svc.Create("user", "42", 1073741824) // 1GB
+	uid := seedUserID(t, db, "create@example.com")
+	q, err := svc.Create("user", uid, 1073741824) // 1GB
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -21,8 +31,8 @@ func TestQuotaCreate(t *testing.T) {
 	if q.EntityType != "user" {
 		t.Errorf("expected entity_type=user, got %s", q.EntityType)
 	}
-	if !q.EntityID.Valid || q.EntityID.String != "42" {
-		t.Errorf("expected entity_id=42, got %v", q.EntityID)
+	if !q.EntityID.Valid || q.EntityID.String != uid {
+		t.Errorf("expected entity_id=%s, got %v", uid, q.EntityID)
 	}
 	if q.MaxBytes != 1073741824 {
 		t.Errorf("expected max_bytes=1073741824, got %d", q.MaxBytes)
@@ -52,14 +62,73 @@ func TestQuotaCreateDuplicate(t *testing.T) {
 	db := setupTestDB(t)
 	svc := NewQuotaService(db)
 
-	_, err := svc.Create("user", "1", 1000)
+	uid := seedUserID(t, db, "dup@example.com")
+	_, err := svc.Create("user", uid, 1000)
 	if err != nil {
 		t.Fatalf("Create first: %v", err)
 	}
 
-	_, err = svc.Create("user", "1", 2000)
+	_, err = svc.Create("user", uid, 2000)
 	if err != ErrQuotaDuplicate {
 		t.Errorf("expected ErrQuotaDuplicate, got %v", err)
+	}
+}
+
+func TestQuotaCreateEntityRequired(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewQuotaService(db)
+
+	for _, et := range []string{"user", "group", "department"} {
+		if _, err := svc.Create(et, "", 1000); err != ErrQuotaEntityRequired {
+			t.Errorf("Create(%q, \"\"): expected ErrQuotaEntityRequired, got %v", et, err)
+		}
+	}
+}
+
+func TestQuotaCreateEntityNotFound(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewQuotaService(db)
+
+	// A numeric but unknown user id, and a non-numeric id, both reject —
+	// otherwise the quota would be silently inert (V2-396).
+	for _, id := range []string{"99999", "not-a-number"} {
+		if _, err := svc.Create("user", id, 1000); err != ErrQuotaEntityNotFound {
+			t.Errorf("Create(user, %q): expected ErrQuotaEntityNotFound, got %v", id, err)
+		}
+	}
+	if _, err := svc.Create("group", "12345", 1000); err != ErrQuotaEntityNotFound {
+		t.Errorf("Create(group, unknown): expected ErrQuotaEntityNotFound, got %v", err)
+	}
+}
+
+func TestQuotaCreateGroupExists(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewQuotaService(db)
+	g, err := NewGroupService(db).Create("engineering", "", "read")
+	if err != nil {
+		t.Fatalf("group Create: %v", err)
+	}
+	if _, err := svc.Create("group", int64ToString(g.ID), 1000); err != nil {
+		t.Errorf("Create(group, existing): unexpected error %v", err)
+	}
+}
+
+func TestQuotaCreateDepartmentNotExistenceChecked(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewQuotaService(db)
+
+	// A department quota may be set before any token uses that department.
+	if _, err := svc.Create("department", "future-dept", 1000); err != nil {
+		t.Errorf("Create(department, free-text): unexpected error %v", err)
+	}
+}
+
+func TestQuotaCreateInvalidEntityType(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewQuotaService(db)
+
+	if _, err := svc.Create("bogus", "x", 1000); err != ErrQuotaInvalidEntityType {
+		t.Errorf("expected ErrQuotaInvalidEntityType, got %v", err)
 	}
 }
 
@@ -67,7 +136,8 @@ func TestQuotaGetByID(t *testing.T) {
 	db := setupTestDB(t)
 	svc := NewQuotaService(db)
 
-	created, _ := svc.Create("user", "5", 5000)
+	uid := seedUserID(t, db, "getbyid@example.com")
+	created, _ := svc.Create("user", uid, 5000)
 
 	got, err := svc.GetByID(created.ID)
 	if err != nil {
@@ -119,8 +189,8 @@ func TestQuotaList(t *testing.T) {
 	db := setupTestDB(t)
 	svc := NewQuotaService(db)
 
-	svc.Create("user", "1", 1000)
-	svc.Create("user", "2", 2000)
+	svc.Create("user", seedUserID(t, db, "list1@example.com"), 1000)
+	svc.Create("user", seedUserID(t, db, "list2@example.com"), 2000)
 	svc.Create("system", "", 50000)
 
 	quotas, err := svc.List()
@@ -136,9 +206,11 @@ func TestQuotaListOrdering(t *testing.T) {
 	db := setupTestDB(t)
 	svc := NewQuotaService(db)
 
-	svc.Create("user", "2", 2000)
+	u1 := seedUserID(t, db, "ord1@example.com")
+	u2 := seedUserID(t, db, "ord2@example.com")
+	svc.Create("user", u2, 2000)
 	svc.Create("system", "", 50000)
-	svc.Create("user", "1", 1000)
+	svc.Create("user", u1, 1000)
 
 	quotas, err := svc.List()
 	if err != nil {
@@ -157,7 +229,7 @@ func TestQuotaUpdate(t *testing.T) {
 	db := setupTestDB(t)
 	svc := NewQuotaService(db)
 
-	q, _ := svc.Create("user", "1", 1000)
+	q, _ := svc.Create("user", seedUserID(t, db, "update@example.com"), 1000)
 
 	updated, err := svc.Update(q.ID, 5000, false)
 	if err != nil {
@@ -175,7 +247,7 @@ func TestQuotaDelete(t *testing.T) {
 	db := setupTestDB(t)
 	svc := NewQuotaService(db)
 
-	q, _ := svc.Create("user", "1", 1000)
+	q, _ := svc.Create("user", seedUserID(t, db, "delete@example.com"), 1000)
 
 	err := svc.Delete(q.ID)
 	if err != nil {
@@ -422,7 +494,7 @@ func TestQuotaUpdateEnableDisable(t *testing.T) {
 	db := setupTestDB(t)
 	svc := NewQuotaService(db)
 
-	q, _ := svc.Create("user", "1", 1000)
+	q, _ := svc.Create("user", seedUserID(t, db, "enabledisable@example.com"), 1000)
 	if !q.IsEnabled {
 		t.Fatal("expected quota to be enabled by default")
 	}

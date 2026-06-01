@@ -762,6 +762,32 @@ paths:
       summary: Get upload analytics
       tags:
       - 'Admin: Analytics'
+  /admin/departments:
+    get:
+      description: Return the distinct department labels in use across API tokens,
+        for the quota dialog's department picker
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              items:
+                type: string
+              type: array
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List known departments
+      tags:
+      - 'Admin: Quotas'
   /admin/groups:
     get:
       description: Return all permission groups with member counts

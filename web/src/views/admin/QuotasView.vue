@@ -1,13 +1,12 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useConfirm } from 'primevue/useconfirm'
 import { useToast } from 'primevue/usetoast'
 import { api } from '../../api/client'
-import type { Quota } from '../../types/api'
+import type { Quota, User, Group } from '../../types/api'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import Button from 'primevue/button'
-import InputText from 'primevue/inputtext'
 import InputNumber from 'primevue/inputnumber'
 import Select from 'primevue/select'
 import ProgressBar from 'primevue/progressbar'
@@ -20,9 +19,16 @@ const quotas = ref<Quota[]>([])
 const loading = ref(true)
 const showCreate = ref(false)
 const newEntityType = ref('system')
-const newEntityId = ref('')
-const newMaxGB = ref<number>(10)
+// Holds a user/group id (number, via the picker) or a department label
+// (string, via the editable dropdown). Coerced to a string when posted.
+const newEntityId = ref<string | number | null>(null)
+const newMaxValue = ref<number>(10)
+const newUnit = ref<'MB' | 'GB'>('GB')
 const creating = ref(false)
+
+const allUsers = ref<User[]>([])
+const allGroups = ref<Group[]>([])
+const departments = ref<string[]>([])
 
 const entityTypeOptions = [
   { label: 'System', value: 'system' },
@@ -30,6 +36,32 @@ const entityTypeOptions = [
   { label: 'Group', value: 'group' },
   { label: 'Department', value: 'department' },
 ]
+
+const unitOptions = [
+  { label: 'MB', value: 'MB' },
+  { label: 'GB', value: 'GB' },
+]
+
+const UNIT_BYTES: Record<string, number> = { MB: 1048576, GB: 1073741824 }
+
+// Picker options. Showing the user's email / group name keeps admins from
+// having to know the numeric id (V2-396).
+const userOptions = computed(() => allUsers.value.map(u => ({ value: u.id, label: u.email })))
+const groupOptions = computed(() => allGroups.value.map(g => ({ value: g.id, label: g.name })))
+
+// A system quota applies to everyone, so it needs no entity. Everything else
+// requires one — otherwise the row matches nothing and enforces nothing (V2-397).
+const requiresEntity = computed(() => newEntityType.value !== 'system')
+const entityMissing = computed(
+  () => requiresEntity.value && (newEntityId.value === null || newEntityId.value === ''),
+)
+const canCreate = computed(() => !entityMissing.value && (newMaxValue.value || 0) > 0)
+
+// Reset the entity selection when the type changes — a user id is meaningless
+// once the type flips to group/department.
+watch(newEntityType, () => {
+  newEntityId.value = null
+})
 
 async function fetchQuotas() {
   loading.value = true
@@ -43,13 +75,28 @@ async function fetchQuotas() {
   }
 }
 
+// Populate the entity pickers. Each is best-effort: a failed fetch just leaves
+// that dropdown empty rather than blocking the dialog.
+async function fetchPickerData() {
+  try {
+    allUsers.value = (await api.get('/api/v2/admin/users')).data.users || []
+  } catch { /* empty user picker */ }
+  try {
+    allGroups.value = (await api.get('/api/v2/admin/groups')).data.groups || []
+  } catch { /* empty group picker */ }
+  try {
+    departments.value = (await api.get('/api/v2/admin/departments')).data.departments || []
+  } catch { /* empty department suggestions */ }
+}
+
 async function createQuota() {
+  if (!canCreate.value) return
   creating.value = true
   try {
     await api.post('/api/v2/admin/quotas', {
       entity_type: newEntityType.value,
-      entity_id: newEntityId.value || undefined,
-      max_bytes: (newMaxGB.value || 0) * 1073741824,
+      entity_id: requiresEntity.value ? String(newEntityId.value ?? '') : undefined,
+      max_bytes: Math.round((newMaxValue.value || 0) * UNIT_BYTES[newUnit.value]),
     })
     showCreate.value = false
     await fetchQuotas()
@@ -97,7 +144,10 @@ function usageSeverity(used: number, max: number): string | undefined {
   return undefined
 }
 
-onMounted(fetchQuotas)
+onMounted(() => {
+  fetchQuotas()
+  fetchPickerData()
+})
 </script>
 
 <template>
@@ -116,20 +166,37 @@ onMounted(fetchQuotas)
           <p class="text-xs text-surface-400 mb-2">What this quota applies to.</p>
           <Select v-model="newEntityType" :options="entityTypeOptions" optionLabel="label" optionValue="value" class="w-48" />
         </div>
-        <div>
-          <label class="text-sm font-medium block mb-1">Entity ID</label>
-          <p class="text-xs text-surface-400 mb-2">Leave empty for system-wide quota.</p>
-          <InputText v-model="newEntityId" placeholder="User/group ID" class="w-full" />
+        <div v-if="newEntityType === 'system'" class="text-xs text-surface-400">
+          A system quota applies to all storage across every user.
+        </div>
+        <div v-else>
+          <label class="text-sm font-medium block mb-1">
+            {{ newEntityType === 'user' ? 'User' : newEntityType === 'group' ? 'Group' : 'Department' }}
+          </label>
+          <p class="text-xs text-surface-400 mb-2">
+            {{ newEntityType === 'department'
+              ? 'Pick a known department or type a new one.'
+              : `Choose the ${newEntityType} this quota applies to.` }}
+          </p>
+          <Select v-if="newEntityType === 'user'" v-model="newEntityId" :options="userOptions"
+            optionLabel="label" optionValue="value" filter placeholder="Select a user" class="w-full" />
+          <Select v-else-if="newEntityType === 'group'" v-model="newEntityId" :options="groupOptions"
+            optionLabel="label" optionValue="value" filter placeholder="Select a group" class="w-full" />
+          <Select v-else v-model="newEntityId" :options="departments" editable
+            placeholder="Department name" class="w-full" />
         </div>
         <div>
-          <label class="text-sm font-medium block mb-1">Max Storage (GB)</label>
-          <p class="text-xs text-surface-400 mb-2">Maximum total stored data for this entity, in gigabytes — not a file count.</p>
-          <InputNumber v-model="newMaxGB" :min="1" suffix=" GB" class="w-40" />
+          <label class="text-sm font-medium block mb-1">Max Storage</label>
+          <p class="text-xs text-surface-400 mb-2">Maximum total stored data for this entity — not a file count.</p>
+          <div class="flex items-center gap-2">
+            <InputNumber v-model="newMaxValue" :min="1" class="w-32" />
+            <Select v-model="newUnit" :options="unitOptions" optionLabel="label" optionValue="value" class="w-24" />
+          </div>
         </div>
       </div>
       <template #footer>
         <Button label="Cancel" severity="secondary" text @click="showCreate = false" />
-        <Button :label="creating ? 'Creating...' : 'Create Quota'" :loading="creating" @click="createQuota" />
+        <Button :label="creating ? 'Creating...' : 'Create Quota'" :loading="creating" :disabled="!canCreate" @click="createQuota" />
       </template>
     </Dialog>
 

@@ -112,11 +112,16 @@ func AdminCreateQuota(db *database.DB) http.HandlerFunc {
 
 		quota, err := quotaSvc.Create(req.EntityType, req.EntityID, req.MaxBytes)
 		if err != nil {
-			if errors.Is(err, services.ErrQuotaDuplicate) {
+			switch {
+			case errors.Is(err, services.ErrQuotaDuplicate):
 				jsonError(w, "quota already exists for this entity", http.StatusConflict)
-				return
+			case errors.Is(err, services.ErrQuotaEntityRequired),
+				errors.Is(err, services.ErrQuotaEntityNotFound),
+				errors.Is(err, services.ErrQuotaInvalidEntityType):
+				jsonError(w, err.Error(), http.StatusBadRequest)
+			default:
+				jsonError(w, "failed to create quota", http.StatusInternalServerError)
 			}
-			jsonError(w, "failed to create quota", http.StatusInternalServerError)
 			return
 		}
 
@@ -125,6 +130,27 @@ func AdminCreateQuota(db *database.DB) http.HandlerFunc {
 			fmt.Sprintf("id=%d entity_type=%s entity_id=%s max_bytes=%d", quota.ID, req.EntityType, req.EntityID, req.MaxBytes))
 
 		jsonResponse(w, http.StatusCreated, toQuotaResponse(quota))
+	}
+}
+
+// @Summary      List known departments
+// @Description  Return the distinct department labels in use across API tokens, for the quota dialog's department picker
+// @Tags         Admin: Quotas
+// @Produce      json
+// @Success      200 {object} map[string][]string
+// @Failure      500 {object} map[string]string
+// @Router       /admin/departments [get]
+// @Security     BearerAuth
+func AdminListDepartments(db *database.DB) http.HandlerFunc {
+	quotaSvc := services.NewQuotaService(db)
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		depts, err := quotaSvc.Departments()
+		if err != nil {
+			jsonError(w, "failed to list departments", http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, http.StatusOK, map[string]any{"departments": depts})
 	}
 }
 
