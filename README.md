@@ -105,6 +105,17 @@ docker compose up --build
 
 The compose file's `volumes:` section uses the correct `/var/lib/indelible` data path inside the container; an SQLite-only single-service variant is documented in the comment block at the bottom of the file.
 
+The published `indelible` image **bundles the matching `antd` daemon** (pinned via [`.antd-version`](./.antd-version)), so it works standalone — a bare `docker run` manages its own antd and connects to mainnet with no extra config:
+
+```bash
+docker run -p 8080:8080 \
+  -e INDELIBLE_JWT_SECRET=$(openssl rand -hex 32) \
+  -e INDELIBLE_WALLET_ENCRYPTION_KEY=$(openssl rand -hex 32) \
+  ghcr.io/withautonomi/indelible:latest
+```
+
+The compose file deliberately runs `antd` as a *separate* container instead (and sets `INDELIBLE_ANTD_MANAGED=false`) so the daemon restarts independently of the app — preferred for long-running deployments.
+
 ## Key features
 
 | Area | Capabilities |

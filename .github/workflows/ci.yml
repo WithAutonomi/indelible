@@ -224,11 +224,15 @@ jobs:
           set -euo pipefail
           JWT_SECRET=$(openssl rand -hex 32)
           WALLET_KEY=$(openssl rand -hex 32)
+          # External mode: don't let the smoke container spawn antd and try to
+          # bootstrap mainnet from the runner. The bundled binary is asserted
+          # separately below.
           docker run --rm -d \
             --name indelible-smoke \
             -p 8080:8080 \
             -e INDELIBLE_JWT_SECRET="$JWT_SECRET" \
             -e INDELIBLE_WALLET_ENCRYPTION_KEY="$WALLET_KEY" \
+            -e INDELIBLE_ANTD_MANAGED=false \
             indelible:ci
           trap 'docker logs indelible-smoke || true; docker stop indelible-smoke || true' EXIT
           for i in $(seq 1 30); do
@@ -249,6 +253,13 @@ jobs:
             exit 1
           fi
           echo "non-root verified (uid=$uid)"
+          # The antd daemon must ship inside the image (regression guard): the
+          # product is non-functional without it, and managed mode / bare
+          # `docker run` rely on it being in PATH and executable. `--help`
+          # exits 0 and actually runs the binary, so this also catches an
+          # arch/libc mismatch in the bundled daemon.
+          docker exec indelible-smoke antd --help >/dev/null
+          echo "bundled antd present and executable"
 
       - name: Verify multi-arch build (linux/amd64 + linux/arm64, no load/push)
         uses: docker/build-push-action@v6

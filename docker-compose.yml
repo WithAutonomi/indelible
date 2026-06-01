@@ -39,6 +39,10 @@ services:
       INDELIBLE_WALLET_ENCRYPTION_KEY: ${INDELIBLE_WALLET_ENCRYPTION_KEY:?must be set, 64-char hex}
       # --- networking ---
       INDELIBLE_DB_URL: postgres://indelible:indelible@db:5432/indelible?sslmode=disable
+      # The indelible image bundles an antd binary (managed mode by default),
+      # but here we run antd as its own container so it restarts independently
+      # of the app. Disable managed mode and point at that container instead.
+      INDELIBLE_ANTD_MANAGED: "false"
       INDELIBLE_ANTD_URL: http://antd:8082
       # --- optional ---
       # INDELIBLE_CORS_ORIGINS: https://files.acme.com
@@ -59,14 +63,24 @@ services:
       retries: 3
 
   antd:
-    # Pinned to a known-good ant-sdk release. Bump alongside .antd-version
-    # so the bundled binary in indelible releases matches what containerised
-    # operators get from compose.
-    image: ghcr.io/withautonomi/antd:v0.9.0
+    # Run antd from indelible's own image. The upstream
+    # ghcr.io/withautonomi/antd image is musl-Alpine but the antd binary is a
+    # glibc executable, so it cannot exec inside its own image. indelible's
+    # image bundles the same antd on a glibc base, so reusing it here gives a
+    # working daemon AND guarantees this container's antd is byte-identical to
+    # the managed-mode copy. Bump via .antd-version (rebuild to pick up).
+    image: ghcr.io/withautonomi/indelible:latest
+    build: .
+    entrypoint: ["antd"]
+    environment:
+      # antd binds loopback-only by default; expose it so the indelible
+      # container can reach it at http://antd:8082.
+      ANTD_REST_ADDR: "0.0.0.0:8082"
     ports:
       - "8082:8082"
     volumes:
-      - antd-data:/var/lib/antd
+      # Writable home for uid 65532 (antd's peer/network cache).
+      - antd-data:/var/lib/indelible
     restart: unless-stopped
 
   db:
@@ -105,13 +119,18 @@ volumes:
 #         INDELIBLE_JWT_SECRET: ${INDELIBLE_JWT_SECRET}
 #         INDELIBLE_WALLET_ENCRYPTION_KEY: ${INDELIBLE_WALLET_ENCRYPTION_KEY}
 #         INDELIBLE_DB_URL: sqlite:///var/lib/indelible/data.db
+#         INDELIBLE_ANTD_MANAGED: "false"
 #         INDELIBLE_ANTD_URL: http://antd:8082
 #       depends_on:
 #         - antd
 #     antd:
-#       image: ghcr.io/withautonomi/antd:v0.9.0
+#       image: ghcr.io/withautonomi/indelible:latest
+#       build: .
+#       entrypoint: ["antd"]
+#       environment:
+#         ANTD_REST_ADDR: "0.0.0.0:8082"
 #       ports: ["8082:8082"]
-#       volumes: ["antd-data:/var/lib/antd"]
+#       volumes: ["antd-data:/var/lib/indelible"]
 #   volumes:
 #     indelible-data:
 #     antd-data:

@@ -188,7 +188,10 @@ jobs:
 
   docker:
     name: Docker (multi-arch build + push)
-    needs: [release-meta]
+    # Depends on resolve-antd-version so the antd bundled INTO the image is the
+    # same tag bundled as a binary in the release tarballs (honors the
+    # workflow_dispatch antd_version override too).
+    needs: [release-meta, resolve-antd-version]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -221,6 +224,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           build-args: |
             VERSION=${{ needs.release-meta.outputs.version }}
+            ANTD_IMAGE=ghcr.io/withautonomi/antd:${{ needs.resolve-antd-version.outputs.antd_tag }}
           tags: |
             ghcr.io/withautonomi/indelible:${{ needs.release-meta.outputs.version }}
             withautonomi/indelible:${{ needs.release-meta.outputs.version }}
