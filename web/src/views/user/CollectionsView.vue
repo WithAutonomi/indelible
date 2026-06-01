@@ -11,7 +11,6 @@ import InputText from 'primevue/inputtext'
 import Dialog from 'primevue/dialog'
 import Card from 'primevue/card'
 import Skeleton from 'primevue/skeleton'
-import ConfirmDialog from 'primevue/confirmdialog'
 
 const confirm = useConfirm()
 const toast = useToast()
@@ -26,6 +25,9 @@ const creating = ref(false)
 const selectedCollection = ref<Collection | null>(null)
 const collectionFiles = ref<CollectionFile[]>([])
 const loadingFiles = ref(false)
+const filesPage = ref(1)
+const filesTotal = ref(0)
+const filesLimit = 20
 
 async function fetchCollections() {
   loading.value = true
@@ -60,15 +62,30 @@ async function createCollection() {
 
 async function selectCollection(c: Collection) {
   selectedCollection.value = c
+  filesPage.value = 1
+  await fetchCollectionFiles()
+}
+
+async function fetchCollectionFiles() {
+  if (!selectedCollection.value) return
   loadingFiles.value = true
   try {
-    const res = await api.get(`/api/v2/collections/${c.id}`)
+    const res = await api.get(`/api/v2/collections/${selectedCollection.value.id}`, {
+      params: { limit: filesLimit, offset: (filesPage.value - 1) * filesLimit },
+    })
     collectionFiles.value = res.data.files || []
+    filesTotal.value = res.data.total_files || 0
   } catch {
     collectionFiles.value = []
+    filesTotal.value = 0
   } finally {
     loadingFiles.value = false
   }
+}
+
+function onFilesPage(event: any) {
+  filesPage.value = event.page + 1
+  fetchCollectionFiles()
 }
 
 function deleteCollection(id: number) {
@@ -105,8 +122,8 @@ async function openAddFile() {
     const res = await api.get('/api/v2/uploads', { params: { limit: 100 } })
     const uploads = res.data.uploads || []
     // Filter to completed uploads not already in the collection
-    const existingIds = new Set(collectionFiles.value.map((f: CollectionFile) => f.upload_uuid))
-    availableUploads.value = uploads.filter((u: Upload) => u.status === 'completed' && !existingIds.has(u.uuid))
+    const existingIds = new Set(collectionFiles.value.map((f: CollectionFile) => f.uuid))
+    availableUploads.value = uploads.filter((u: Upload) => (u.status === 'completed' || u.status === 'already_stored') && !existingIds.has(u.uuid))
   } catch {
     availableUploads.value = []
   } finally {
@@ -124,6 +141,7 @@ async function addFileToCollection(uploadUuid: string) {
     // Refresh the collection files and available list
     availableUploads.value = availableUploads.value.filter((u: Upload) => u.uuid !== uploadUuid)
     await selectCollection(selectedCollection.value)
+    await fetchCollections()
     toast.add({ severity: 'success', summary: 'Added', detail: 'File added to collection', life: 3000 })
   } catch (e: any) {
     toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to add file', life: 5000 })
@@ -132,7 +150,7 @@ async function addFileToCollection(uploadUuid: string) {
   }
 }
 
-function removeFile(uploadId: string) {
+function removeFile(uploadUuid: string) {
   if (!selectedCollection.value) return
   confirm.require({
     message: 'Remove this file from the collection?',
@@ -141,8 +159,9 @@ function removeFile(uploadId: string) {
     acceptClass: 'p-button-danger',
     accept: async () => {
       try {
-        await api.delete(`/api/v2/collections/${selectedCollection.value!.id}/files/${uploadId}`)
-        collectionFiles.value = collectionFiles.value.filter((f: CollectionFile) => f.upload_uuid !== uploadId)
+        await api.delete(`/api/v2/collections/${selectedCollection.value!.id}/files/${uploadUuid}`)
+        await fetchCollectionFiles()
+        await fetchCollections()
         toast.add({ severity: 'success', summary: 'Removed', detail: 'File removed from collection', life: 3000 })
       } catch {
         toast.add({ severity: 'error', summary: 'Error', detail: 'Failed to remove file', life: 5000 })
@@ -156,7 +175,6 @@ onMounted(fetchCollections)
 
 <template>
   <div class="p-6">
-    <ConfirmDialog />
 
     <div class="flex items-center justify-between mb-6">
       <h1 class="text-2xl font-bold">Collections</h1>
@@ -222,22 +240,26 @@ onMounted(fetchCollections)
                 </div>
                 <Button label="Add File" icon="pi pi-plus" size="small" outlined @click="openAddFile" />
               </div>
-              <DataTable :value="collectionFiles" :loading="loadingFiles" stripedRows>
+              <DataTable :value="collectionFiles" :loading="loadingFiles" stripedRows
+                paginator :rows="filesLimit" :totalRecords="filesTotal" :lazy="true" @page="onFilesPage"
+                paginatorTemplate="FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink CurrentPageReport"
+                currentPageReportTemplate="Showing {first} to {last} of {totalRecords}">
                 <template #empty>No files in this collection yet.</template>
-                <Column field="original_name" header="Name" sortable>
+                <Column field="original_filename" header="Name">
                   <template #body="{ data }">
-                    <span class="font-medium">{{ data.original_name || data.upload_uuid }}</span>
+                    <span class="font-medium">{{ data.original_filename || data.uuid }}</span>
                   </template>
                 </Column>
-                <Column field="added_at" header="Added" sortable>
+                <Column field="added_at" header="Added">
                   <template #body="{ data }">
-                    <span class="text-gray-400">{{ new Date(data.added_at).toLocaleDateString() }}</span>
+                    <span class="text-gray-400">{{ data.added_at ? new Date(data.added_at).toLocaleDateString() : '—' }}</span>
                   </template>
                 </Column>
-                <Column header="Actions">
+                <Column header="Actions" style="width: 5rem">
                   <template #body="{ data }">
-                    <Button label="Remove" icon="pi pi-times" text severity="danger" size="small"
-                      @click="removeFile(data.upload_uuid)" />
+                    <Button icon="pi pi-times" text rounded size="small" severity="secondary"
+                      aria-label="Remove from collection" v-tooltip.top="'Remove from collection'"
+                      @click="removeFile(data.uuid)" />
                   </template>
                 </Column>
               </DataTable>

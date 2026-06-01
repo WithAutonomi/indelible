@@ -187,7 +187,12 @@ func (w *UploadWorker) processOne(ctx context.Context, upload *services.Upload) 
 		if lastErr == nil {
 			w.prepareFailures = 0
 			w.circuitCooldown = circuitBreakerBaseCooldown
-			upload.Status = "completed"
+			// processUpload set upload.Status to "completed" or, for a
+			// content-addressed dedup (V2-399), "already_stored". Fire the
+			// success event with whichever status it landed on.
+			if upload.Status != "completed" && upload.Status != "already_stored" {
+				upload.Status = "completed"
+			}
 			w.webhookSvc.FireUploadEvent("completed", upload)
 			w.cleanupTempFile(upload)
 			return
@@ -385,13 +390,19 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		txHash = winnerHash
 
 	default: // "wave_batch" or empty (backward compat)
-		// Phase 2: Sign wave-batch payment
-		txHashes, err := w.evmSigner.PayForQuotes(ctx, walletKey, prepared.Payments, tokenAddr, prepared.PaymentVaultAddress)
-		if err != nil {
-			return fmt.Errorf("EVM payment failed: %w", err)
+		// Phase 2: Sign wave-batch payment. When prepare returns no quotes,
+		// every chunk is already on-network (content-addressed dedup) — there's
+		// nothing to pay, so skip signing an empty batch and finalize directly.
+		var txHashes map[string]string
+		if len(prepared.Payments) > 0 {
+			txHashes, err = w.evmSigner.PayForQuotes(ctx, walletKey, prepared.Payments, tokenAddr, prepared.PaymentVaultAddress)
+			if err != nil {
+				return fmt.Errorf("EVM payment failed: %w", err)
+			}
+			slog.Info("EVM payment submitted", "uuid", upload.UUID, "tx_count", len(txHashes), "total", prepared.TotalAmount)
+		} else {
+			slog.Info("no quotes to pay — chunks already stored", "uuid", upload.UUID)
 		}
-
-		slog.Info("EVM payment submitted", "uuid", upload.UUID, "tx_count", len(txHashes), "total", prepared.TotalAmount)
 
 		// Phase 3: Finalize wave-batch upload
 		result, err = w.antdClient.FinalizeUpload(ctx, prepared.UploadID, txHashes, false)
@@ -408,16 +419,38 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 	// Mark upload completed. Public uploads have a published DataMap address
 	// (the bundled DataMap chunk's on-network address); private uploads carry
 	// the raw hex-encoded DataMap stored locally.
+	//
+	// ChunksStored == 0 means every chunk was already on the network — a
+	// content-addressed dedup (idempotent re-upload). Record it as
+	// "already_stored" so the UI reads "already on network" rather than a fresh
+	// store; nothing was paid (empty quote batch). (V2-399)
+	alreadyStored := result.ChunksStored == 0
 	if upload.Visibility == "public" {
 		if result.DataMapAddress == "" {
 			return fmt.Errorf("Daemon did not return data_map_address for public upload — antd >= 0.6.1 required")
 		}
-		if err := w.uploadSvc.MarkCompletedPublic(upload.ID, result.DataMapAddress, paidAmount); err != nil {
-			return fmt.Errorf("Failed to save upload record")
+		if alreadyStored {
+			upload.Status = "already_stored"
+			if err := w.uploadSvc.MarkAlreadyStoredPublic(upload.ID, result.DataMapAddress, paidAmount); err != nil {
+				return fmt.Errorf("Failed to save upload record")
+			}
+		} else {
+			upload.Status = "completed"
+			if err := w.uploadSvc.MarkCompletedPublic(upload.ID, result.DataMapAddress, paidAmount); err != nil {
+				return fmt.Errorf("Failed to save upload record")
+			}
 		}
 	} else {
-		if err := w.uploadSvc.MarkCompleted(upload.ID, result.DataMap, paidAmount); err != nil {
-			return fmt.Errorf("Failed to save upload record")
+		if alreadyStored {
+			upload.Status = "already_stored"
+			if err := w.uploadSvc.MarkAlreadyStored(upload.ID, result.DataMap, paidAmount); err != nil {
+				return fmt.Errorf("Failed to save upload record")
+			}
+		} else {
+			upload.Status = "completed"
+			if err := w.uploadSvc.MarkCompleted(upload.ID, result.DataMap, paidAmount); err != nil {
+				return fmt.Errorf("Failed to save upload record")
+			}
 		}
 	}
 

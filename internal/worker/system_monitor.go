@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -40,7 +41,18 @@ type SystemMonitor struct {
 
 	// Worker liveness tracking
 	lastDequeueTime time.Time
+
+	// antd_health consecutive soft-failure counter (slow/timeout/overlay).
+	// Only touched by the fast-checks goroutine (serialized by its ticker), so
+	// it needs no lock. Escalates to critical only after a sustained streak so
+	// a single slow quote probe doesn't fire a false critical (V2-394).
+	antdSoftFailures int
 }
+
+// antdHealthCriticalThreshold is the number of consecutive slow/degraded antd
+// probes required before escalating antd_health from warning to critical.
+// Process-down (transport failure) bypasses this and goes critical immediately.
+const antdHealthCriticalThreshold = 3
 
 // NewSystemMonitor creates a new consolidated system monitor.
 func NewSystemMonitor(db *database.DB, cfg *config.Config) *SystemMonitor {
@@ -147,13 +159,56 @@ func (m *SystemMonitor) checkAntdHealth() {
 	// downloads will fail, so we surface them under the same alert.
 	// Payload must be >= 3 bytes: antd's self-encryption rejects smaller.
 	probe := antd.NewClient(m.cfg.AntdURL, antd.WithTimeout(probeTimeout))
-	if _, err := probe.DataCost(ctx, []byte{0, 0, 0}, antd.PaymentModeAuto); err != nil {
-		m.fireAlert("antd_health", "critical", "antd_unreachable",
-			"antd cannot reach the Autonomi network at "+m.cfg.AntdURL, 0)
-	} else {
+	_, err := probe.DataCost(ctx, []byte{0, 0, 0}, antd.PaymentModeAuto)
+	if err == nil {
+		m.antdSoftFailures = 0
 		m.clearAlert("antd_health", "antd_recovered",
 			"antd is connected to the Autonomi network again", 0)
+		return
 	}
+
+	// Process-down / unreachable (transport failure, not a daemon response) is
+	// unambiguous — alert critical immediately.
+	if isAntdHardDown(err) {
+		m.fireAlert("antd_health", "critical", "antd_unreachable",
+			"antd is unreachable at "+m.cfg.AntdURL+" (connection failed): "+err.Error(), 0)
+		return
+	}
+
+	// Soft failure: the daemon responded but is slow (quote timeout) or reports
+	// the overlay as temporarily unavailable (502/503). These are routinely
+	// transient — a single slow quote round-trip used to fire a false critical
+	// that self-cleared on the next tick. Hold at warning and only escalate to
+	// critical after a sustained streak.
+	m.antdSoftFailures++
+	if m.antdSoftFailures >= antdHealthCriticalThreshold {
+		m.fireAlert("antd_health", "critical", "antd_unreachable",
+			fmt.Sprintf("antd cannot reach the Autonomi network at %s — %d consecutive failed probes",
+				m.cfg.AntdURL, m.antdSoftFailures), float64(m.antdSoftFailures))
+	} else {
+		m.fireAlert("antd_health", "warning", "antd_unreachable",
+			fmt.Sprintf("antd network probe slow/degraded at %s (%d/%d before critical): %s",
+				m.cfg.AntdURL, m.antdSoftFailures, antdHealthCriticalThreshold, err.Error()),
+			float64(m.antdSoftFailures))
+	}
+}
+
+// isAntdHardDown reports whether a probe error means antd itself is unreachable
+// (process down, connection refused, DNS) rather than running-but-slow. The SDK
+// only returns its typed NetworkError (502) / ServiceUnavailableError (503)
+// when it actually got an HTTP response, and a context deadline means the
+// daemon is just slow — all "up but degraded". Anything else is a transport
+// failure: antd is down.
+func isAntdHardDown(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var netErr *antd.NetworkError
+	var unavailErr *antd.ServiceUnavailableError
+	if errors.As(err, &netErr) || errors.As(err, &unavailErr) {
+		return false
+	}
+	return true
 }
 
 func (m *SystemMonitor) checkEvmRpcHealth() {

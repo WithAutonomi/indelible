@@ -645,7 +645,9 @@ func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		if upload.Status != "completed" {
+		// "already_stored" (content-addressed dedup) is just as retrievable as
+		// "completed" — both have a usable DataMap/address on the network.
+		if upload.Status != "completed" && upload.Status != "already_stored" {
 			jsonError(w, fmt.Sprintf("upload is %s, not ready for download", upload.Status), http.StatusConflict)
 			return
 		}

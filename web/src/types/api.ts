@@ -7,7 +7,7 @@ export interface Upload {
   file_size: number
   content_type: string
   visibility: 'public' | 'private'
-  status: 'queued' | 'processing' | 'completed' | 'failed'
+  status: 'queued' | 'processing' | 'completed' | 'already_stored' | 'failed'
   status_detail?: string
   datamap_address?: string
   estimated_cost?: string
@@ -34,9 +34,11 @@ export interface Collection {
 }
 
 export interface CollectionFile {
-  upload_uuid: string
-  original_name: string
+  uuid: string
+  original_filename: string
   added_at: string
+  status?: string
+  file_size?: number
 }
 
 export interface User {

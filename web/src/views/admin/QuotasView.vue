@@ -12,7 +12,6 @@ import InputNumber from 'primevue/inputnumber'
 import Select from 'primevue/select'
 import ProgressBar from 'primevue/progressbar'
 import Dialog from 'primevue/dialog'
-import ConfirmDialog from 'primevue/confirmdialog'
 
 const confirm = useConfirm()
 const toast = useToast()
@@ -103,7 +102,6 @@ onMounted(fetchQuotas)
 
 <template>
   <div class="p-6">
-    <ConfirmDialog />
 
     <div class="flex items-center justify-between mb-6">
       <h1 class="text-2xl font-bold">Storage Quotas</h1>
@@ -124,12 +122,9 @@ onMounted(fetchQuotas)
           <InputText v-model="newEntityId" placeholder="User/group ID" class="w-full" />
         </div>
         <div>
-          <label class="text-sm font-medium block mb-1">Max Storage</label>
-          <p class="text-xs text-surface-400 mb-2">Maximum storage allowed for this entity.</p>
-          <div class="flex items-center gap-2">
-            <InputNumber v-model="newMaxGB" :min="1" class="w-32" />
-            <span class="text-sm text-surface-400">GB</span>
-          </div>
+          <label class="text-sm font-medium block mb-1">Max Storage (GB)</label>
+          <p class="text-xs text-surface-400 mb-2">Maximum total stored data for this entity, in gigabytes — not a file count.</p>
+          <InputNumber v-model="newMaxGB" :min="1" suffix=" GB" class="w-40" />
         </div>
       </div>
       <template #footer>

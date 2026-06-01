@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useConfirm } from 'primevue/useconfirm'
 import { useToast } from 'primevue/usetoast'
@@ -17,7 +17,7 @@ import Dialog from 'primevue/dialog'
 import AutoComplete from 'primevue/autocomplete'
 import Skeleton from 'primevue/skeleton'
 import Message from 'primevue/message'
-import ConfirmDialog from 'primevue/confirmdialog'
+import Drawer from 'primevue/drawer'
 
 const auth = useAuthStore()
 const router = useRouter()
@@ -41,6 +41,20 @@ const page = ref(1)
 const total = ref(0)
 const limit = 20
 const bulkProcessing = ref(false)
+
+// Server-side sort state for the lazy DataTable. sortOrder follows PrimeVue's
+// convention: 1 = asc, -1 = desc.
+const sortField = ref('')
+const sortOrder = ref(-1)
+// DataTable column `field` -> backend sort key (the /uploads whitelist accepts
+// created_at | file_size | filename | status; the Name column's field is
+// original_filename).
+const SORT_FIELD_MAP: Record<string, string> = {
+  original_filename: 'filename',
+  file_size: 'file_size',
+  status: 'status',
+  created_at: 'created_at',
+}
 
 const tagKey = ref('')
 const tagValue = ref('')
@@ -154,9 +168,12 @@ async function handleUpload() {
 async function fetchUploads() {
   loading.value = true
   try {
-    const res = await api.get('/api/v2/uploads', {
-      params: { limit, offset: (page.value - 1) * limit },
-    })
+    const params: any = { limit, offset: (page.value - 1) * limit }
+    if (sortField.value) {
+      const backendField = SORT_FIELD_MAP[sortField.value] || sortField.value
+      params.sort = `${backendField}:${sortOrder.value === 1 ? 'asc' : 'desc'}`
+    }
+    const res = await api.get('/api/v2/uploads', { params })
     uploads.value = res.data.uploads || []
     total.value = res.data.total || 0
   } catch {
@@ -177,13 +194,90 @@ async function searchByTags() {
       params.q = searchQuery.value
     }
     const res = await api.get('/api/v2/tags/search', { params })
-    uploads.value = res.data.uploads || []
-    total.value = uploads.value.length
+    // /tags/search returns { results: [{ upload, tags }], total } — not the
+    // { uploads, total } shape that /uploads uses. Reading the wrong key here
+    // made every search silently clear the table.
+    const results = res.data.results || []
+    uploads.value = results.map((r: any) => r.upload)
+    total.value = res.data.total ?? uploads.value.length
   } catch {
     // ignore
   } finally {
     loading.value = false
   }
+}
+
+// Unified search entry point. Empty criteria restores the full paginated list;
+// otherwise hit the search endpoint. Wired to the button, Enter, and a
+// debounced watch so the bar responds however the user drives it.
+function runSearch() {
+  if (!searchQuery.value.trim() && !(tagKey.value && tagValue.value)) {
+    page.value = 1
+    fetchUploads()
+  } else {
+    searchByTags()
+  }
+}
+
+let searchTimer: ReturnType<typeof setTimeout> | null = null
+watch(searchQuery, () => {
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = setTimeout(runSearch, 300)
+})
+
+// --- Per-file detail panel (V2-403): right-side Drawer opened on row click.
+// Core fields come straight from the clicked row; tags + collection membership
+// are fetched lazily. ---
+const detailVisible = ref(false)
+const detail = ref<Upload | null>(null)
+const detailTags = ref<{ key: string; value: string }[]>([])
+const detailCollections = ref<string[]>([])
+const detailLoading = ref(false)
+let collectionNameCache: Record<number, string> | null = null
+
+async function openDetail(row: Upload) {
+  detail.value = row
+  detailVisible.value = true
+  detailTags.value = []
+  detailCollections.value = []
+  detailLoading.value = true
+  try {
+    const [tagsRes, collRes] = await Promise.all([
+      api.get(`/api/v2/uploads/${row.uuid}/tags`),
+      api.get(`/api/v2/uploads/${row.uuid}/collections`),
+    ])
+    const tagMap = tagsRes.data.tags || {}
+    detailTags.value = Object.entries(tagMap).map(([key, value]) => ({ key, value: value as string }))
+    const ids: number[] = collRes.data.collection_ids || []
+    if (ids.length) {
+      if (!collectionNameCache) {
+        const cs = await api.get('/api/v2/collections')
+        collectionNameCache = {}
+        for (const c of (cs.data.collections || []) as Collection[]) collectionNameCache[c.id] = c.name
+      }
+      detailCollections.value = ids.map((id) => collectionNameCache?.[id] ?? `#${id}`)
+    }
+  } catch {
+    // Core fields still render from the row data even if tags/collections fail.
+  } finally {
+    detailLoading.value = false
+  }
+}
+
+async function copyDatamap(text: string) {
+  try {
+    await navigator.clipboard?.writeText(text)
+    if (!navigator.clipboard) throw new Error('clipboard unavailable')
+    toast.add({ severity: 'success', summary: 'Copied', detail: 'Address copied to clipboard', life: 2000 })
+  } catch {
+    toast.add({ severity: 'error', summary: 'Copy failed', detail: 'Select the address and copy manually.', life: 5000 })
+  }
+}
+
+function fmtDateTime(s?: string): string {
+  if (!s) return '—'
+  const d = new Date(s)
+  return isNaN(d.getTime()) ? '—' : d.toLocaleString()
 }
 
 const downloading = ref<string | null>(null)
@@ -264,7 +358,7 @@ function deleteUpload(uuid: string) {
 
 // Bulk operations
 function bulkDelete() {
-  const targets = selectedUploads.value.filter(u => u.status === 'completed' || u.status === 'failed')
+  const targets = selectedUploads.value.filter(u => u.status === 'completed' || u.status === 'already_stored' || u.status === 'failed')
   if (!targets.length) return
   confirm.require({
     message: `Delete ${targets.length} upload${targets.length === 1 ? '' : 's'}? This cannot be undone.`,
@@ -443,6 +537,7 @@ function statusSeverity(status: string, detail?: string): string {
   if (detail === 'gas_backoff') return 'warn'
   switch (status) {
     case 'completed': return 'success'
+    case 'already_stored': return 'info'
     case 'failed': return 'danger'
     case 'processing': return 'warn'
     default: return 'info'
@@ -453,11 +548,22 @@ function statusLabel(u: any) {
   if (u.status_detail === 'gas_backoff') {
     return `waiting (gas high, attempt ${u.backoff_attempt})`
   }
+  if (u.status === 'already_stored') return 'already on network'
   return u.status
 }
 
 function onPage(event: any) {
   page.value = event.page + 1
+  fetchUploads()
+}
+
+// Lazy DataTable disables client-side sort — handle the event and re-fetch
+// sorted from the server. Sorting applies to the full list (the /uploads
+// endpoint), so it falls back from any active tag/filename search.
+function onSort(event: any) {
+  sortField.value = event.sortField || ''
+  sortOrder.value = event.sortOrder || -1
+  page.value = 1
   fetchUploads()
 }
 
@@ -469,7 +575,6 @@ onMounted(() => {
 
 <template>
   <div class="p-6">
-    <ConfirmDialog />
 
     <h1 class="text-2xl font-bold mb-6">Uploads</h1>
 
@@ -523,7 +628,8 @@ onMounted(() => {
         <div class="flex flex-wrap gap-3 items-end">
           <div>
             <label class="block text-xs text-gray-500 mb-1">Filename</label>
-            <InputText v-model="searchQuery" placeholder="Search..." size="small" class="w-48" />
+            <InputText v-model="searchQuery" placeholder="Search filename..." size="small" class="w-48"
+              @keyup.enter="runSearch" />
           </div>
           <div>
             <label class="block text-xs text-gray-500 mb-1">Tag Key</label>
@@ -535,7 +641,7 @@ onMounted(() => {
             <AutoComplete v-model="tagValue" :suggestions="tagValueSuggestions" @complete="searchTagValues"
               placeholder="e.g. alpha" dropdown size="small" class="w-40" />
           </div>
-          <Button label="Search" icon="pi pi-search" severity="secondary" size="small" @click="searchByTags" />
+          <Button label="Search" icon="pi pi-search" severity="secondary" size="small" @click="runSearch" />
           <Button label="Clear" text size="small"
             @click="tagKey = ''; tagValue = ''; searchQuery = ''; fetchUploads()" />
         </div>
@@ -546,7 +652,7 @@ onMounted(() => {
     <div v-if="selectedUploads.length" class="mb-2 flex items-center gap-3 px-4 py-2 bg-primary-50 rounded-lg border border-primary-200">
       <span class="text-sm font-medium">{{ selectedUploads.length }} selected</span>
       <Button label="Delete" icon="pi pi-trash" severity="danger" size="small" outlined
-        :loading="bulkProcessing" :disabled="!selectedUploads.some(u => u.status === 'completed' || u.status === 'failed')"
+        :loading="bulkProcessing" :disabled="!selectedUploads.some(u => u.status === 'completed' || u.status === 'already_stored' || u.status === 'failed')"
         @click="bulkDelete" />
       <Button label="Retry" icon="pi pi-refresh" severity="warn" size="small" outlined
         :loading="bulkProcessing" :disabled="!selectedUploads.some(u => u.status === 'failed')"
@@ -559,6 +665,7 @@ onMounted(() => {
       <template #content>
         <DataTable :value="uploads" v-model:selection="selectedUploads" :loading="loading" stripedRows
           paginator :rows="limit" :totalRecords="total" :lazy="true" @page="onPage"
+          :sortField="sortField" :sortOrder="sortOrder" @sort="onSort"
           paginatorTemplate="FirstPageLink PrevPageLink PageLinks NextPageLink LastPageLink CurrentPageReport"
           currentPageReportTemplate="Showing {first} to {last} of {totalRecords}"
           dataKey="uuid"
@@ -567,7 +674,8 @@ onMounted(() => {
           <Column selectionMode="multiple" headerStyle="width: 3rem" />
           <Column field="original_filename" header="Name" sortable>
             <template #body="{ data }">
-              <span :class="data.visibility === 'public' ? 'text-amber-600 font-medium' : ''">
+              <span :class="['cursor-pointer hover:underline', data.visibility === 'public' ? 'text-amber-600 font-medium' : '']"
+                @click="openDetail(data)" v-tooltip.top="'View details'">
                 {{ data.original_filename }}
               </span>
               <i v-if="data.visibility === 'public'" class="pi pi-info-circle text-amber-500 ml-1.5 text-xs"
@@ -596,14 +704,14 @@ onMounted(() => {
             <template #body="{ data }">
               <div class="flex gap-1 items-center">
                 <!-- Completed: download, delete -->
-                <Button v-if="data.status === 'completed'" icon="pi pi-download" label="Download"
+                <Button v-if="data.status === 'completed' || data.status === 'already_stored'" icon="pi pi-download" label="Download"
                   outlined size="small"
                   :loading="downloading === data.uuid" @click="download(data.uuid, data.original_filename)" />
-                <Button v-if="data.status === 'completed'" icon="pi pi-tag" text rounded size="small"
+                <Button v-if="data.status === 'completed' || data.status === 'already_stored'" icon="pi pi-tag" text rounded size="small"
                   severity="secondary" aria-label="Tags" @click="openTags(data.uuid, data.original_filename)" v-tooltip.top="'Tags'" />
-                <Button v-if="data.status === 'completed'" icon="pi pi-folder" text rounded size="small"
+                <Button v-if="data.status === 'completed' || data.status === 'already_stored'" icon="pi pi-folder" text rounded size="small"
                   severity="secondary" aria-label="Add to Collection" @click="openCollections(data.uuid, data.original_filename)" v-tooltip.top="'Add to Collection'" />
-                <Button v-if="data.status === 'completed'" icon="pi pi-trash" text rounded size="small"
+                <Button v-if="data.status === 'completed' || data.status === 'already_stored'" icon="pi pi-trash" text rounded size="small"
                   severity="secondary" aria-label="Delete" @click="deleteUpload(data.uuid)" v-tooltip.top="'Delete'" />
 
                 <!-- Queued (not backoff): cancel -->
@@ -690,5 +798,96 @@ onMounted(() => {
         </div>
       </div>
     </Dialog>
+
+    <!-- Per-file detail panel (V2-403) -->
+    <Drawer v-model:visible="detailVisible" position="right" :style="{ width: '30rem' }"
+      :header="detail?.original_filename || 'File details'">
+      <div v-if="detail" class="flex flex-col gap-5 text-sm">
+        <!-- Identity -->
+        <section>
+          <h3 class="text-xs font-semibold uppercase text-surface-400 mb-2">Identity</h3>
+          <dl class="flex flex-col gap-2">
+            <div class="flex justify-between gap-3">
+              <dt class="text-surface-500">UUID</dt>
+              <dd class="font-mono text-surface-700 truncate flex items-center gap-1 min-w-0">
+                <span class="truncate">{{ detail.uuid }}</span>
+                <Button icon="pi pi-copy" text rounded size="small" aria-label="Copy UUID"
+                  v-tooltip.top="'Copy'" @click="copyDatamap(detail.uuid)" />
+              </dd>
+            </div>
+            <div class="flex justify-between gap-3"><dt class="text-surface-500">Type</dt><dd>{{ detail.content_type || '—' }}</dd></div>
+            <div class="flex justify-between gap-3">
+              <dt class="text-surface-500">Visibility</dt>
+              <dd><Tag :value="detail.visibility" :severity="detail.visibility === 'public' ? 'warn' : 'secondary'" /></dd>
+            </div>
+            <div class="flex justify-between gap-3"><dt class="text-surface-500">Size</dt><dd>{{ formatSize(detail.file_size) }}</dd></div>
+          </dl>
+        </section>
+
+        <!-- Network address -->
+        <section>
+          <h3 class="text-xs font-semibold uppercase text-surface-400 mb-2">Network address</h3>
+          <div v-if="detail.datamap_address" class="flex flex-col gap-1.5">
+            <code class="bg-surface-100 px-2 py-1 rounded font-mono text-xs break-all">{{ detail.datamap_address }}</code>
+            <div class="flex items-center gap-3">
+              <Button icon="pi pi-copy" label="Copy address" text size="small" @click="copyDatamap(detail.datamap_address)" />
+              <a v-if="detail.visibility === 'public'" :href="`autonomi://${detail.datamap_address}`"
+                class="text-primary text-xs hover:underline">autonomi:// link</a>
+            </div>
+          </div>
+          <p v-else class="text-surface-400 text-xs">No network address yet — set once the upload completes.</p>
+        </section>
+
+        <!-- Status & timeline -->
+        <section>
+          <h3 class="text-xs font-semibold uppercase text-surface-400 mb-2">Status</h3>
+          <dl class="flex flex-col gap-2">
+            <div class="flex justify-between gap-3">
+              <dt class="text-surface-500">Status</dt>
+              <dd><Tag :value="statusLabel(detail)" :severity="statusSeverity(detail.status, detail.status_detail)" /></dd>
+            </div>
+            <div class="flex justify-between gap-3"><dt class="text-surface-500">Created</dt><dd>{{ fmtDateTime(detail.created_at) }}</dd></div>
+            <div class="flex justify-between gap-3"><dt class="text-surface-500">Queued</dt><dd>{{ fmtDateTime(detail.queued_at) }}</dd></div>
+            <div v-if="detail.processing_at" class="flex justify-between gap-3"><dt class="text-surface-500">Processing</dt><dd>{{ fmtDateTime(detail.processing_at) }}</dd></div>
+            <div v-if="detail.completed_at" class="flex justify-between gap-3"><dt class="text-surface-500">Completed</dt><dd>{{ fmtDateTime(detail.completed_at) }}</dd></div>
+            <div v-if="detail.failed_at" class="flex justify-between gap-3"><dt class="text-surface-500">Failed</dt><dd>{{ fmtDateTime(detail.failed_at) }}</dd></div>
+            <div v-if="detail.backoff_attempt" class="flex justify-between gap-3"><dt class="text-surface-500">Backoff attempts</dt><dd>{{ detail.backoff_attempt }}</dd></div>
+          </dl>
+          <div v-if="detail.error_message" class="mt-2 p-2 rounded bg-red-50 text-red-700 text-xs break-words">
+            {{ detail.error_message }}
+          </div>
+        </section>
+
+        <!-- Cost -->
+        <section>
+          <h3 class="text-xs font-semibold uppercase text-surface-400 mb-2">Cost</h3>
+          <dl class="flex flex-col gap-2">
+            <div class="flex justify-between gap-3"><dt class="text-surface-500">Estimated</dt><dd>{{ detail.estimated_cost || '—' }}</dd></div>
+            <div class="flex justify-between gap-3"><dt class="text-surface-500">Actual</dt><dd>{{ detail.actual_cost || '—' }}</dd></div>
+            <div v-if="detail.last_quoted_cost" class="flex justify-between gap-3"><dt class="text-surface-500">Last quoted</dt><dd>{{ detail.last_quoted_cost }}</dd></div>
+          </dl>
+        </section>
+
+        <!-- Tags -->
+        <section>
+          <h3 class="text-xs font-semibold uppercase text-surface-400 mb-2">Tags</h3>
+          <div v-if="detailLoading" class="text-surface-400 text-xs">Loading…</div>
+          <div v-else-if="detailTags.length" class="flex flex-wrap gap-1.5">
+            <Tag v-for="t in detailTags" :key="t.key" :value="`${t.key}: ${t.value}`" severity="info" />
+          </div>
+          <p v-else class="text-surface-400 text-xs">No tags.</p>
+        </section>
+
+        <!-- Collections -->
+        <section>
+          <h3 class="text-xs font-semibold uppercase text-surface-400 mb-2">Collections</h3>
+          <div v-if="detailLoading" class="text-surface-400 text-xs">Loading…</div>
+          <div v-else-if="detailCollections.length" class="flex flex-wrap gap-1.5">
+            <Tag v-for="c in detailCollections" :key="c" :value="c" severity="secondary" />
+          </div>
+          <p v-else class="text-surface-400 text-xs">Not in any collection.</p>
+        </section>
+      </div>
+    </Drawer>
   </div>
 </template>

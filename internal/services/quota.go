@@ -125,8 +125,11 @@ func (s *QuotaService) Delete(id int64) error {
 // quotaInFlightStatuses also counts queued + processing so bulk-queueing can't
 // bypass a quota — used at the worker's pre-processing recheck.
 var (
-	quotaCompletedStatuses = []string{"completed"}
-	quotaInFlightStatuses  = []string{"completed", "processing", "queued"}
+	// "already_stored" counts as stored usage too — the content is on the
+	// network and belongs to the user, so a dedup re-upload must not let them
+	// slip past a quota (V2-399).
+	quotaCompletedStatuses = []string{"completed", "already_stored"}
+	quotaInFlightStatuses  = []string{"completed", "already_stored", "processing", "queued"}
 )
 
 // CheckUserQuota verifies that adding fileSize bytes for the given user doesn't
@@ -349,7 +352,7 @@ func (s *QuotaService) calcUsage(entityType string, entityID sql.NullString) int
 	case "user":
 		if entityID.Valid {
 			s.db.QueryRow(
-				`SELECT COALESCE(SUM(file_size), 0) FROM uploads WHERE user_id = ? AND status = 'completed'`, entityID.String,
+				`SELECT COALESCE(SUM(file_size), 0) FROM uploads WHERE user_id = ? AND status IN ('completed', 'already_stored')`, entityID.String,
 			).Scan(&used)
 		}
 	case "group":
@@ -358,7 +361,7 @@ func (s *QuotaService) calcUsage(entityType string, entityID sql.NullString) int
 				`SELECT COALESCE(SUM(u.file_size), 0)
 				   FROM uploads u
 				   JOIN group_members gm ON gm.user_id = u.user_id
-				  WHERE gm.group_id = CAST(? AS INTEGER) AND u.status = 'completed'`,
+				  WHERE gm.group_id = CAST(? AS INTEGER) AND u.status IN ('completed', 'already_stored')`,
 				entityID.String,
 			).Scan(&used)
 		}
@@ -368,12 +371,12 @@ func (s *QuotaService) calcUsage(entityType string, entityID sql.NullString) int
 				`SELECT COALESCE(SUM(u.file_size), 0)
 				   FROM uploads u
 				   JOIN api_tokens t ON t.id = u.token_id
-				  WHERE t.department = ? AND u.status = 'completed'`,
+				  WHERE t.department = ? AND u.status IN ('completed', 'already_stored')`,
 				entityID.String,
 			).Scan(&used)
 		}
 	case "system":
-		s.db.QueryRow(`SELECT COALESCE(SUM(file_size), 0) FROM uploads WHERE status = 'completed'`).Scan(&used)
+		s.db.QueryRow(`SELECT COALESCE(SUM(file_size), 0) FROM uploads WHERE status IN ('completed', 'already_stored')`).Scan(&used)
 	}
 	return used
 }

@@ -3,6 +3,7 @@ import { createPinia } from 'pinia'
 import PrimeVue from 'primevue/config'
 import ConfirmationService from 'primevue/confirmationservice'
 import ToastService from 'primevue/toastservice'
+import Tooltip from 'primevue/tooltip'
 import Aura from '@primevue/themes/aura'
 import 'primeicons/primeicons.css'
 
@@ -25,6 +26,9 @@ app.use(PrimeVue, {
 })
 app.use(ConfirmationService)
 app.use(ToastService)
+// Register the v-tooltip directive — without this every `v-tooltip` in the app
+// is a silent no-op (action-button hovers, the public-file badge, etc.).
+app.directive('tooltip', Tooltip)
 
 // Resolve the session BEFORE installing the router so the first navigation
 // guard sees an authoritative isAuthenticated. SSO users carry the JWT in an
