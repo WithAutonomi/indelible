@@ -34,6 +34,7 @@ async function handleRegister() {
 <template>
   <div class="flex min-h-screen items-center justify-center bg-surface-50">
     <div class="w-full max-w-md space-y-6 rounded-xl bg-surface-0 p-8 shadow-md">
+      <img src="/favicon.svg" alt="Indelible" width="48" height="48" class="mx-auto" />
       <h1 class="text-2xl font-bold text-center text-surface-900">Indelible</h1>
       <p class="text-center text-surface-500">Create your account</p>
 

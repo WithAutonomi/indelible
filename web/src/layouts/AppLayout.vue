@@ -70,7 +70,10 @@ const navItems = computed(() => {
     <!-- Sidebar -->
     <aside class="w-60 bg-surface-0 border-r border-surface-200 flex flex-col">
       <div class="p-4 border-b border-surface-200">
-        <h1 class="text-xl font-bold text-surface-800">Indelible</h1>
+        <div class="flex items-center gap-2">
+          <img src="/favicon.svg" alt="" width="28" height="28" />
+          <h1 class="text-xl font-bold text-surface-800">Indelible</h1>
+        </div>
         <p class="text-xs text-surface-400 mt-1">Autonomi Storage Gateway</p>
       </div>
 
