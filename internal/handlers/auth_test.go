@@ -101,6 +101,182 @@ func TestRegisterAndLogin(t *testing.T) {
 	}
 }
 
+// TestLoginSetsCookies asserts the V2-366 Phase 1 contract: a successful
+// login lands both the HttpOnly session cookie carrying the JWT and the
+// non-HttpOnly csrf_token cookie the SPA reads for double-submit defence.
+func TestLoginSetsSessionAndCSRFCookies(t *testing.T) {
+	router := setupTestRouter(t)
+
+	regBody, _ := json.Marshal(map[string]string{
+		"email": "cookies@test.com", "password": "password123",
+		"first_name": "C", "last_name": "K",
+	})
+	req := httptest.NewRequest("POST", "/api/v2/auth/register", bytes.NewReader(regBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("register: %d", w.Code)
+	}
+
+	var sawSession, sawCSRF bool
+	for _, c := range w.Result().Cookies() {
+		switch c.Name {
+		case "session":
+			sawSession = true
+			if !c.HttpOnly {
+				t.Errorf("session cookie must be HttpOnly")
+			}
+			if c.Value == "" {
+				t.Errorf("session cookie must carry a value")
+			}
+		case "csrf_token":
+			sawCSRF = true
+			if c.HttpOnly {
+				t.Errorf("csrf_token cookie must NOT be HttpOnly (SPA must read it)")
+			}
+			if c.Value == "" {
+				t.Errorf("csrf_token cookie must carry a value")
+			}
+		}
+	}
+	if !sawSession {
+		t.Error("register did not set session cookie")
+	}
+	if !sawCSRF {
+		t.Error("register did not set csrf_token cookie")
+	}
+
+	// Same assertions on Login.
+	loginBody, _ := json.Marshal(map[string]string{
+		"email": "cookies@test.com", "password": "password123",
+	})
+	req = httptest.NewRequest("POST", "/api/v2/auth/login", bytes.NewReader(loginBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("login: %d", w.Code)
+	}
+
+	sawSession, sawCSRF = false, false
+	for _, c := range w.Result().Cookies() {
+		if c.Name == "session" {
+			sawSession = true
+		}
+		if c.Name == "csrf_token" {
+			sawCSRF = true
+		}
+	}
+	if !sawSession || !sawCSRF {
+		t.Errorf("login cookies: session=%v csrf=%v", sawSession, sawCSRF)
+	}
+}
+
+// TestCSRFEnforcedOnCookieMutation asserts the V2-366 Phase 3 contract:
+// a cookie-authenticated mutation without a matching X-CSRF-Token header
+// is rejected with 403, and the same request with the matching header
+// succeeds. Bearer callers remain exempt — also verified.
+func TestCSRFEnforcedOnCookieMutation(t *testing.T) {
+	router := setupTestRouter(t)
+
+	// Register to seed a user + harvest cookies.
+	regBody, _ := json.Marshal(map[string]string{
+		"email": "csrf@test.com", "password": "password123",
+		"first_name": "C", "last_name": "S",
+	})
+	req := httptest.NewRequest("POST", "/api/v2/auth/register", bytes.NewReader(regBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("register: %d", w.Code)
+	}
+
+	var sessionCookie, csrfCookie *http.Cookie
+	for _, c := range w.Result().Cookies() {
+		switch c.Name {
+		case "session":
+			sessionCookie = c
+		case "csrf_token":
+			csrfCookie = c
+		}
+	}
+	if sessionCookie == nil || csrfCookie == nil {
+		t.Fatalf("missing cookies: session=%v csrf=%v", sessionCookie, csrfCookie)
+	}
+
+	// Pick a real mutating endpoint under the authenticated group:
+	// PUT /api/v2/me requires both auth (via cookie OR Bearer) and a
+	// matching CSRF header when authed via cookie.
+	updateBody, _ := json.Marshal(map[string]string{
+		"first_name": "Updated",
+		"last_name":  "Name",
+	})
+
+	// 1. Cookie auth without X-CSRF-Token → 403.
+	req = httptest.NewRequest("PUT", "/api/v2/me", bytes.NewReader(updateBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(sessionCookie)
+	req.AddCookie(csrfCookie)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("cookie mutation without CSRF header: got %d, want 403; body=%s", w.Code, w.Body.String())
+	}
+
+	// 2. Cookie auth with mismatched X-CSRF-Token → 403.
+	req = httptest.NewRequest("PUT", "/api/v2/me", bytes.NewReader(updateBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", "wrong-token")
+	req.AddCookie(sessionCookie)
+	req.AddCookie(csrfCookie)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("cookie mutation with bad CSRF header: got %d, want 403", w.Code)
+	}
+
+	// 3. Cookie auth with matching X-CSRF-Token → 200.
+	req = httptest.NewRequest("PUT", "/api/v2/me", bytes.NewReader(updateBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", csrfCookie.Value)
+	req.AddCookie(sessionCookie)
+	req.AddCookie(csrfCookie)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("cookie mutation with matching CSRF header: got %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+
+	// 4. Bearer auth without any CSRF header → 200. Bearer callers are
+	//    exempt from CSRF by design.
+	var regResp map[string]any
+	// Login again to harvest a Bearer-usable JWT (response body still
+	// includes it for backward-compat with API consumers).
+	loginBody, _ := json.Marshal(map[string]string{
+		"email": "csrf@test.com", "password": "password123",
+	})
+	req = httptest.NewRequest("POST", "/api/v2/auth/login", bytes.NewReader(loginBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("login: %d", w.Code)
+	}
+	json.Unmarshal(w.Body.Bytes(), &regResp)
+	token := regResp["token"].(string)
+
+	req = httptest.NewRequest("PUT", "/api/v2/me", bytes.NewReader(updateBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("Bearer mutation without CSRF header: got %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+}
+
 func TestRegisterDuplicateEmail(t *testing.T) {
 	router := setupTestRouter(t)
 
