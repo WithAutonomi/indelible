@@ -644,7 +644,7 @@ onMounted(() => {
           <div class="flex flex-col sm:flex-row items-start gap-4">
             <div class="flex-1">
               <input id="upload-file-input" type="file" @change="onFileSelect" :disabled="noWallet"
-                class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
+                class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-medium file:bg-blue-50 dark:file:bg-blue-950/40 file:text-blue-700 dark:file:text-blue-300 hover:file:bg-blue-100 dark:hover:file:bg-blue-900/50" />
             </div>
             <Select v-model="visibility" :options="visibilityOptions" optionLabel="label" optionValue="value"
               :disabled="noWallet" class="w-36" />
@@ -914,7 +914,7 @@ onMounted(() => {
             <div v-if="detail.failed_at" class="flex justify-between gap-3"><dt class="text-surface-500">Failed</dt><dd>{{ fmtDateTime(detail.failed_at) }}</dd></div>
             <div v-if="detail.backoff_attempt" class="flex justify-between gap-3"><dt class="text-surface-500">Backoff attempts</dt><dd>{{ detail.backoff_attempt }}</dd></div>
           </dl>
-          <div v-if="detail.error_message" class="mt-2 p-2 rounded bg-red-50 text-red-700 text-xs break-words">
+          <div v-if="detail.error_message" class="mt-2 p-2 rounded bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 text-xs break-words">
             {{ detail.error_message }}
           </div>
         </section>
