@@ -18,6 +18,8 @@ import AutoComplete from 'primevue/autocomplete'
 import Skeleton from 'primevue/skeleton'
 import Message from 'primevue/message'
 import Drawer from 'primevue/drawer'
+import DatePicker from 'primevue/datepicker'
+import { presetRange, PRESET_OPTIONS, type DatePreset } from '../../composables/useDateRangePresets'
 
 const auth = useAuthStore()
 const router = useRouter()
@@ -59,6 +61,10 @@ const SORT_FIELD_MAP: Record<string, string> = {
 const tagKey = ref('')
 const tagValue = ref('')
 const searchQuery = ref('')
+// V2-410: date-range filtering (presets shared with the Logs filter)
+const datePreset = ref<DatePreset>('')
+const sinceDate = ref<Date | null>(null)
+const untilDate = ref<Date | null>(null)
 const tagKeySuggestions = ref<string[]>([])
 const tagValueSuggestions = ref<string[]>([])
 let keyDebounce: ReturnType<typeof setTimeout> | null = null
@@ -165,6 +171,45 @@ async function handleUpload() {
   }
 }
 
+// V2-410: build the created_at filter. An active preset sends precise RFC3339
+// timestamps (exact rolling windows); manual pickers send the selected day's
+// start/end. The /uploads endpoint filters created_at via from/to (RFC3339).
+function applyDateParams(params: any) {
+  const range = presetRange(datePreset.value)
+  if (range) {
+    params.from = range.since.toISOString()
+    params.to = range.until.toISOString()
+    return
+  }
+  if (sinceDate.value) {
+    const s = new Date(sinceDate.value)
+    s.setHours(0, 0, 0, 0)
+    params.from = s.toISOString()
+  }
+  if (untilDate.value) {
+    const u = new Date(untilDate.value)
+    u.setHours(23, 59, 59, 999)
+    params.to = u.toISOString()
+  }
+}
+
+// Selecting a preset clears the manual pickers; editing a picker drops back to
+// Custom. Both refetch the list from page 1.
+function onDatePresetChange() {
+  if (datePreset.value) {
+    sinceDate.value = null
+    untilDate.value = null
+  }
+  page.value = 1
+  fetchUploads()
+}
+
+function onManualDate() {
+  datePreset.value = ''
+  page.value = 1
+  fetchUploads()
+}
+
 async function fetchUploads() {
   loading.value = true
   try {
@@ -173,6 +218,7 @@ async function fetchUploads() {
       const backendField = SORT_FIELD_MAP[sortField.value] || sortField.value
       params.sort = `${backendField}:${sortOrder.value === 1 ? 'asc' : 'desc'}`
     }
+    applyDateParams(params)
     const res = await api.get('/api/v2/uploads', { params })
     uploads.value = res.data.uploads || []
     total.value = res.data.total || 0
@@ -641,9 +687,24 @@ onMounted(() => {
             <AutoComplete v-model="tagValue" :suggestions="tagValueSuggestions" @complete="searchTagValues"
               placeholder="e.g. alpha" dropdown size="small" class="w-40" />
           </div>
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">Range</label>
+            <Select v-model="datePreset" :options="PRESET_OPTIONS" optionLabel="label" optionValue="value"
+              size="small" class="w-36" @change="onDatePresetChange" />
+          </div>
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">Since</label>
+            <DatePicker v-model="sinceDate" dateFormat="yy-mm-dd" showIcon size="small" class="w-40"
+              :disabled="!!datePreset" @date-select="onManualDate" />
+          </div>
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">Until</label>
+            <DatePicker v-model="untilDate" dateFormat="yy-mm-dd" showIcon size="small" class="w-40"
+              :disabled="!!datePreset" @date-select="onManualDate" />
+          </div>
           <Button label="Search" icon="pi pi-search" severity="secondary" size="small" @click="runSearch" />
           <Button label="Clear" text size="small"
-            @click="tagKey = ''; tagValue = ''; searchQuery = ''; fetchUploads()" />
+            @click="tagKey = ''; tagValue = ''; searchQuery = ''; datePreset = ''; sinceDate = null; untilDate = null; page = 1; fetchUploads()" />
         </div>
       </template>
     </Card>
