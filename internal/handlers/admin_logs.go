@@ -12,6 +12,25 @@ import (
 	"github.com/WithAutonomi/indelible/internal/services"
 )
 
+// parseTimeParam accepts either an RFC3339 timestamp — used by the date-range
+// presets (V2-409/V2-410) for exact rolling windows like "last 24h" — or a
+// date-only YYYY-MM-DD value from the manual Since/Until pickers. Returns nil
+// if empty or unparseable. RFC3339 is normalised to UTC so the bound matches
+// the UTC created_at timestamps stored in the log tables.
+func parseTimeParam(s string) *time.Time {
+	if s == "" {
+		return nil
+	}
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		u := t.UTC()
+		return &u
+	}
+	if t, err := time.Parse("2006-01-02", s); err == nil {
+		return &t
+	}
+	return nil
+}
+
 func parseLogFilters(r *http.Request) (eventType, severity string, userID *int64, since, until *time.Time, limit, offset int) {
 	eventType = r.URL.Query().Get("event_type")
 	severity = validSeverity(r.URL.Query().Get("severity"))
@@ -20,16 +39,8 @@ func parseLogFilters(r *http.Request) (eventType, severity string, userID *int64
 			userID = &uid
 		}
 	}
-	if s := r.URL.Query().Get("since"); s != "" {
-		if t, err := time.Parse("2006-01-02", s); err == nil {
-			since = &t
-		}
-	}
-	if u := r.URL.Query().Get("until"); u != "" {
-		if t, err := time.Parse("2006-01-02", u); err == nil {
-			until = &t
-		}
-	}
+	since = parseTimeParam(r.URL.Query().Get("since"))
+	until = parseTimeParam(r.URL.Query().Get("until"))
 	limit, _ = strconv.Atoi(r.URL.Query().Get("limit"))
 	offset, _ = strconv.Atoi(r.URL.Query().Get("offset"))
 	return
