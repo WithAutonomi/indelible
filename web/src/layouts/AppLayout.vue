@@ -3,12 +3,14 @@ import { computed, watch, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useHealthStore } from '../stores/health'
+import { useTheme } from '../composables/useTheme'
 import Button from 'primevue/button'
 import Avatar from 'primevue/avatar'
 
 const auth = useAuthStore()
 const router = useRouter()
 const health = useHealthStore()
+const { isDark, toggle: toggleTheme } = useTheme()
 
 // Poll antd/network health only while an admin is signed in — the status
 // banner and System view are admin-only, and /health is a cheap unauthenticated
@@ -92,6 +94,12 @@ const navItems = computed(() => {
             <p class="text-sm font-medium text-surface-700 truncate">{{ userName }}</p>
             <p class="text-xs text-surface-400 truncate">{{ auth.user?.email }}</p>
           </router-link>
+          <Button
+            :icon="isDark ? 'pi pi-sun' : 'pi pi-moon'"
+            text rounded severity="secondary"
+            @click="toggleTheme"
+            v-tooltip="isDark ? 'Light mode' : 'Dark mode'"
+          />
           <Button icon="pi pi-sign-out" text rounded severity="secondary" @click="logout" v-tooltip="'Logout'" />
         </div>
       </div>
@@ -104,7 +112,7 @@ const navItems = computed(() => {
            the container logs. -->
       <div
         v-if="auth.isAdmin && health.networkDegraded"
-        class="flex items-center gap-3 px-6 py-3 bg-amber-50 border-b border-amber-200 text-amber-800 text-sm"
+        class="flex items-center gap-3 px-6 py-3 bg-amber-50 border-b border-amber-200 text-amber-800 dark:bg-amber-950/40 dark:border-amber-800/50 dark:text-amber-200 text-sm"
         role="alert"
       >
         <i class="pi pi-exclamation-triangle text-amber-500"></i>

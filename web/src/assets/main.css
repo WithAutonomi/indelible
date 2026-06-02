@@ -1,11 +1,53 @@
 @import "tailwindcss";
+@plugin "tailwindcss-primeui";
 
-/* Tailwind v4 reset strips default colors — restore sensible defaults */
+/* Drive Tailwind's `dark:` variant off the same .app-dark class PrimeVue uses
+   (see darkModeSelector in main.ts) so utilities and the theme toggle stay in
+   sync. */
+@custom-variant dark (&:where(.app-dark, .app-dark *));
+
+/* Tailwind v4's reset strips default colors. Follow the active PrimeVue theme
+   tokens (which flip to deep navy under .app-dark) rather than hardcoding light
+   values, so the page chrome behind the app shell is correct in both modes. */
 body {
-  color: #1f2937; /* gray-800 */
+  color: var(--p-text-color);
+  background-color: var(--p-content-background);
 }
 
-input, select, textarea {
-  background-color: white;
-  color: #1f2937;
+/* ---------------------------------------------------------------------------
+   Dark-mode surface utilities
+
+   The shell and views style backgrounds/text/borders with literal PrimeVue
+   surface utilities (bg-surface-0, text-surface-500, border-surface-200, ...).
+   Those resolve to fixed --p-surface-N values whose shape (0 = lightest,
+   950 = darkest) is identical in both schemes, so on their own they would stay
+   light-on-navy in dark mode. PrimeVue *components* flip correctly because they
+   use semantic tokens; these raw utilities do not.
+
+   Rather than add a `dark:` variant to all ~260 usages, invert the surface
+   scale for just these utilities under .app-dark. The two-class selector
+   out-specifies the single-class utility, and being unlayered it wins the
+   cascade. Navy values come from the dark surface ramp defined in main.ts.
+   --------------------------------------------------------------------------- */
+.app-dark .bg-surface-0   { background-color: var(--p-surface-900); }  /* sidebar, cards */
+.app-dark .bg-surface-50  { background-color: var(--p-surface-950); }  /* page ground */
+.app-dark .bg-surface-100 { background-color: var(--p-surface-800); }
+.app-dark .bg-surface-200 { background-color: var(--p-surface-700); }
+
+.app-dark .text-surface-900 { color: var(--p-surface-0); }    /* strong headings */
+.app-dark .text-surface-800 { color: var(--p-surface-0); }
+.app-dark .text-surface-700 { color: var(--p-surface-50); }   /* primary text */
+.app-dark .text-surface-600 { color: var(--p-surface-200); }
+.app-dark .text-surface-500 { color: var(--p-surface-300); }  /* muted (most common) */
+.app-dark .text-surface-400 { color: var(--p-surface-400); }  /* more muted */
+.app-dark .text-surface-300 { color: var(--p-surface-500); }
+
+.app-dark .border-surface-200 { border-color: var(--p-surface-700); }
+.app-dark .border-surface-100 { border-color: var(--p-surface-800); }
+.app-dark .divide-surface-100 > * { border-color: var(--p-surface-800); }
+
+/* A primary-tint chip reads as near-white in dark mode; use a translucent
+   primary fill instead. */
+.app-dark .bg-primary-50 {
+  background-color: color-mix(in srgb, var(--p-primary-400), transparent 88%);
 }
