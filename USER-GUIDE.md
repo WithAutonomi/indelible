@@ -655,99 +655,17 @@ System alerts fire once per threshold transition — not every check interval (5
 
 ## Admin: OIDC / SSO Providers
 
-*Requires admin permissions.*
+*Requires admin permissions.* Indelible supports OpenID Connect single sign-on with identity providers like Okta, Microsoft Entra ID (Azure AD), Google, and Keycloak.
 
-Indelible supports OpenID Connect for single sign-on with identity providers like Google, Microsoft, Keycloak, etc.
-
-### Adding a Provider
-
-1. Go to **Admin > Settings** (OIDC section)
-2. Create a provider with:
-   - **Name** — internal identifier (e.g., `google`)
-   - **Display Name** — shown on login page (e.g., `Sign in with Google`)
-   - **Issuer URL** — OIDC issuer (e.g., `https://accounts.google.com`)
-   - **Client ID** and **Client Secret** — from your identity provider
-   - **Scopes** — default: `openid email profile`
-
-Client secrets are encrypted at rest using AES-256-GCM.
-
-> For a step-by-step walkthrough against Okta — including provisioning behavior toggles, integrator-tenant gotchas, and a troubleshooting table — see [Provisioning with Okta](#provisioning-with-okta).
+➡️ See the dedicated **[SSO setup guide](docs/guides/sso.md)** for configuring providers (Admin → SSO → **+ Add provider**). For full per-IdP walkthroughs, see [Provisioning with Okta](#provisioning-with-okta) and [Provisioning with Azure AD](#provisioning-with-azure-ad) below.
 
 ---
 
 ## Admin: SCIM Provisioning
 
-*Requires admin permissions.*
+*Requires admin permissions.* SCIM 2.0 auto-provisions users and groups from identity providers such as Okta, Microsoft Entra ID (Azure AD), and Google Workspace.
 
-SCIM 2.0 enables automatic user and group provisioning from identity providers such as Okta, Azure AD/Entra, and Google Workspace.
-
-### Enabling SCIM
-
-1. Go to **Admin > SCIM**
-2. Toggle **SCIM Provisioning** to enabled
-3. Note the **SCIM Base URL** displayed (e.g., `https://your-domain.com/scim/v2`)
-
-### Generating a SCIM Token
-
-1. Click **Generate Token**
-2. Enter a descriptive name (e.g., "Okta Production")
-3. Click **Generate**
-4. **Copy the token immediately** — it is shown only once
-5. Use this token as the Bearer token in your identity provider's SCIM configuration
-
-### Token Management
-
-- View all tokens with their creation date, last used timestamp, and status
-- **Revoke** a token when rotating credentials or decommissioning an IdP connection
-- Revoked tokens cannot be reactivated — generate a new one instead
-
-### API Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/v2/admin/scim/tokens` | Create a SCIM token |
-| `GET` | `/api/v2/admin/scim/tokens` | List all SCIM tokens |
-| `DELETE` | `/api/v2/admin/scim/tokens/{id}` | Revoke a SCIM token |
-
-### IdP Configuration
-
-**Okta:**
-1. Add a new SCIM 2.0 application
-2. Set **SCIM connector base URL** to `https://your-domain.com/scim/v2`
-3. Set **Unique identifier field** to `userName`
-4. Set **Authentication Mode** to `HTTP Header`
-5. Paste the SCIM token in the **Authorization** field (with `Bearer ` prefix)
-6. Enable **Push New Users**, **Push Profile Updates**, and **Push Groups**
-
-**Azure AD / Entra ID:**
-1. In your Enterprise Application, go to **Provisioning**
-2. Set **Provisioning Mode** to `Automatic`
-3. Set **Tenant URL** to `https://your-domain.com/scim/v2`
-4. Set **Secret Token** to the SCIM token
-5. Click **Test Connection**, then **Save**
-6. Map attributes: `userPrincipalName` → `userName`, `givenName` → `name.givenName`, `surname` → `name.familyName`
-
-**Google Workspace:**
-1. Use the SCIM API endpoint `https://your-domain.com/scim/v2`
-2. Configure with a Bearer token in the Authorization header
-
-### How SCIM Maps to Indelible
-
-| SCIM Attribute | Indelible Field |
-|----------------|-----------------|
-| `userName` | `email` |
-| `name.givenName` | `first_name` |
-| `name.familyName` | `last_name` |
-| `active` | `is_active` |
-| `externalId` | `external_id` |
-| Group `displayName` | `name` |
-| Group `members[].value` | group membership |
-
-- SCIM-provisioned users have no password and should authenticate via OIDC/SSO
-- SCIM-provisioned groups default to "read" permission level
-- SCIM DELETE performs a soft-delete to preserve audit history
-
-> For a complete Okta SCIM walkthrough — App Catalog setup, Header Auth token format, assignment + group push flows — see [Provisioning with Okta](#provisioning-with-okta).
+➡️ See the dedicated **[SCIM setup guide](docs/guides/scim.md)** for enabling SCIM, generating tokens, IdP configuration, and attribute mapping. For full per-IdP walkthroughs, see [Provisioning with Okta](#provisioning-with-okta) and [Provisioning with Azure AD](#provisioning-with-azure-ad) below.
 
 ---
 

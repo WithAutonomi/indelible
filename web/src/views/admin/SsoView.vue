@@ -159,6 +159,10 @@ onMounted(async () => {
       <div>
         <h2 class="text-2xl font-semibold">SSO / OIDC</h2>
         <p class="text-sm text-surface-400 mt-1">Identity providers for single sign-on. Users authenticate at their IdP and land in indelible via the OIDC code flow.</p>
+        <a href="https://github.com/WithAutonomi/indelible/blob/master/docs/guides/sso.md" target="_blank" rel="noopener"
+          class="inline-flex items-center gap-1 text-xs text-primary hover:underline mt-1">
+          <i class="pi pi-book text-xs"></i> Setup guide
+        </a>
       </div>
       <Button label="Add provider" icon="pi pi-plus" @click="openCreate" />
     </div>

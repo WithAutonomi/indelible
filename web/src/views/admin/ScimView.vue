@@ -133,6 +133,10 @@ onMounted(() => {
 
     <div class="flex items-center justify-between mb-6">
       <h1 class="text-2xl font-bold">SCIM Provisioning</h1>
+      <a href="https://github.com/WithAutonomi/indelible/blob/master/docs/guides/scim.md" target="_blank" rel="noopener"
+        class="inline-flex items-center gap-1 text-sm text-primary hover:underline">
+        <i class="pi pi-book"></i> Setup guide
+      </a>
     </div>
 
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
