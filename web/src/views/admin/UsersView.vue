@@ -13,6 +13,7 @@ import Select from 'primevue/select'
 import Dialog from 'primevue/dialog'
 import Tag from 'primevue/tag'
 import Chip from 'primevue/chip'
+import Drawer from 'primevue/drawer'
 
 const confirm = useConfirm()
 const toast = useToast()
@@ -26,6 +27,43 @@ const editMaxFileSize = ref<number | null>(null)
 const editAllowedTypes = ref<string[]>([])
 const editAllowedTypesInput = ref('')
 const saving = ref(false)
+
+// Read-only user details drawer. Related content (group memberships, the user's
+// API tokens, quota usage, SSO identity) is a follow-up — those need new read
+// endpoints; this surfaces what the list response already carries.
+const detailVisible = ref(false)
+const detailUser = ref<User | null>(null)
+function openDetail(u: User) {
+  detailUser.value = u
+  detailVisible.value = true
+}
+function editFromDetail() {
+  if (!detailUser.value) return
+  const u = detailUser.value
+  detailVisible.value = false
+  startEdit(u)
+}
+
+function formatBytes(n: number | null | undefined): string {
+  if (n == null) return 'System default'
+  if (n === 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let i = 0
+  let v = n
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++ }
+  return `${v.toFixed(v >= 100 || i === 0 ? 0 : 1)} ${units[i]}`
+}
+function fmtDateTime(s?: string | null): string {
+  return s ? new Date(s).toLocaleString() : 'Never'
+}
+async function copyText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text)
+    toast.add({ severity: 'success', summary: 'Copied', detail: text, life: 2000 })
+  } catch {
+    toast.add({ severity: 'warn', summary: 'Copy failed', life: 2000 })
+  }
+}
 
 const showCreate = ref(false)
 const newEmail = ref('')
@@ -252,7 +290,10 @@ onMounted(fetchUsers)
       <template #empty>No users found.</template>
       <Column field="name" header="Name" sortable>
         <template #body="{ data }">
-          <span class="font-medium">{{ data.first_name }} {{ data.last_name }}</span>
+          <button type="button" class="font-medium hover:text-primary hover:underline text-left"
+            @click="openDetail(data)" v-tooltip.top="'View details'">
+            {{ data.first_name }} {{ data.last_name }}
+          </button>
           <span v-if="data.is_service_account" class="ml-1 text-xs text-surface-400">(service)</span>
         </template>
       </Column>
@@ -287,5 +328,64 @@ onMounted(fetchUsers)
         </template>
       </Column>
     </DataTable>
+
+    <!-- User details (read-only). Groups / tokens / quota are a tracked follow-up. -->
+    <Drawer v-model:visible="detailVisible" position="right" :style="{ width: '26rem' }"
+      :header="detailUser ? `${detailUser.first_name} ${detailUser.last_name}` : 'User'">
+      <div v-if="detailUser" class="flex flex-col gap-5 text-sm">
+        <section>
+          <h3 class="text-xs font-semibold uppercase text-surface-400 mb-2">Identity</h3>
+          <dl class="flex flex-col gap-2">
+            <div class="flex justify-between gap-3 items-center">
+              <dt class="text-surface-500 shrink-0">Email</dt>
+              <dd class="flex items-center gap-1 min-w-0">
+                <span class="truncate">{{ detailUser.email }}</span>
+                <Button icon="pi pi-copy" text rounded size="small" @click="copyText(detailUser.email)" v-tooltip.left="'Copy'" />
+              </dd>
+            </div>
+            <div class="flex justify-between gap-3"><dt class="text-surface-500">User ID</dt><dd class="font-mono text-xs">{{ detailUser.id }}</dd></div>
+            <div v-if="detailUser.is_service_account" class="flex justify-between gap-3"><dt class="text-surface-500">Type</dt><dd>Service account</dd></div>
+          </dl>
+        </section>
+
+        <section>
+          <h3 class="text-xs font-semibold uppercase text-surface-400 mb-2">Access</h3>
+          <dl class="flex flex-col gap-2">
+            <div class="flex justify-between gap-3"><dt class="text-surface-500">Permissions</dt><dd><Tag :value="detailUser.permissions || 'read'" :severity="permissionSeverity(detailUser.permissions)" /></dd></div>
+            <div class="flex justify-between gap-3"><dt class="text-surface-500">Status</dt><dd><Tag :value="detailUser.is_active ? 'Active' : 'Disabled'" :severity="detailUser.is_active ? 'success' : 'danger'" /></dd></div>
+            <div class="flex justify-between gap-3"><dt class="text-surface-500">Email verified</dt><dd>{{ detailUser.email_verified ? 'Yes' : 'No' }}</dd></div>
+          </dl>
+        </section>
+
+        <section>
+          <h3 class="text-xs font-semibold uppercase text-surface-400 mb-2">Upload restrictions</h3>
+          <dl class="flex flex-col gap-2">
+            <div class="flex justify-between gap-3"><dt class="text-surface-500">Max file size</dt><dd>{{ formatBytes(detailUser.max_file_size_bytes) }}</dd></div>
+            <div>
+              <dt class="text-surface-500 mb-1">Allowed file types</dt>
+              <dd>
+                <div v-if="detailUser.allowed_file_types?.length" class="flex flex-wrap gap-1">
+                  <Chip v-for="t in detailUser.allowed_file_types" :key="t" :label="t" />
+                </div>
+                <span v-else class="text-surface-400">All types</span>
+              </dd>
+            </div>
+          </dl>
+        </section>
+
+        <section>
+          <h3 class="text-xs font-semibold uppercase text-surface-400 mb-2">Activity</h3>
+          <dl class="flex flex-col gap-2">
+            <div class="flex justify-between gap-3"><dt class="text-surface-500">Last login</dt><dd>{{ fmtDateTime(detailUser.last_login_at) }}</dd></div>
+            <div class="flex justify-between gap-3"><dt class="text-surface-500">Joined</dt><dd>{{ fmtDateTime(detailUser.created_at) }}</dd></div>
+          </dl>
+        </section>
+
+        <!-- Related content (groups, API tokens, quota usage) coming in a follow-up. -->
+        <div class="pt-3 border-t border-surface-200">
+          <Button label="Edit user" icon="pi pi-pencil" size="small" outlined @click="editFromDetail" />
+        </div>
+      </div>
+    </Drawer>
   </div>
 </template>
