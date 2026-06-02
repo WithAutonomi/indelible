@@ -76,6 +76,17 @@ definitions:
       total_entries:
         type: integer
     type: object
+  github_com_WithAutonomi_indelible_internal_services.SearchHit:
+    properties:
+      id:
+        type: string
+      label:
+        type: string
+      sublabel:
+        type: string
+      type:
+        type: string
+    type: object
   github_com_WithAutonomi_indelible_internal_services.VersionCheckResult:
     properties:
       antd:
