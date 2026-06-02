@@ -154,17 +154,19 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="p-6 max-w-6xl mx-auto">
+  <div class="p-6">
     <div class="flex items-center justify-between mb-6">
       <div>
-        <h2 class="text-2xl font-semibold">SSO / OIDC</h2>
+        <h1 class="text-2xl font-bold">SSO / OIDC</h1>
         <p class="text-sm text-surface-400 mt-1">Identity providers for single sign-on. Users authenticate at their IdP and land in indelible via the OIDC code flow.</p>
-        <a href="https://github.com/WithAutonomi/indelible/blob/master/docs/guides/sso.md" target="_blank" rel="noopener"
-          class="inline-flex items-center gap-1 text-xs text-primary hover:underline mt-1">
-          <i class="pi pi-book text-xs"></i> Setup guide
-        </a>
       </div>
-      <Button label="Add provider" icon="pi pi-plus" @click="openCreate" />
+      <div class="flex items-center gap-3">
+        <a href="https://github.com/WithAutonomi/indelible/blob/master/docs/guides/sso.md" target="_blank" rel="noopener"
+          class="inline-flex items-center gap-1 text-sm text-primary hover:underline">
+          <i class="pi pi-book"></i> Setup guide
+        </a>
+        <Button label="Add provider" icon="pi pi-plus" @click="openCreate" />
+      </div>
     </div>
 
     <div v-if="oidcProviders.length === 0" class="py-12 text-center text-sm text-surface-400 border border-dashed border-surface-200 rounded-lg">
