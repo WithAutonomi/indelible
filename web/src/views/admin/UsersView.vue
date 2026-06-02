@@ -35,10 +35,15 @@ const newLastName = ref('')
 const newPermissions = ref('read')
 const creating = ref(false)
 
+// The backend stores a single permission level (read | write | admin) — the
+// hierarchy admin > write > read is applied server-side. These option values
+// must be those bare levels: composite values like "read,write" never matched
+// a user's stored level, so the edit Select rendered blank and Create wrote an
+// invalid level string.
 const permissionOptions = [
   { label: 'Read', value: 'read' },
-  { label: 'Read + Write', value: 'read,write' },
-  { label: 'Admin', value: 'admin,read,write' },
+  { label: 'Read + Write', value: 'write' },
+  { label: 'Admin', value: 'admin' },
 ]
 
 async function createUser() {
