@@ -1,5 +1,23 @@
 basePath: /api/v2
 definitions:
+  github_com_WithAutonomi_indelible_internal_services.ComponentVersion:
+    properties:
+      checked:
+        description: false if GitHub couldn't be reached
+        type: boolean
+      current:
+        description: running version ("" if unknown)
+        type: string
+      latest:
+        description: latest release tag ("" if not checked)
+        type: string
+      release_url:
+        description: link to the latest release
+        type: string
+      update_available:
+        description: latest is newer than current
+        type: boolean
+    type: object
   github_com_WithAutonomi_indelible_internal_services.DayCount:
     properties:
       count:
@@ -57,6 +75,15 @@ definitions:
         type: string
       total_entries:
         type: integer
+    type: object
+  github_com_WithAutonomi_indelible_internal_services.VersionCheckResult:
+    properties:
+      antd:
+        $ref: '#/definitions/github_com_WithAutonomi_indelible_internal_services.ComponentVersion'
+      github_reachable:
+        type: boolean
+      indelible:
+        $ref: '#/definitions/github_com_WithAutonomi_indelible_internal_services.ComponentVersion'
     type: object
   internal_handlers.addMemberRequest:
     properties:
@@ -2495,6 +2522,23 @@ paths:
       summary: Create a service account
       tags:
       - 'Admin: Users'
+  /admin/version-check:
+    get:
+      description: Compare the running indelible + antd versions against the latest
+        GitHub releases. On-demand (admin button); degrades gracefully when GitHub
+        is unreachable.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_WithAutonomi_indelible_internal_services.VersionCheckResult'
+      security:
+      - BearerAuth: []
+      summary: Check for updates
+      tags:
+      - 'Admin: System'
   /admin/wallets:
     get:
       description: Return all configured wallets with their balances

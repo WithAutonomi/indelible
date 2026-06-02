@@ -2835,6 +2835,31 @@ const docTemplate = `{
                 }
             }
         },
+        "/admin/version-check": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Compare the running indelible + antd versions against the latest GitHub releases. On-demand (admin button); degrades gracefully when GitHub is unreachable.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin: System"
+                ],
+                "summary": "Check for updates",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_WithAutonomi_indelible_internal_services.VersionCheckResult"
+                        }
+                    }
+                }
+            }
+        },
         "/admin/wallets": {
             "get": {
                 "security": [
@@ -5545,6 +5570,31 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "github_com_WithAutonomi_indelible_internal_services.ComponentVersion": {
+            "type": "object",
+            "properties": {
+                "checked": {
+                    "description": "false if GitHub couldn't be reached",
+                    "type": "boolean"
+                },
+                "current": {
+                    "description": "running version (\"\" if unknown)",
+                    "type": "string"
+                },
+                "latest": {
+                    "description": "latest release tag (\"\" if not checked)",
+                    "type": "string"
+                },
+                "release_url": {
+                    "description": "link to the latest release",
+                    "type": "string"
+                },
+                "update_available": {
+                    "description": "latest is newer than current",
+                    "type": "boolean"
+                }
+            }
+        },
         "github_com_WithAutonomi_indelible_internal_services.DayCount": {
             "type": "object",
             "properties": {
@@ -5619,6 +5669,20 @@ const docTemplate = `{
                 },
                 "total_entries": {
                     "type": "integer"
+                }
+            }
+        },
+        "github_com_WithAutonomi_indelible_internal_services.VersionCheckResult": {
+            "type": "object",
+            "properties": {
+                "antd": {
+                    "$ref": "#/definitions/github_com_WithAutonomi_indelible_internal_services.ComponentVersion"
+                },
+                "github_reachable": {
+                    "type": "boolean"
+                },
+                "indelible": {
+                    "$ref": "#/definitions/github_com_WithAutonomi_indelible_internal_services.ComponentVersion"
                 }
             }
         },

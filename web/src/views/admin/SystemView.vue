@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useHealthStore } from '../../stores/health'
+import { api } from '../../api/client'
 import Tag from 'primevue/tag'
 import Button from 'primevue/button'
 
@@ -8,6 +9,47 @@ const health = useHealthStore()
 const refreshing = ref(false)
 
 const h = computed(() => health.health)
+
+// V2-405: on-demand update check against GitHub releases (server-side, so it
+// works without browser CORS and degrades gracefully when airgapped).
+interface ComponentVersion {
+  current: string
+  latest: string
+  update_available: boolean
+  release_url: string
+  checked: boolean
+}
+interface VersionCheck {
+  indelible: ComponentVersion
+  antd: ComponentVersion
+  github_reachable: boolean
+}
+
+const versionInfo = ref<VersionCheck | null>(null)
+const checking = ref(false)
+
+async function checkVersions() {
+  checking.value = true
+  try {
+    versionInfo.value = (await api.get('/api/v2/admin/version-check')).data
+  } catch {
+    versionInfo.value = null
+  } finally {
+    checking.value = false
+  }
+}
+
+// Render an update badge for a component, or null if the check hasn't run.
+function updateTag(c?: ComponentVersion): { label: string; severity: string; url?: string } | null {
+  if (!c) return null
+  if (!c.checked) return { label: 'Check unavailable', severity: 'secondary' }
+  if (c.update_available) return { label: `Update available: ${c.latest}`, severity: 'warn', url: c.release_url }
+  return { label: 'Up to date', severity: 'success' }
+}
+
+function openUrl(url?: string) {
+  if (url) window.open(url, '_blank', 'noopener')
+}
 
 const overall = computed(() => {
   if (!health.serverReachable) return { label: 'Unreachable', severity: 'danger' as const }
@@ -23,9 +65,9 @@ const overall = computed(() => {
   }
 })
 
-// antd diagnostic fields are only present when antd is managed; in the default
-// separate-container compose setup they're absent and only `antd`/`antd_url`
-// are reported.
+// antd diagnostic fields are present whenever antd is reachable — from managed
+// mode's snapshot or a live /health read in the separate-container setup. They
+// stay absent only when antd is unreachable or hasn't bootstrapped yet.
 const hasAntdDetails = computed(() => h.value?.antd_version != null)
 
 function formatUptime(s?: number): string {
@@ -61,8 +103,16 @@ onMounted(refresh)
           Live health of the Indelible service and its Autonomi daemon (antd).
         </p>
       </div>
-      <Button icon="pi pi-refresh" label="Refresh" :loading="refreshing" @click="refresh" />
+      <div class="flex gap-2">
+        <Button icon="pi pi-github" label="Check for updates" severity="secondary" outlined
+          :loading="checking" @click="checkVersions" />
+        <Button icon="pi pi-refresh" label="Refresh" :loading="refreshing" @click="refresh" />
+      </div>
     </div>
+
+    <p v-if="versionInfo && !versionInfo.github_reachable" class="text-xs text-amber-700 -mt-3 mb-4">
+      Couldn't reach GitHub to check for updates — the host may be offline or firewalled.
+    </p>
 
     <!-- Overall -->
     <div class="bg-surface-0 border border-surface-200 rounded-lg p-5 mb-5 flex items-center gap-4">
@@ -109,7 +159,13 @@ onMounted(refresh)
         <template v-if="hasAntdDetails">
           <div class="flex justify-between gap-4">
             <dt class="text-surface-500">antd version</dt>
-            <dd class="text-surface-700">{{ h?.antd_version }}</dd>
+            <dd class="text-surface-700 flex items-center gap-2">
+              <span>{{ h?.antd_version }}</span>
+              <Tag v-if="updateTag(versionInfo?.antd)" :value="updateTag(versionInfo?.antd)!.label"
+                :severity="updateTag(versionInfo?.antd)!.severity"
+                :class="updateTag(versionInfo?.antd)!.url ? 'cursor-pointer' : ''"
+                @click="openUrl(updateTag(versionInfo?.antd)!.url)" />
+            </dd>
           </div>
           <div class="flex justify-between gap-4">
             <dt class="text-surface-500">EVM network</dt>
@@ -134,8 +190,7 @@ onMounted(refresh)
         </template>
       </dl>
       <p v-if="!hasAntdDetails" class="text-xs text-surface-400 mt-3">
-        Detailed daemon diagnostics (version, EVM network, uptime) are reported only when
-        antd runs in managed mode.
+        Detailed daemon diagnostics (version, EVM network, uptime) appear once antd is reachable.
       </p>
     </div>
 
@@ -145,7 +200,13 @@ onMounted(refresh)
       <dl class="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-3 text-sm">
         <div class="flex justify-between gap-4">
           <dt class="text-surface-500">Indelible version</dt>
-          <dd class="text-surface-700">{{ h?.version || '—' }}</dd>
+          <dd class="text-surface-700 flex items-center gap-2">
+            <span>{{ h?.version || '—' }}</span>
+            <Tag v-if="updateTag(versionInfo?.indelible)" :value="updateTag(versionInfo?.indelible)!.label"
+              :severity="updateTag(versionInfo?.indelible)!.severity"
+              :class="updateTag(versionInfo?.indelible)!.url ? 'cursor-pointer' : ''"
+              @click="openUrl(updateTag(versionInfo?.indelible)!.url)" />
+          </dd>
         </div>
         <div class="flex justify-between gap-4">
           <dt class="text-surface-500">Database</dt>

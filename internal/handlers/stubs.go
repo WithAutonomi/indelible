@@ -53,6 +53,14 @@ func Health(db *database.DB, cfg *config.Config, antdInfo AntdInfoProvider) http
 		// Payload must be >= 3 bytes: antd's self-encryption rejects smaller.
 		// Timeout is read from antd_health_probe_timeout_secs (default 15,
 		// bounds 1-120) so operators can tighten or loosen the alert SLA.
+		// antdHealth is the diagnostic snapshot surfaced in the antd_* fields.
+		// Prefer the managed snapshot; fall back to a live antd /health below
+		// so the default separate-container setup reports version/network too.
+		var antdHealth *antd.HealthStatus
+		if antdInfo != nil {
+			antdHealth = antdInfo.AntdInfo()
+		}
+
 		antdOK := false
 		if cfg.AntdURL != "" {
 			probeTimeout := time.Duration(settingsSvc.GetIntWithBounds(
@@ -63,6 +71,13 @@ func Health(db *database.DB, cfg *config.Config, antdInfo AntdInfoProvider) http
 			probe := antd.NewClient(cfg.AntdURL, antd.WithTimeout(probeTimeout))
 			if _, err := probe.DataCost(ctx, []byte{0, 0, 0}, antd.PaymentModeAuto); err == nil {
 				antdOK = true
+			}
+			// External (unmanaged) mode has no snapshot — read antd's own
+			// /health so the System page can still show its version/diagnostics.
+			if antdHealth == nil {
+				if h, err := probe.Health(ctx); err == nil {
+					antdHealth = h
+				}
 			}
 		}
 
@@ -92,19 +107,17 @@ func Health(db *database.DB, cfg *config.Config, antdInfo AntdInfoProvider) http
 			"notifier":   string(notifierFor()),
 		}
 
-		// Surface the antd /health snapshot when the daemon is managed and has
-		// reported at least once. Unmanaged setups, pre-bootstrap probes, and
-		// older antd builds (no diagnostic fields) all leave the antd_*
-		// namespace unset rather than emitting zero values.
-		if antdInfo != nil {
-			if h := antdInfo.AntdInfo(); h != nil {
-				body["antd_version"] = h.Version
-				body["antd_evm_network"] = h.EvmNetwork
-				body["antd_uptime_seconds"] = h.UptimeSeconds
-				body["antd_build_commit"] = h.BuildCommit
-				body["antd_payment_token_address"] = h.PaymentTokenAddress
-				body["antd_payment_vault_address"] = h.PaymentVaultAddress
-			}
+		// Surface the antd /health snapshot — from managed mode or the live
+		// probe above. Pre-bootstrap probes and older antd builds (no
+		// diagnostic fields) leave the antd_* namespace unset rather than
+		// emitting zero values.
+		if antdHealth != nil {
+			body["antd_version"] = antdHealth.Version
+			body["antd_evm_network"] = antdHealth.EvmNetwork
+			body["antd_uptime_seconds"] = antdHealth.UptimeSeconds
+			body["antd_build_commit"] = antdHealth.BuildCommit
+			body["antd_payment_token_address"] = antdHealth.PaymentTokenAddress
+			body["antd_payment_vault_address"] = antdHealth.PaymentVaultAddress
 		}
 
 		w.WriteHeader(status)
