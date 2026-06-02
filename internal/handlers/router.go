@@ -120,6 +120,10 @@ func NewRouter(cfg *config.Config, db *database.DB, antdInfo AntdInfoProvider) h
 			r.Post("/tags/bulk", BulkTagUploads(db))
 			r.Get("/tags/facets", TagFacets(db))
 
+			// Global search omnibox (V2-406). Admin categories inside are
+			// gated server-side by the caller's admin status.
+			r.Get("/search", GlobalSearch(db))
+
 			// Collections
 			r.Post("/collections", CreateCollection(db))
 			r.Get("/collections", ListCollections(db))

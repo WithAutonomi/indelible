@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useHealthStore } from '../stores/health'
 import { useTheme } from '../composables/useTheme'
+import GlobalSearch from '../components/GlobalSearch.vue'
 import Button from 'primevue/button'
 import Avatar from 'primevue/avatar'
 
@@ -75,6 +76,11 @@ const navItems = computed(() => {
           <h1 class="text-xl font-bold text-surface-800">Indelible</h1>
         </div>
         <p class="text-xs text-surface-400 mt-1">Autonomi Storage Gateway</p>
+      </div>
+
+      <!-- Global search omnibox (Ctrl/Cmd+K) -->
+      <div class="px-3 pt-3">
+        <GlobalSearch />
       </div>
 
       <nav class="flex-1 p-3 space-y-0.5">
