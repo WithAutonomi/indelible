@@ -186,6 +186,8 @@ jobs:
           body: |
             Bundled antd daemon: `${{ needs.resolve-antd-version.outputs.antd_tag }}`
 
+            ⚠️ Before upgrading, check [UPGRADING.md](https://github.com/WithAutonomi/indelible/blob/master/UPGRADING.md) for any operator actions.
+
   docker:
     name: Docker (multi-arch build + push)
     # Depends on resolve-antd-version so the antd bundled INTO the image is the
