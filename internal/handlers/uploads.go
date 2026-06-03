@@ -133,6 +133,15 @@ func CreateUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
+		// Disk back-pressure: the disk-alert worker sets "uploads_paused" when the
+		// data dir crosses the critical threshold. Shed load here before buffering
+		// a temp file we'd only fail to write — mirrors the queue_full path below.
+		if paused, err := settingsSvc.Get("uploads_paused"); err == nil && paused == "true" {
+			w.Header().Set("Retry-After", "300")
+			jsonErrorWithCode(w, "Uploads are temporarily paused due to low disk space", "uploads_paused", http.StatusServiceUnavailable)
+			return
+		}
+
 		userID := middleware.GetUserID(r.Context())
 		tokenID := middleware.GetTokenID(r.Context())
 
