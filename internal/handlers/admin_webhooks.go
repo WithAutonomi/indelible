@@ -109,8 +109,10 @@ func AdminCreateWebhook(db *database.DB) http.HandlerFunc {
 		}
 
 		callerID := middleware.GetUserID(r.Context())
+		// Redact the URL: webhook URLs can embed a secret in the path (e.g. Slack),
+		// and the audit log is persisted in cleartext. Host is enough for forensics.
 		auditEvent(r, logSvc, "webhook_created", "info", &callerID,
-			fmt.Sprintf("id=%d url=%s integration=%s", webhook.ID, webhook.URL, webhook.IntegrationType))
+			fmt.Sprintf("id=%d url=%s integration=%s", webhook.ID, services.RedactWebhookURL(webhook.URL), webhook.IntegrationType))
 
 		// Include secret in create response (shown once)
 		resp := toWebhookResponse(webhook)
