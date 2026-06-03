@@ -8,9 +8,22 @@ import (
 	"testing"
 )
 
-// registerAndGetToken is a test helper that registers a user and returns the JWT.
+// registerAndGetToken is a test helper that returns a JWT for the given user.
+// It registers them; if the account already exists (e.g. the pre-seeded
+// bootstrap admin — see setupTestRouter), it logs in instead. This keeps the
+// long-standing convention that the first call with admin@test.com yields an
+// admin token, while other emails register as ordinary read users.
 func registerAndGetToken(t *testing.T, router http.Handler, email, password, first, last string) string {
 	t.Helper()
+	// The bootstrap admin is pre-seeded (see setupTestRouter) — log in directly
+	// rather than attempting a register that 409s. Beyond saving a round-trip,
+	// this avoids a Postgres-only footgun: a failed INSERT still consumes the
+	// users id sequence, shifting every subsequent user id and breaking tests
+	// that assert specific ids (SQLite reclaims the rowid, so it masks this).
+	if email == seedAdminEmail {
+		return loginAndGetToken(t, router, email, password)
+	}
+
 	body, _ := json.Marshal(map[string]string{
 		"email": email, "password": password,
 		"first_name": first, "last_name": last,
@@ -19,8 +32,31 @@ func registerAndGetToken(t *testing.T, router http.Handler, email, password, fir
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
-	if w.Code != http.StatusCreated {
+
+	switch w.Code {
+	case http.StatusCreated:
+		var resp map[string]any
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		return resp["token"].(string)
+	case http.StatusConflict:
+		// Pre-seeded user (bootstrap admin). Log in to obtain the token.
+		return loginAndGetToken(t, router, email, password)
+	default:
 		t.Fatalf("register %s: got %d, body: %s", email, w.Code, w.Body.String())
+		return ""
+	}
+}
+
+// loginAndGetToken logs in an existing user and returns the JWT.
+func loginAndGetToken(t *testing.T, router http.Handler, email, password string) string {
+	t.Helper()
+	body, _ := json.Marshal(map[string]string{"email": email, "password": password})
+	req := httptest.NewRequest("POST", "/api/v2/auth/login", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("login %s: got %d, body: %s", email, w.Code, w.Body.String())
 	}
 	var resp map[string]any
 	json.Unmarshal(w.Body.Bytes(), &resp)

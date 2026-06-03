@@ -22,11 +22,17 @@ go build -o indelible ./cmd/indelible
 
 # Run with managed antd (starts antd automatically)
 export INDELIBLE_JWT_SECRET="$(openssl rand -hex 32)"
+export INDELIBLE_WALLET_ENCRYPTION_KEY="$(openssl rand -hex 32)"
 export INDELIBLE_ANTD_MANAGED=true
+# Seed the first administrator. Self-registration is disabled by default, so on
+# a fresh database the server refuses to start without these; it ignores them
+# once an admin exists.
+export INDELIBLE_ADMIN_EMAIL="you@example.com"
+export INDELIBLE_ADMIN_PASSWORD="a-strong-password"
 ./indelible
 ```
 
-Open http://localhost:8080 — the first user to register becomes admin.
+Open http://localhost:8080 and log in with the admin email/password above. To let others sign up, an admin enables it in **Admin → Settings** (`registration_enabled`); self-registered users get read-only access.
 
 ### Managed antd (recommended for development)
 
@@ -66,12 +72,19 @@ port = 8080
 db_url = "sqlite://./data.db"
 antd_url = "http://localhost:8082"
 data_dir = "./data"
+
+# Required
 jwt_secret = "your-secret-key-at-least-32-chars"
+wallet_encryption_key = "64-hex-char-key-for-aes-256-gcm"
+
+# Bootstrap admin — seeds the first admin on a fresh DB (self-registration is
+# off by default; the server won't start with no admin and no seed).
+admin_email = "you@example.com"
+admin_password = "a-strong-password"
 
 # Optional
 base_url = "https://files.yourcompany.com"
 cors_allowed_origins = ["https://files.yourcompany.com"]
-wallet_encryption_key = "64-hex-char-key-for-aes-256-gcm"
 ```
 
 ### With PostgreSQL
@@ -79,7 +92,10 @@ wallet_encryption_key = "64-hex-char-key-for-aes-256-gcm"
 ```bash
 export INDELIBLE_DB_URL="postgres://user:pass@localhost/indelible"
 export INDELIBLE_JWT_SECRET="$(openssl rand -hex 32)"
+export INDELIBLE_WALLET_ENCRYPTION_KEY="$(openssl rand -hex 32)"
 export INDELIBLE_ANTD_URL="http://localhost:8082"
+export INDELIBLE_ADMIN_EMAIL="you@example.com"
+export INDELIBLE_ADMIN_PASSWORD="a-strong-password"
 ./indelible
 ```
 
@@ -96,6 +112,11 @@ cd indelible
 export INDELIBLE_JWT_SECRET=$(openssl rand -hex 32)
 export INDELIBLE_WALLET_ENCRYPTION_KEY=$(openssl rand -hex 32)
 
+# Bootstrap admin — self-registration is disabled by default, so this seeds
+# the first administrator (the shipped compose file requires these).
+export INDELIBLE_ADMIN_EMAIL=you@example.com
+export INDELIBLE_ADMIN_PASSWORD=$(openssl rand -hex 16)
+
 # Pull and run published images (multi-arch, mirrored on Docker Hub + GHCR):
 docker compose up -d
 
@@ -105,12 +126,14 @@ docker compose up --build
 
 The compose file's `volumes:` section uses the correct `/var/lib/indelible` data path inside the container; an SQLite-only single-service variant is documented in the comment block at the bottom of the file.
 
-The published `indelible` image **bundles the matching `antd` daemon** (pinned via [`.antd-version`](./.antd-version)), so it works standalone — a bare `docker run` manages its own antd and connects to mainnet with no extra config:
+The published `indelible` image **bundles the matching `antd` daemon** (pinned via [`.antd-version`](./.antd-version)), so it works standalone — a bare `docker run` manages its own antd and connects to mainnet:
 
 ```bash
 docker run -p 8080:8080 \
   -e INDELIBLE_JWT_SECRET=$(openssl rand -hex 32) \
   -e INDELIBLE_WALLET_ENCRYPTION_KEY=$(openssl rand -hex 32) \
+  -e INDELIBLE_ADMIN_EMAIL=you@example.com \
+  -e INDELIBLE_ADMIN_PASSWORD=a-strong-password \
   ghcr.io/withautonomi/indelible:latest
 ```
 
@@ -133,9 +156,10 @@ The compose file deliberately runs `antd` as a *separate* container instead (and
 Base path: `/api/v2`. Full Swagger docs available at `/api/docs/`.
 
 ```bash
-# Register
-curl -X POST /api/v2/auth/register \
-  -d '{"email":"admin@example.com","password":"securepass","first_name":"Admin","last_name":"User"}'
+# Log in as the seeded admin (set via INDELIBLE_ADMIN_EMAIL/PASSWORD). Self-
+# registration is disabled by default; an admin enables it in Admin -> Settings.
+curl -X POST /api/v2/auth/login \
+  -d '{"email":"you@example.com","password":"a-strong-password"}'
 
 # Upload a file
 curl -X POST /api/v2/uploads \
@@ -157,13 +181,16 @@ curl -X POST /api/v2/tokens \
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `INDELIBLE_JWT_SECRET` | **Required.** Secret for JWT signing | -- |
+| `INDELIBLE_WALLET_ENCRYPTION_KEY` | **Required.** 64-char hex key for wallet encryption (AES-256-GCM) | -- |
+| `INDELIBLE_ADMIN_EMAIL` | Bootstrap admin email. Seeds the first admin on a fresh DB; the server refuses to start with no admin and no seed | -- |
+| `INDELIBLE_ADMIN_PASSWORD` | Bootstrap admin password (or use `_FILE`) | -- |
+| `INDELIBLE_ADMIN_PASSWORD_FILE` | Path to a file holding the bootstrap admin password (Docker/K8s secrets); takes precedence over `INDELIBLE_ADMIN_PASSWORD` | -- |
 | `INDELIBLE_ANTD_URL` | antd daemon URL | `http://localhost:8082` |
 | `INDELIBLE_ANTD_MANAGED` | Spawn and manage antd as child process | `false` |
 | `INDELIBLE_ANTD_BIN` | Path to antd binary | `antd` (searches PATH) |
 | `INDELIBLE_PORT` | HTTP listen port | `8080` |
 | `INDELIBLE_DB_URL` | Database connection string | `sqlite:///var/lib/indelible/data.db` |
 | `INDELIBLE_DATA_DIR` | Directory for temp files | `/var/lib/indelible` |
-| `INDELIBLE_WALLET_ENCRYPTION_KEY` | 64-char hex key for wallet encryption | -- |
 | `INDELIBLE_BASE_URL` | External URL for email links | -- |
 | `INDELIBLE_CORS_ORIGINS` | Comma-separated allowed origins | -- |
 | `INDELIBLE_TRUSTED_PROXIES` | Comma-separated CIDR ranges | -- |

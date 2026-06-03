@@ -3227,7 +3227,9 @@ paths:
     post:
       consumes:
       - application/json
-      description: Create a new user account with email, password, and name
+      description: Create a new user account with email, password, and name. Self-registration
+        is disabled by default; an admin must enable it via the registration_enabled
+        setting. Self-registered users receive read-only access.
       parameters:
       - description: Registration details
         in: body
@@ -3244,6 +3246,12 @@ paths:
             $ref: '#/definitions/internal_handlers.authResponse'
         "400":
           description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
           schema:
             additionalProperties:
               type: string

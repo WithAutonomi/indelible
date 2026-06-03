@@ -241,6 +241,8 @@ if have_step docker; then
     docker run --rm -d --name '"$SMOKE_CONTAINER"' --network=host \
       -e INDELIBLE_JWT_SECRET="$JWT_SECRET" \
       -e INDELIBLE_WALLET_ENCRYPTION_KEY="$WALLET_KEY" \
+      -e INDELIBLE_ADMIN_EMAIL=smoke@example.com \
+      -e INDELIBLE_ADMIN_PASSWORD=smoke-admin-password \
       indelible:dev1-ci >/dev/null
     for i in $(seq 1 30); do
       status=$(docker inspect -f "{{.State.Health.Status}}" '"$SMOKE_CONTAINER"' 2>/dev/null || echo starting)
@@ -273,6 +275,8 @@ if have_step smoke; then
     INDELIBLE_JWT_SECRET="smoke-ci-test-secret-minimum-32-characters" \
     INDELIBLE_WALLET_ENCRYPTION_KEY="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab" \
     INDELIBLE_DATA_DIR="/tmp/indelible-dev1-smoke" \
+    INDELIBLE_ADMIN_EMAIL="admin@e2e-test.com" \
+    INDELIBLE_ADMIN_PASSWORD="TestPassword123!" \
     npx playwright test
   '
 fi
@@ -294,6 +298,8 @@ if have_step e2e; then
       INDELIBLE_JWT_SECRET="e2e-ci-test-secret-minimum-32-characters" \
       INDELIBLE_WALLET_ENCRYPTION_KEY="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab" \
       INDELIBLE_DATA_DIR="/tmp/indelible-dev1-e2e" \
+      INDELIBLE_ADMIN_EMAIL="admin@e2e-real.test" \
+      INDELIBLE_ADMIN_PASSWORD="TestPassword123!" \
       npx playwright test
     '
   else

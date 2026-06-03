@@ -4,13 +4,13 @@ import path from 'path'
 
 // Playwright runs the webServer (bin/indelible-test) once for the whole test
 // invocation, then runs every test file against that single server instance.
-// "First user becomes admin" only fires for the literal first /register call,
-// so individual test files can't each create their own admin — whoever wins
-// the race becomes admin and everyone else gets the read-only default.
 //
-// This globalSetup registers a single known admin before any tests run and
-// writes the resulting bearer token to e2e/.auth/admin.json. Tests load that
-// file via helpers/auth.ts when they need to drive admin-protected endpoints.
+// The bootstrap admin is seeded from INDELIBLE_ADMIN_EMAIL / INDELIBLE_ADMIN_PASSWORD
+// (set to ADMIN_CREDS in CI) — self-registration is disabled by default and no
+// longer grants admin. So this globalSetup logs in as the seeded admin, then
+// enables self-registration so the tests that exercise the register flow work
+// (those users get the read-only default). It writes the admin bearer token to
+// .auth/admin.json; tests load it via helpers/auth.ts for admin-protected calls.
 
 const AUTH_DIR = path.join(__dirname, '.auth')
 const ADMIN_FILE = path.join(AUTH_DIR, 'admin.json')
@@ -37,23 +37,31 @@ export default async function globalSetup() {
     await new Promise((r) => setTimeout(r, 500))
   }
 
-  let token: string
-  const reg = await ctx.post('/api/v2/auth/register', { data: ADMIN_CREDS })
-  if (reg.status() === 201) {
-    token = (await reg.json()).token
-  } else if (reg.status() === 409) {
-    // Server was reused (reuseExistingServer or a flaky DB-on-disk path).
-    // Fall back to login so re-runs stay green.
-    const login = await ctx.post('/api/v2/auth/login', {
-      data: { email: ADMIN_CREDS.email, password: ADMIN_CREDS.password },
-    })
-    if (login.status() !== 200) {
-      throw new Error(`E2E admin login failed: ${login.status()} ${await login.text()}`)
-    }
-    token = (await login.json()).token
-  } else {
-    throw new Error(`E2E admin register failed: ${reg.status()} ${await reg.text()}`)
+  // Log in as the seeded bootstrap admin (registration is disabled by default,
+  // so there's nothing to register).
+  const login = await ctx.post('/api/v2/auth/login', {
+    data: { email: ADMIN_CREDS.email, password: ADMIN_CREDS.password },
+  })
+  if (login.status() !== 200) {
+    throw new Error(`E2E admin login failed: ${login.status()} ${await login.text()}`)
   }
+  const token = (await login.json()).token
+
+  // Enable self-registration so tests exercising the register flow work; those
+  // users get the read-only default. Use a fresh, cookieless context so this is
+  // a pure Bearer call — CSRF is enforced when the login session cookie is
+  // present, but Bearer-only callers are exempt.
+  const adminCtx = await request.newContext({
+    baseURL: 'http://localhost:8080',
+    extraHTTPHeaders: { Authorization: `Bearer ${token}` },
+  })
+  const patch = await adminCtx.patch('/api/v2/admin/settings', {
+    data: { registration_enabled: 'true' },
+  })
+  if (!patch.ok()) {
+    throw new Error(`E2E enable registration failed: ${patch.status()} ${await patch.text()}`)
+  }
+  await adminCtx.dispose()
 
   fs.writeFileSync(ADMIN_FILE, JSON.stringify({ token, ...ADMIN_CREDS }, null, 2))
   await ctx.dispose()

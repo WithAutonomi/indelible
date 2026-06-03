@@ -8,13 +8,19 @@
 #      (Both must be 32 bytes / 64 hex chars. Lose the wallet key and every
 #      stored EVM wallet is permanently unrecoverable.)
 #
-#   2. Start the stack:
+#   2. Set the bootstrap admin. Self-registration is disabled by default, so
+#      this is how the first administrator is created on a fresh instance:
+#        export INDELIBLE_ADMIN_EMAIL=you@example.com
+#        export INDELIBLE_ADMIN_PASSWORD=$(openssl rand -hex 16)
+#      (Or mount the password as a file and set INDELIBLE_ADMIN_PASSWORD_FILE
+#      instead — it takes precedence and keeps the secret out of the env.)
+#
+#   3. Start the stack:
 #        docker compose up -d
 #
-#   3. Register the first user (auto-promoted to admin):
-#        curl -X POST http://localhost:8080/api/v2/auth/register \
-#          -H 'Content-Type: application/json' \
-#          -d '{"email":"you@example.com","password":"...","first_name":"You","last_name":"Admin"}'
+#   4. Log in at http://localhost:8080 with the admin email/password above.
+#      To let others self-register afterwards, enable it in
+#      Admin → Settings (registration_enabled); new users get read-only access.
 #
 # Building locally (no published image yet, or you want unreleased changes):
 #   docker compose up --build
@@ -37,6 +43,11 @@ services:
       # AES-256-GCM key for at-rest encryption of stored EVM wallet private keys.
       # Lose this and stored wallets are unrecoverable. Back it up out-of-band.
       INDELIBLE_WALLET_ENCRYPTION_KEY: ${INDELIBLE_WALLET_ENCRYPTION_KEY:?must be set, 64-char hex}
+      # Bootstrap admin — seeded on first boot when no admin exists yet. Self-
+      # registration is disabled by default, so this is how the first admin is
+      # created. Create-only: ignored once an admin exists.
+      INDELIBLE_ADMIN_EMAIL: ${INDELIBLE_ADMIN_EMAIL:?must be set to seed the first admin, e.g. you@example.com}
+      INDELIBLE_ADMIN_PASSWORD: ${INDELIBLE_ADMIN_PASSWORD:?must be set to seed the first admin}
       # --- networking ---
       INDELIBLE_DB_URL: postgres://indelible:indelible@db:5432/indelible?sslmode=disable
       # The indelible image bundles an antd binary (managed mode by default),

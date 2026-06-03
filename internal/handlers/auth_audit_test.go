@@ -30,8 +30,10 @@ func countAuditEvents(t *testing.T, router http.Handler, adminToken, eventType s
 }
 
 func TestAudit_LoginSuccessAndFailure(t *testing.T) {
-	router := setupTestRouter(t)
-	adminToken := registerAndGetToken(t, router, "admin@test.com", "password123", "Admin", "User")
+	router, db := setupRouterWithDB(t)
+	// Clean audit slate — acquiring the admin token logs in (one audit row),
+	// which would otherwise inflate the login count asserted below.
+	adminToken := adminTokenCleanAudit(t, router, db)
 
 	// Successful login.
 	body, _ := json.Marshal(map[string]string{"email": "admin@test.com", "password": "password123"})

@@ -40,11 +40,16 @@ Indelible is an enterprise gateway for the Autonomi decentralized storage networ
 # Set required JWT secret
 export INDELIBLE_JWT_SECRET="your-secret-key-at-least-32-chars"
 
+# Seed the first administrator. Self-registration is disabled by default, so
+# this is how the initial admin is created on a fresh instance.
+export INDELIBLE_ADMIN_EMAIL="you@example.com"
+export INDELIBLE_ADMIN_PASSWORD="a-strong-password"
+
 # Run with defaults (SQLite, port 8080)
 ./indelible --config indelible.toml
 ```
 
-Open `http://localhost:8080` in your browser. **The first user to register automatically becomes admin.**
+Open `http://localhost:8080` and **log in with the admin email/password you set above**. The bootstrap admin is created on first boot only (it's ignored once an admin exists). For Docker/Kubernetes secrets, set `INDELIBLE_ADMIN_PASSWORD_FILE` to a mounted file instead of `INDELIBLE_ADMIN_PASSWORD` — it takes precedence. To allow others to sign up, an admin enables it in **Admin → Settings** (`registration_enabled`); self-registered users get read-only access.
 
 ### Requirements
 
@@ -137,9 +142,13 @@ Set the resulting 64-character hex string as `INDELIBLE_WALLET_ENCRYPTION_KEY`. 
 
 ### Registration
 
+Self-registration is **disabled by default**. An admin enables it in **Admin → Settings** (`registration_enabled`). The first administrator is not created here — it is seeded from `INDELIBLE_ADMIN_EMAIL` / `INDELIBLE_ADMIN_PASSWORD` at startup (see [Getting Started](#getting-started)).
+
+When registration is enabled:
+
 1. Navigate to `/register` in your browser
 2. Enter email, password (minimum 8 characters), first name, last name
-3. The first registered user automatically receives admin permissions
+3. Self-registered users receive **read-only** permissions; an admin can grant more
 4. A verification email is sent if SMTP is configured (non-blocking — you can use the app immediately)
 
 ### Login

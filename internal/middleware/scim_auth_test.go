@@ -11,6 +11,7 @@ import (
 	"github.com/WithAutonomi/indelible/internal/config"
 	"github.com/WithAutonomi/indelible/internal/dbtest"
 	"github.com/WithAutonomi/indelible/internal/handlers"
+	"github.com/WithAutonomi/indelible/internal/services"
 )
 
 // V2-303: SCIMAuth must accept Okta's "Header Auth" variant which sends
@@ -27,21 +28,26 @@ func setupSCIMAuthTest(t *testing.T) (router http.Handler, scimSecret string) {
 		AntdURL:             "http://localhost:8082",
 		JWTSecret:           "test-secret-for-jwt-signing-1234567890",
 		WalletEncryptionKey: "0000000000000000000000000000000000000000000000000000000000000000",
+		AdminEmail:          "admin@test.com",
+		AdminPassword:       "password123",
 	}
 	db := dbtest.OpenDB(t)
+	// Seed the bootstrap admin (self-registration is disabled by default) so we
+	// can mint a SCIM token via the admin API, then log in to get its token.
+	if _, err := services.SeedAdmin(db, cfg); err != nil {
+		t.Fatalf("seed admin: %v", err)
+	}
 	router = handlers.NewRouter(cfg, db, nil)
 
-	// Register an admin so we can mint a SCIM token via the admin API.
 	body, _ := json.Marshal(map[string]string{
 		"email": "admin@test.com", "password": "password123",
-		"first_name": "Admin", "last_name": "User",
 	})
-	req := httptest.NewRequest("POST", "/api/v2/auth/register", bytes.NewReader(body))
+	req := httptest.NewRequest("POST", "/api/v2/auth/login", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("register admin: got %d", w.Code)
+	if w.Code != http.StatusOK {
+		t.Fatalf("login admin: got %d", w.Code)
 	}
 	var regResp map[string]any
 	json.Unmarshal(w.Body.Bytes(), &regResp)

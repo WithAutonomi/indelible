@@ -233,6 +233,8 @@ jobs:
             -e INDELIBLE_JWT_SECRET="$JWT_SECRET" \
             -e INDELIBLE_WALLET_ENCRYPTION_KEY="$WALLET_KEY" \
             -e INDELIBLE_ANTD_MANAGED=false \
+            -e INDELIBLE_ADMIN_EMAIL=smoke@example.com \
+            -e INDELIBLE_ADMIN_PASSWORD=smoke-admin-password \
             indelible:ci
           trap 'docker logs indelible-smoke || true; docker stop indelible-smoke || true' EXIT
           for i in $(seq 1 30); do
@@ -313,6 +315,8 @@ jobs:
           export INDELIBLE_JWT_SECRET="smoke-ci-test-secret-minimum-32-characters"
           export INDELIBLE_WALLET_ENCRYPTION_KEY="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab"
           export INDELIBLE_DATA_DIR="/tmp/indelible-smoke"
+          export INDELIBLE_ADMIN_EMAIL="smoke@example.com"
+          export INDELIBLE_ADMIN_PASSWORD="smoke-admin-password"
           bin/indelible-test &
           SERVER_PID=$!
           sleep 2
@@ -342,6 +346,9 @@ jobs:
           INDELIBLE_JWT_SECRET: smoke-ci-test-secret-minimum-32-characters
           INDELIBLE_WALLET_ENCRYPTION_KEY: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab
           INDELIBLE_DATA_DIR: /tmp/indelible-smoke
+          # Seed the admin the Playwright globalSetup logs in as (ADMIN_CREDS).
+          INDELIBLE_ADMIN_EMAIL: admin@e2e-test.com
+          INDELIBLE_ADMIN_PASSWORD: TestPassword123!
 
       - name: Upload Playwright report
         uses: actions/upload-artifact@v4

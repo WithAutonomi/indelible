@@ -37,6 +37,15 @@ type Config struct {
 
 	// SMTP configuration for transactional emails (password reset, email verification)
 	SMTP SMTPConfig `toml:"smtp"`
+
+	// Bootstrap admin — seeded at startup when the instance has no admin yet.
+	// This is how a fresh instance gets its first administrator: self-
+	// registration is disabled by default (see the registration_enabled
+	// setting) and never grants admin, so the first admin comes from here.
+	// Set via INDELIBLE_ADMIN_EMAIL / INDELIBLE_ADMIN_PASSWORD (or
+	// INDELIBLE_ADMIN_PASSWORD_FILE for Docker/K8s secrets).
+	AdminEmail    string `toml:"admin_email"`
+	AdminPassword string `toml:"admin_password"`
 }
 
 type SMTPConfig struct {
@@ -179,6 +188,21 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("INDELIBLE_SMTP_USE_TLS"); v != "" {
 		cfg.SMTP.UseTLS = v == "true" || v == "1"
+	}
+	if v := os.Getenv("INDELIBLE_ADMIN_EMAIL"); v != "" {
+		cfg.AdminEmail = strings.TrimSpace(strings.ToLower(v))
+	}
+	if v := os.Getenv("INDELIBLE_ADMIN_PASSWORD"); v != "" {
+		cfg.AdminPassword = v
+	}
+	// _FILE variant (Docker / K8s secrets) takes precedence over the inline
+	// var so the bootstrap password need never sit in the compose file.
+	if v := os.Getenv("INDELIBLE_ADMIN_PASSWORD_FILE"); v != "" {
+		b, err := os.ReadFile(v)
+		if err != nil {
+			return nil, fmt.Errorf("reading INDELIBLE_ADMIN_PASSWORD_FILE: %w", err)
+		}
+		cfg.AdminPassword = strings.TrimSpace(string(b))
 	}
 	if v := os.Getenv("INDELIBLE_ANTD_MANAGED"); v != "" {
 		cfg.AntdManaged = v == "true" || v == "1"

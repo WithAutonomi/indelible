@@ -117,6 +117,30 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Seed the bootstrap admin if configured and none exists yet. Self-
+	// registration is disabled by default, so on a fresh instance this is how
+	// the first administrator is created. Failure here is non-fatal — the
+	// admin-less warning below makes a misconfiguration impossible to miss.
+	if seeded, err := services.SeedAdmin(db, cfg); err != nil {
+		slog.Error("failed to seed bootstrap admin", "error", err)
+	} else if seeded {
+		slog.Info("seeded bootstrap admin", "email", cfg.AdminEmail)
+	}
+
+	// Refuse to start with no administrator: the instance would be unusable —
+	// nobody could log in, and self-registration is disabled by default. A
+	// transient CountAdmins error is non-fatal (don't crash on a flaky read);
+	// only a confirmed zero count aborts boot.
+	if n, err := services.NewPermissionService(db).CountAdmins(); err != nil {
+		slog.Error("could not verify an administrator exists", "error", err)
+	} else if n == 0 {
+		slog.Error("refusing to start: no administrator account exists — set INDELIBLE_ADMIN_EMAIL and INDELIBLE_ADMIN_PASSWORD to seed the first admin (see docker-compose.yml), then restart")
+		if antdMgr != nil {
+			_ = antdMgr.Stop()
+		}
+		os.Exit(1)
+	}
+
 	// Build router. The manager doubles as the AntdInfoProvider; pass nil
 	// when antd is unmanaged so /health reports the basic fields only.
 	var antdInfo handlers.AntdInfoProvider

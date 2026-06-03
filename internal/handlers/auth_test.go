@@ -12,11 +12,20 @@ import (
 	"github.com/WithAutonomi/indelible/internal/config"
 	"github.com/WithAutonomi/indelible/internal/dbtest"
 	"github.com/WithAutonomi/indelible/internal/handlers"
+	"github.com/WithAutonomi/indelible/internal/services"
 )
 
 type fakeAntdInfo struct{ h *antd.HealthStatus }
 
 func (f fakeAntdInfo) AntdInfo() *antd.HealthStatus { return f.h }
+
+// seedAdminEmail / seedAdminPassword are the conventional bootstrap-admin
+// credentials every test relies on: registerAndGetToken with this email logs
+// in (the user is pre-seeded as admin) rather than registering.
+const (
+	seedAdminEmail    = "admin@test.com"
+	seedAdminPassword = "password123"
+)
 
 func setupTestRouter(t *testing.T) http.Handler {
 	t.Helper()
@@ -25,21 +34,40 @@ func setupTestRouter(t *testing.T) http.Handler {
 		AntdURL:             "http://localhost:8082",
 		JWTSecret:           "test-secret-for-jwt-signing-1234567890",
 		WalletEncryptionKey: "0000000000000000000000000000000000000000000000000000000000000000",
+		AdminEmail:          seedAdminEmail,
+		AdminPassword:       seedAdminPassword,
 	}
 
 	db := dbtest.OpenDB(t)
+
+	// Seed the bootstrap admin so tests can obtain an admin token by
+	// "registering" admin@test.com — registerAndGetToken falls back to login
+	// when the user already exists.
+	if _, err := services.SeedAdmin(db, cfg); err != nil {
+		t.Fatalf("seed admin: %v", err)
+	}
+
+	// Self-registration is off by default; the suite exercises /auth/register
+	// to create ordinary (read) users, so enable it. Inserted directly to skip
+	// the config_audit row (changed_by would FK-violate with no acting user).
+	if _, err := db.Exec(`INSERT INTO settings (key, value) VALUES ('registration_enabled', 'true')`); err != nil {
+		t.Fatalf("enable registration: %v", err)
+	}
+
 	return handlers.NewRouter(cfg, db, nil)
 }
 
 func TestRegisterAndLogin(t *testing.T) {
 	router := setupTestRouter(t)
 
-	// Register first user (should become admin)
+	// Register an ordinary user (registration is enabled in the test router).
+	// Self-registered users get read-only access — admin is never granted via
+	// self-registration; it comes from the bootstrap seed.
 	regBody, _ := json.Marshal(map[string]string{
-		"email":      "admin@test.com",
+		"email":      "newuser@test.com",
 		"password":   "password123",
 		"first_name": "Test",
-		"last_name":  "Admin",
+		"last_name":  "User",
 	})
 	req := httptest.NewRequest("POST", "/api/v2/auth/register", bytes.NewReader(regBody))
 	req.Header.Set("Content-Type", "application/json")
@@ -56,16 +84,16 @@ func TestRegisterAndLogin(t *testing.T) {
 		t.Fatal("register: missing token")
 	}
 	user := regResp["user"].(map[string]any)
-	if user["permissions"] != "admin" {
-		t.Errorf("first user should be admin, got %s", user["permissions"])
+	if user["permissions"] != "read" {
+		t.Errorf("self-registered user should be read, got %s", user["permissions"])
 	}
-	if user["email"] != "admin@test.com" {
-		t.Errorf("email = %s, want admin@test.com", user["email"])
+	if user["email"] != "newuser@test.com" {
+		t.Errorf("email = %s, want newuser@test.com", user["email"])
 	}
 
 	// Login with same credentials
 	loginBody, _ := json.Marshal(map[string]string{
-		"email":    "admin@test.com",
+		"email":    "newuser@test.com",
 		"password": "password123",
 	})
 	req = httptest.NewRequest("POST", "/api/v2/auth/login", bytes.NewReader(loginBody))
@@ -98,6 +126,68 @@ func TestRegisterAndLogin(t *testing.T) {
 	json.Unmarshal(w.Body.Bytes(), &profile)
 	if profile["first_name"] != "Test" {
 		t.Errorf("first_name = %s, want Test", profile["first_name"])
+	}
+}
+
+// setupTestRouterNoReg builds a router on a fresh DB with the bootstrap admin
+// seeded but self-registration left at its default (disabled). Used to assert
+// the registration gate.
+func setupTestRouterNoReg(t *testing.T) http.Handler {
+	t.Helper()
+	cfg := &config.Config{
+		Port:                8080,
+		AntdURL:             "http://localhost:8082",
+		JWTSecret:           "test-secret-for-jwt-signing-1234567890",
+		WalletEncryptionKey: "0000000000000000000000000000000000000000000000000000000000000000",
+		AdminEmail:          seedAdminEmail,
+		AdminPassword:       seedAdminPassword,
+	}
+	db := dbtest.OpenDB(t)
+	if _, err := services.SeedAdmin(db, cfg); err != nil {
+		t.Fatalf("seed admin: %v", err)
+	}
+	return handlers.NewRouter(cfg, db, nil)
+}
+
+// TestRegistrationDisabledByDefault asserts the core fix: with registration
+// left at its default, POST /auth/register is rejected with 403.
+func TestRegistrationDisabledByDefault(t *testing.T) {
+	router := setupTestRouterNoReg(t)
+
+	body, _ := json.Marshal(map[string]string{
+		"email": "stranger@test.com", "password": "password123",
+		"first_name": "S", "last_name": "T",
+	})
+	req := httptest.NewRequest("POST", "/api/v2/auth/register", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("register with registration disabled: got %d, want 403; body=%s", w.Code, w.Body.String())
+	}
+}
+
+// TestSeededAdminCanLogIn asserts the bootstrap admin created by SeedAdmin can
+// authenticate and is recognised as admin — even with registration disabled.
+func TestSeededAdminCanLogIn(t *testing.T) {
+	router := setupTestRouterNoReg(t)
+
+	loginBody, _ := json.Marshal(map[string]string{
+		"email": seedAdminEmail, "password": seedAdminPassword,
+	})
+	req := httptest.NewRequest("POST", "/api/v2/auth/login", bytes.NewReader(loginBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("seed admin login: got %d, body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	user := resp["user"].(map[string]any)
+	if user["permissions"] != "admin" {
+		t.Errorf("seeded user permissions = %v, want admin", user["permissions"])
 	}
 }
 

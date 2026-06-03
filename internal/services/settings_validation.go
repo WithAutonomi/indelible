@@ -27,6 +27,7 @@ var typedValidators = map[string]func(string) error{
 	"antd_quote_timeout_secs":        intInRange(1, 3600),
 	"antd_health_probe_timeout_secs": intInRange(1, 120),
 	"notifier_method":                oneOf("auto", "smtp", "webhook", "noop"),
+	"registration_enabled":           oneOf("true", "false"),
 }
 
 // oneOf builds a validator that requires the value to be in the allowed set.
