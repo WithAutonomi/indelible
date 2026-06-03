@@ -231,9 +231,15 @@ func Load(path string) (*Config, error) {
 		cfg.SMTP.Port = 587
 	}
 
-	// Generate JWT secret if not set
+	// Require JWT secret with adequate entropy. HMAC-SHA256 signing security
+	// rests entirely on the secret's strength (verification already rejects
+	// non-HMAC algs), so a short/guessable secret is forgeable. Enforce a floor
+	// of 32 bytes, mirroring the wallet-key UX below.
 	if cfg.JWTSecret == "" {
-		return nil, fmt.Errorf("jwt_secret is required (set INDELIBLE_JWT_SECRET or jwt_secret in config)")
+		return nil, fmt.Errorf("jwt_secret is required (set INDELIBLE_JWT_SECRET or jwt_secret in config); generate with: openssl rand -hex 32")
+	}
+	if len(cfg.JWTSecret) < 32 {
+		return nil, fmt.Errorf("jwt_secret must be at least 32 characters (got %d); generate with: openssl rand -hex 32", len(cfg.JWTSecret))
 	}
 
 	// Require wallet encryption key
