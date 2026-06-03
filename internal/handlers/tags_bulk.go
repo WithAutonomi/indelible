@@ -2,12 +2,18 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/middleware"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
+
+// maxBulkTagUUIDs caps the explicit-UUID target list. The UUID path issues one
+// GetByUUID query per entry, so an uncapped list lets a single request fan out
+// into unbounded DB work. Matches the selector path's 1000-row cap below.
+const maxBulkTagUUIDs = 1000
 
 type bulkTagRequest struct {
 	UploadUUIDs []string            `json:"upload_uuids"`
@@ -41,6 +47,10 @@ func BulkTagUploads(db *database.DB) http.HandlerFunc {
 
 		switch {
 		case len(req.UploadUUIDs) > 0:
+			if len(req.UploadUUIDs) > maxBulkTagUUIDs {
+				jsonError(w, fmt.Sprintf("too many upload_uuids (max %d)", maxBulkTagUUIDs), http.StatusBadRequest)
+				return
+			}
 			// Resolve UUIDs to uploads, verifying ownership
 			for _, uid := range req.UploadUUIDs {
 				upload, err := uploadSvc.GetByUUID(uid)
