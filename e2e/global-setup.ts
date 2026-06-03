@@ -40,14 +40,20 @@ export default async function globalSetup() {
   const token = (await login.json()).token
 
   // Enable self-registration so tests exercising the register flow work; those
-  // users get the read-only default. Bearer callers are CSRF-exempt.
-  const patch = await ctx.patch('/api/v2/admin/settings', {
-    headers: { Authorization: `Bearer ${token}` },
+  // users get the read-only default. Use a fresh, cookieless context so this is
+  // a pure Bearer call — CSRF is enforced when the login session cookie is
+  // present, but Bearer-only callers are exempt.
+  const adminCtx = await request.newContext({
+    baseURL: 'http://localhost:8080',
+    extraHTTPHeaders: { Authorization: `Bearer ${token}` },
+  })
+  const patch = await adminCtx.patch('/api/v2/admin/settings', {
     data: { registration_enabled: 'true' },
   })
   if (!patch.ok()) {
     throw new Error(`E2E enable registration failed: ${patch.status()} ${await patch.text()}`)
   }
+  await adminCtx.dispose()
 
   fs.writeFileSync(ADMIN_FILE, JSON.stringify({ token, ...ADMIN_CREDS }, null, 2))
   await ctx.dispose()
