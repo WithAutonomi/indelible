@@ -64,6 +64,19 @@ func (s *SettingsService) Get(key string) (string, error) {
 	return value, err
 }
 
+// SetInternal upserts a single setting without writing a config_audit entry and
+// with a NULL updated_by. It is for system-driven flags (e.g. the disk-pause
+// state set by the disk-alert worker), NOT admin config changes — those must go
+// through Update so the change is attributed and audited.
+func (s *SettingsService) SetInternal(key, value string) error {
+	_, err := s.db.Exec(
+		`INSERT INTO settings (key, value, updated_at, updated_by) VALUES (?, ?, CURRENT_TIMESTAMP, NULL)
+		 ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = CURRENT_TIMESTAMP, updated_by = NULL`,
+		key, value, value,
+	)
+	return err
+}
+
 // Update sets one or more settings, logging each change to config_audit.
 //
 // Keys registered in typedValidators are validated up front; the entire PATCH

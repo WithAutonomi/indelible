@@ -12,13 +12,21 @@ import (
 	"github.com/WithAutonomi/indelible/internal/services"
 )
 
+// UploadsPausedSetting is the settings key the worker writes its pause state to.
+// CreateUpload reads it to shed load when the disk is critically full. Lives in
+// the settings table (not just the in-memory IsPaused flag) so the HTTP handler,
+// which has no reference to this worker, can consult it — and so the state
+// survives a restart until the next check reconciles it.
+const UploadsPausedSetting = "uploads_paused"
+
 // DiskAlertWorker monitors data directory disk usage and fires alerts.
 type DiskAlertWorker struct {
-	cfg        *config.Config
-	logSvc     *services.LogService
-	webhookSvc *services.WebhookDeliveryService
-	wg         sync.WaitGroup
-	cancel     context.CancelFunc
+	cfg         *config.Config
+	logSvc      *services.LogService
+	webhookSvc  *services.WebhookDeliveryService
+	settingsSvc *services.SettingsService
+	wg          sync.WaitGroup
+	cancel      context.CancelFunc
 
 	// IsPaused indicates uploads should be paused due to critical disk usage.
 	IsPaused bool
@@ -31,9 +39,26 @@ type DiskAlertWorker struct {
 // NewDiskAlertWorker creates a new disk alert worker.
 func NewDiskAlertWorker(db *database.DB, cfg *config.Config) *DiskAlertWorker {
 	return &DiskAlertWorker{
-		cfg:        cfg,
-		logSvc:     services.NewLogService(db),
-		webhookSvc: services.NewWebhookDeliveryService(db),
+		cfg:         cfg,
+		logSvc:      services.NewLogService(db),
+		webhookSvc:  services.NewWebhookDeliveryService(db),
+		settingsSvc: services.NewSettingsService(db),
+	}
+}
+
+// setPaused updates the in-memory flag and persists it to settings, but only on
+// an actual transition so we don't write to the DB on every 5-minute tick.
+func (w *DiskAlertWorker) setPaused(paused bool) {
+	if w.IsPaused == paused {
+		return
+	}
+	w.IsPaused = paused
+	val := "false"
+	if paused {
+		val = "true"
+	}
+	if err := w.settingsSvc.SetInternal(UploadsPausedSetting, val); err != nil {
+		slog.Error("failed to persist uploads_paused state", "paused", paused, "error", err)
 	}
 }
 
@@ -41,6 +66,14 @@ func NewDiskAlertWorker(db *database.DB, cfg *config.Config) *DiskAlertWorker {
 func (w *DiskAlertWorker) Start() {
 	ctx, cancel := context.WithCancel(context.Background())
 	w.cancel = cancel
+
+	// Reconcile persisted pause state across restarts: load the last-known flag,
+	// then run one immediate check so a stale "paused" doesn't outlive recovery
+	// (and a still-critical disk re-pauses without waiting a full tick).
+	if v, err := w.settingsSvc.Get(UploadsPausedSetting); err == nil {
+		w.IsPaused = v == "true"
+	}
+	w.check()
 
 	w.wg.Add(1)
 	go func() {
@@ -84,7 +117,7 @@ func (w *DiskAlertWorker) check() {
 	switch {
 	case usagePct >= 95:
 		if !w.IsPaused {
-			w.IsPaused = true
+			w.setPaused(true)
 			w.logSvc.WriteSystem("error", "disk_alert",
 				"Critical: disk usage at "+pctStr+"%, uploads paused", "", "")
 			slog.Error("disk critical — uploads paused", "usage_pct", usagePct)
@@ -98,7 +131,7 @@ func (w *DiskAlertWorker) check() {
 			})
 		}
 	case usagePct >= 80:
-		w.IsPaused = false
+		w.setPaused(false)
 		w.logSvc.WriteSystem("warn", "disk_alert",
 			"Warning: disk usage at "+pctStr+"%", "", "")
 		slog.Warn("disk warning", "usage_pct", usagePct)
@@ -112,7 +145,7 @@ func (w *DiskAlertWorker) check() {
 		}
 	default:
 		if w.IsPaused {
-			w.IsPaused = false
+			w.setPaused(false)
 			w.logSvc.WriteSystem("info", "disk_alert",
 				"Disk usage back to normal ("+pctStr+"%)", "", "")
 			slog.Info("disk usage normal — uploads resumed", "usage_pct", usagePct)
