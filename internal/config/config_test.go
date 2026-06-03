@@ -10,7 +10,7 @@ import (
 // tests can focus on the field under test.
 func setRequiredSecrets(t *testing.T) {
 	t.Helper()
-	t.Setenv("INDELIBLE_JWT_SECRET", "test-secret")
+	t.Setenv("INDELIBLE_JWT_SECRET", "test-secret-at-least-32-bytes-long-xx")
 	t.Setenv("INDELIBLE_WALLET_ENCRYPTION_KEY", "1111111111111111111111111111111111111111111111111111111111111111")
 }
 
@@ -60,5 +60,23 @@ func TestLoad_AdminPasswordFileMissing(t *testing.T) {
 
 	if _, err := Load(""); err == nil {
 		t.Fatal("expected Load to fail when INDELIBLE_ADMIN_PASSWORD_FILE points at a missing file")
+	}
+}
+
+func TestLoad_JWTSecretTooShort(t *testing.T) {
+	t.Setenv("INDELIBLE_WALLET_ENCRYPTION_KEY", "1111111111111111111111111111111111111111111111111111111111111111")
+	t.Setenv("INDELIBLE_JWT_SECRET", "short-secret") // 12 bytes, below the 32-byte floor
+
+	if _, err := Load(""); err == nil {
+		t.Fatal("expected Load to fail when jwt_secret is shorter than 32 bytes")
+	}
+}
+
+func TestLoad_JWTSecretAtFloorAccepted(t *testing.T) {
+	t.Setenv("INDELIBLE_WALLET_ENCRYPTION_KEY", "1111111111111111111111111111111111111111111111111111111111111111")
+	t.Setenv("INDELIBLE_JWT_SECRET", "0123456789abcdef0123456789abcdef") // exactly 32 bytes
+
+	if _, err := Load(""); err != nil {
+		t.Fatalf("Load rejected a 32-byte jwt_secret: %v", err)
 	}
 }
