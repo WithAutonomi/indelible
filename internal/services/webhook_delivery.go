@@ -10,10 +10,24 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/WithAutonomi/indelible/internal/database"
 )
+
+// RedactWebhookURL returns at most scheme://host for logging. The path/query is
+// dropped because webhook URLs commonly embed their credential there (e.g. a
+// Slack webhook's secret lives in the trailing path segment), and webhook logs
+// flow to stdout / aggregators / SIEM. The webhook_id is logged alongside for
+// correlation, so the full URL is never needed in logs.
+func RedactWebhookURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return "redacted"
+	}
+	return u.Scheme + "://" + u.Host
+}
 
 // WebhookPayload is the JSON payload sent to webhook endpoints.
 type WebhookPayload struct {
@@ -340,7 +354,7 @@ func (s *WebhookDeliveryService) deliver(wh *Webhook, payload WebhookPayload) {
 		lastStatusCode = resp.StatusCode
 
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			slog.Debug("webhook delivered", "webhook_id", wh.ID, "url", wh.URL, "status", resp.StatusCode)
+			slog.Debug("webhook delivered", "webhook_id", wh.ID, "host", RedactWebhookURL(wh.URL), "status", resp.StatusCode)
 			s.logDelivery(wh.ID, payload.EventType, resp.StatusCode, true, attempt+1, "")
 			return
 		}
@@ -348,7 +362,7 @@ func (s *WebhookDeliveryService) deliver(wh *Webhook, payload WebhookPayload) {
 		slog.Warn("webhook non-2xx response", "webhook_id", wh.ID, "status", resp.StatusCode, "attempt", attempt+1)
 	}
 
-	slog.Error("webhook delivery exhausted retries", "webhook_id", wh.ID, "url", wh.URL)
+	slog.Error("webhook delivery exhausted retries", "webhook_id", wh.ID, "host", RedactWebhookURL(wh.URL))
 	s.logDelivery(wh.ID, payload.EventType, lastStatusCode, false, 3, lastErr)
 }
 
