@@ -148,7 +148,7 @@ onMounted(() => {
         <form @submit.prevent="handleUpload" class="flex flex-col sm:flex-row items-start gap-4">
           <div class="flex-1">
             <input id="file-input" type="file" @change="onFileSelect" :disabled="noWallet"
-              class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
+              class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-medium file:bg-blue-50 dark:file:bg-blue-950/40 file:text-blue-700 dark:file:text-blue-300 hover:file:bg-blue-100 dark:hover:file:bg-blue-900/50" />
           </div>
           <Select v-model="visibility" :options="visibilityOptions" optionLabel="label" optionValue="value"
             :disabled="noWallet" class="w-36" />

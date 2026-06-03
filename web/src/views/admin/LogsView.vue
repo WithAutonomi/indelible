@@ -13,6 +13,7 @@ import Tab from 'primevue/tab'
 import TabPanels from 'primevue/tabpanels'
 import TabPanel from 'primevue/tabpanel'
 import DatePicker from 'primevue/datepicker'
+import { presetRange, PRESET_OPTIONS, type DatePreset } from '../../composables/useDateRangePresets'
 
 const activeTab = ref('audit')
 const entries = ref<any[]>([])
@@ -28,6 +29,7 @@ const severity = ref('') // V2-318: shared by audit + user tabs
 const settingKey = ref('') // V2-316
 const sinceDate = ref<Date | null>(null)
 const untilDate = ref<Date | null>(null)
+const preset = ref<DatePreset>('') // V2-409: quick date-range presets
 
 // V2-408: the level/severity dropdowns must match the values actually stored,
 // which differ per tab — system_log uses info/warning/critical, while
@@ -66,6 +68,38 @@ function formatDateParam(d: Date | null): string {
   return d.toISOString().split('T')[0]
 }
 
+// V2-409: build the since/until query params. An active preset sends precise
+// RFC3339 timestamps (exact rolling windows); otherwise the manual Since/Until
+// pickers send day-granular YYYY-MM-DD. The backend accepts both.
+function applyDateParams(params: any) {
+  const range = presetRange(preset.value)
+  if (range) {
+    params.since = range.since.toISOString()
+    params.until = range.until.toISOString()
+    return
+  }
+  const sinceStr = formatDateParam(sinceDate.value)
+  const untilStr = formatDateParam(untilDate.value)
+  if (sinceStr) params.since = sinceStr
+  if (untilStr) params.until = untilStr
+}
+
+// Selecting a preset takes over the date filter: clear the manual pickers and
+// refetch. "Custom" hands control back to the pickers.
+function onPresetChange() {
+  if (preset.value) {
+    sinceDate.value = null
+    untilDate.value = null
+  }
+  page.value = 1
+  fetchLogs()
+}
+
+// Editing a manual date drops out of any active preset (back to Custom).
+function onManualDate() {
+  preset.value = ''
+}
+
 async function fetchLogs() {
   loading.value = true
   try {
@@ -73,10 +107,7 @@ async function fetchLogs() {
       limit,
       offset: (page.value - 1) * limit,
     }
-    const sinceStr = formatDateParam(sinceDate.value)
-    const untilStr = formatDateParam(untilDate.value)
-    if (sinceStr) params.since = sinceStr
-    if (untilStr) params.until = untilStr
+    applyDateParams(params)
 
     let endpoint = ''
     if (activeTab.value === 'audit') {
@@ -121,6 +152,7 @@ function clearFilters() {
   settingKey.value = ''
   sinceDate.value = null
   untilDate.value = null
+  preset.value = ''
   page.value = 1
   fetchLogs()
 }
@@ -151,10 +183,7 @@ const exporting = ref(false)
 // into a blob URL and clicked. The server caps at 1M rows.
 async function exportCurrent() {
   const params: any = {}
-  const sinceStr = formatDateParam(sinceDate.value)
-  const untilStr = formatDateParam(untilDate.value)
-  if (sinceStr) params.since = sinceStr
-  if (untilStr) params.until = untilStr
+  applyDateParams(params)
   if (activeTab.value === 'audit') {
     if (eventType.value) params.event_type = eventType.value
     if (severity.value) params.severity = severity.value
@@ -347,12 +376,19 @@ onMounted(refreshAll)
               <InputText v-model="settingKey" placeholder="e.g. maintenance_mode" class="w-48" size="small" />
             </div>
             <div>
+              <label class="block text-xs text-surface-500 mb-1">Range</label>
+              <Select v-model="preset" :options="PRESET_OPTIONS" optionLabel="label" optionValue="value"
+                class="w-36" @change="onPresetChange" />
+            </div>
+            <div>
               <label class="block text-xs text-surface-500 mb-1">Since</label>
-              <DatePicker v-model="sinceDate" dateFormat="yy-mm-dd" showIcon class="w-40" />
+              <DatePicker v-model="sinceDate" dateFormat="yy-mm-dd" showIcon class="w-40"
+                :disabled="!!preset" @date-select="onManualDate" />
             </div>
             <div>
               <label class="block text-xs text-surface-500 mb-1">Until</label>
-              <DatePicker v-model="untilDate" dateFormat="yy-mm-dd" showIcon class="w-40" />
+              <DatePicker v-model="untilDate" dateFormat="yy-mm-dd" showIcon class="w-40"
+                :disabled="!!preset" @date-select="onManualDate" />
             </div>
             <Button icon="pi pi-search" label="Filter" severity="secondary" @click="page = 1; fetchLogs()" />
             <Button icon="pi pi-filter-slash" label="Clear" severity="secondary" text @click="clearFilters" />

@@ -110,7 +110,7 @@ onMounted(refresh)
       </div>
     </div>
 
-    <p v-if="versionInfo && !versionInfo.github_reachable" class="text-xs text-amber-700 -mt-3 mb-4">
+    <p v-if="versionInfo && !versionInfo.github_reachable" class="text-xs text-amber-700 dark:text-amber-400 -mt-3 mb-4">
       Couldn't reach GitHub to check for updates — the host may be offline or firewalled.
     </p>
 
@@ -129,14 +129,14 @@ onMounted(refresh)
 
       <!-- The signal the banner is driven by -->
       <div class="flex items-center gap-3 mb-4 p-3 rounded-lg"
-        :class="health.antdReachable ? 'bg-green-50' : 'bg-amber-50'">
+        :class="health.antdReachable ? 'bg-green-50 dark:bg-green-950/40' : 'bg-amber-50 dark:bg-amber-950/40'">
         <i class="pi text-lg"
           :class="health.antdReachable
-            ? 'pi-check-circle text-green-600'
-            : 'pi-exclamation-triangle text-amber-500'"></i>
+            ? 'pi-check-circle text-green-600 dark:text-green-400'
+            : 'pi-exclamation-triangle text-amber-500 dark:text-amber-400'"></i>
         <div>
           <p class="text-sm font-medium"
-            :class="health.antdReachable ? 'text-green-700' : 'text-amber-800'">
+            :class="health.antdReachable ? 'text-green-700 dark:text-green-300' : 'text-amber-800 dark:text-amber-200'">
             {{ health.antdReachable ? 'Connected to the network' : 'Not reaching the network' }}
           </p>
           <p class="text-xs text-surface-500 mt-0.5">

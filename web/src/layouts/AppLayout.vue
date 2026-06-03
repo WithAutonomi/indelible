@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useHealthStore } from '../stores/health'
 import { useTheme } from '../composables/useTheme'
+import GlobalSearch from '../components/GlobalSearch.vue'
 import Button from 'primevue/button'
 import Avatar from 'primevue/avatar'
 
@@ -110,6 +111,13 @@ const navItems = computed(() => {
 
     <!-- Main content -->
     <main class="flex-1 overflow-auto">
+      <!-- Top bar with the centered global search (Ctrl/Cmd+K) -->
+      <header class="sticky top-0 z-20 flex items-center justify-center h-14 px-4 border-b border-surface-200 bg-surface-0">
+        <div class="w-full max-w-xl">
+          <GlobalSearch />
+        </div>
+      </header>
+
       <!-- Network/daemon health banner (admins only). The reported condition
            is otherwise invisible in the UI — without this it only shows up in
            the container logs. -->

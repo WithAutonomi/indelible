@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,6 +10,36 @@ import (
 	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/dbtest"
 )
+
+// seedUser inserts a user and, when level is non-empty, grants that direct
+// permission level. Returns the new user's id. Avoids LastInsertId (unsupported
+// by lib/pq) so it works on both SQLite and Postgres.
+func seedUser(t *testing.T, db *database.DB, email, level string) int64 {
+	t.Helper()
+	if _, err := db.Exec(`INSERT INTO users (email) VALUES (?)`, email); err != nil {
+		t.Fatalf("insert user: %v", err)
+	}
+	var id int64
+	if err := db.QueryRow(`SELECT id FROM users WHERE email = ?`, email).Scan(&id); err != nil {
+		t.Fatalf("lookup user id: %v", err)
+	}
+	if level != "" {
+		if _, err := db.Exec(
+			`INSERT INTO user_permissions (user_id, permission_level) VALUES (?, ?)`,
+			id, level,
+		); err != nil {
+			t.Fatalf("grant %s: %v", level, err)
+		}
+	}
+	return id
+}
+
+// reqAs builds a request carrying an authenticated user id on its context,
+// mimicking what Authenticate sets upstream of MaintenanceMode.
+func reqAs(method, target string, userID int64) *http.Request {
+	req := httptest.NewRequest(method, target, nil)
+	return req.WithContext(context.WithValue(req.Context(), UserIDKey, userID))
+}
 
 func setupMaintenanceDB(t *testing.T) *database.DB {
 	return dbtest.OpenDB(t)
@@ -176,6 +207,54 @@ func TestMaintenanceMode_ToggleDynamic(t *testing.T) {
 	handler.ServeHTTP(w3, req3)
 	if w3.Code != http.StatusOK {
 		t.Fatalf("after disabling: got %d, want 200", w3.Code)
+	}
+}
+
+func TestMaintenanceMode_Enabled_AdminPassesThrough(t *testing.T) {
+	db := setupMaintenanceDB(t)
+	setMaintenanceMode(t, db, true, "")
+	adminID := seedUser(t, db, "admin@example.com", "admin")
+
+	called := false
+	downstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	mw := MaintenanceMode(db)
+	handler := mw(downstream)
+
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, reqAs("PATCH", "/api/v2/admin/settings", adminID))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("admin got %d during maintenance, want 200 (must reach the off-switch)", w.Code)
+	}
+	if !called {
+		t.Error("downstream should be called for an admin during maintenance")
+	}
+}
+
+func TestMaintenanceMode_Enabled_NonAdminBlocked(t *testing.T) {
+	db := setupMaintenanceDB(t)
+	setMaintenanceMode(t, db, true, "")
+	userID := seedUser(t, db, "user@example.com", "write")
+
+	downstream := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("downstream should not be called for a non-admin during maintenance")
+	})
+
+	mw := MaintenanceMode(db)
+	handler := mw(downstream)
+
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, reqAs("GET", "/api/v2/uploads", userID))
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("non-admin got %d during maintenance, want 503", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "maintenance_mode") {
+		t.Errorf("body should contain maintenance_mode code: %s", w.Body.String())
 	}
 }
 

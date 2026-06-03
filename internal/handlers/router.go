@@ -58,8 +58,10 @@ func NewRouter(cfg *config.Config, db *database.DB, antdInfo AntdInfoProvider) h
 
 	// API v2 routes
 	r.Route("/api/v2", func(r chi.Router) {
-		// Maintenance mode (exempt: health, admin routes)
-		r.Use(middleware.MaintenanceMode(db))
+		// Maintenance mode is NOT gated here: it must run after Authenticate so
+		// admins can be recognised and pass through (see the authenticated
+		// group below). Gating at this level would 503 admins and the login
+		// route too, bricking the off-switch.
 
 		// Public auth routes (with rate limiting on login)
 		r.Group(func(r chi.Router) {
@@ -87,6 +89,12 @@ func NewRouter(cfg *config.Config, db *database.DB, antdInfo AntdInfoProvider) h
 			// must echo the csrf_token cookie back as X-CSRF-Token; mismatches
 			// 403. Bearer / API-token callers are exempt — see csrf.go.
 			r.Use(middleware.CSRF(true))
+			// Maintenance mode: 503s non-admin callers while letting admins
+			// through. Runs after Authenticate so the caller is identified;
+			// the admin route group below is intentionally not wrapped (admins
+			// are always exempt, so its endpoints stay reachable to disable
+			// maintenance mode).
+			r.Use(middleware.MaintenanceMode(db))
 
 			// System status (available to all authenticated users)
 			r.Get("/system/wallet-status", WalletStatus(db, cfg))
@@ -119,6 +127,10 @@ func NewRouter(cfg *config.Config, db *database.DB, antdInfo AntdInfoProvider) h
 			r.Get("/tags/search", SearchByTags(db))
 			r.Post("/tags/bulk", BulkTagUploads(db))
 			r.Get("/tags/facets", TagFacets(db))
+
+			// Global search omnibox (V2-406). Admin categories inside are
+			// gated server-side by the caller's admin status.
+			r.Get("/search", GlobalSearch(db))
 
 			// Collections
 			r.Post("/collections", CreateCollection(db))

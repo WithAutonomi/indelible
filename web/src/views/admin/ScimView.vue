@@ -132,7 +132,14 @@ onMounted(() => {
   <div class="p-6">
 
     <div class="flex items-center justify-between mb-6">
-      <h1 class="text-2xl font-bold">SCIM Provisioning</h1>
+      <div>
+        <h1 class="text-2xl font-bold">SCIM Provisioning</h1>
+        <p class="text-sm text-surface-400 mt-1">Automatic user and group provisioning (SCIM 2.0) from your identity provider.</p>
+      </div>
+      <a href="https://github.com/WithAutonomi/indelible/blob/master/docs/guides/scim.md" target="_blank" rel="noopener"
+        class="inline-flex items-center gap-1 text-sm text-primary hover:underline">
+        <i class="pi pi-book"></i> Setup guide
+      </a>
     </div>
 
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">

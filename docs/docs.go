@@ -5672,6 +5672,23 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_WithAutonomi_indelible_internal_services.SearchHit": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "label": {
+                    "type": "string"
+                },
+                "sublabel": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_WithAutonomi_indelible_internal_services.VersionCheckResult": {
             "type": "object",
             "properties": {
