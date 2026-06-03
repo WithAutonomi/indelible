@@ -15,6 +15,15 @@ import (
 // admin token, while other emails register as ordinary read users.
 func registerAndGetToken(t *testing.T, router http.Handler, email, password, first, last string) string {
 	t.Helper()
+	// The bootstrap admin is pre-seeded (see setupTestRouter) — log in directly
+	// rather than attempting a register that 409s. Beyond saving a round-trip,
+	// this avoids a Postgres-only footgun: a failed INSERT still consumes the
+	// users id sequence, shifting every subsequent user id and breaking tests
+	// that assert specific ids (SQLite reclaims the rowid, so it masks this).
+	if email == seedAdminEmail {
+		return loginAndGetToken(t, router, email, password)
+	}
+
 	body, _ := json.Marshal(map[string]string{
 		"email": email, "password": password,
 		"first_name": first, "last_name": last,
