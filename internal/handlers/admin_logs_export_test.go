@@ -27,9 +27,32 @@ func setupRouterWithDB(t *testing.T) (http.Handler, *database.DB) {
 		AntdURL:             "http://localhost:8082",
 		JWTSecret:           "test-secret-for-jwt-signing-1234567890",
 		WalletEncryptionKey: "0000000000000000000000000000000000000000000000000000000000000000",
+		AdminEmail:          seedAdminEmail,
+		AdminPassword:       seedAdminPassword,
 	}
 	db := dbtest.OpenDB(t)
+	// Seed the bootstrap admin + enable self-registration, mirroring
+	// setupTestRouter, so registerAndGetToken behaves identically here.
+	if _, err := services.SeedAdmin(db, cfg); err != nil {
+		t.Fatalf("seed admin: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO settings (key, value) VALUES ('registration_enabled', 'true')`); err != nil {
+		t.Fatalf("enable registration: %v", err)
+	}
 	return handlers.NewRouter(cfg, db, nil), db
+}
+
+// adminTokenCleanAudit returns the bootstrap-admin token and clears the
+// audit_log row that acquiring it (login) produces, so tests asserting exact
+// audit-log contents start from an empty table. System/config logs are
+// untouched by login and need no clearing.
+func adminTokenCleanAudit(t *testing.T, router http.Handler, db *database.DB) string {
+	t.Helper()
+	tok := registerAndGetToken(t, router, seedAdminEmail, seedAdminPassword, "Admin", "User")
+	if _, err := db.Exec(`DELETE FROM audit_log`); err != nil {
+		t.Fatalf("clear audit_log: %v", err)
+	}
+	return tok
 }
 
 func mustWriteAudit(t *testing.T, svc *services.LogService, eventType, severity string, userID *int64, detail string) {
@@ -51,7 +74,7 @@ func mustWriteSystem(t *testing.T, svc *services.LogService, level, component, m
 
 func TestAuditLogs_SeverityFilterNarrowsResults(t *testing.T) {
 	router, db := setupRouterWithDB(t)
-	adminToken := registerAndGetToken(t, router, "admin@test.com", "password123", "Admin", "User")
+	adminToken := adminTokenCleanAudit(t, router, db)
 	logSvc := services.NewLogService(db)
 	uid := int64(1)
 	mustWriteAudit(t, logSvc, "login", "info", &uid, "info entry")
@@ -96,7 +119,7 @@ func TestAuditLogs_SeverityFilterNarrowsResults(t *testing.T) {
 
 func TestAuditLogs_ExportProducesNDJSON(t *testing.T) {
 	router, db := setupRouterWithDB(t)
-	adminToken := registerAndGetToken(t, router, "admin@test.com", "password123", "Admin", "User")
+	adminToken := adminTokenCleanAudit(t, router, db)
 
 	logSvc := services.NewLogService(db)
 	uid := int64(1)

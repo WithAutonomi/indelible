@@ -32,7 +32,10 @@ func jsonRequest(t *testing.T, router http.Handler, method, path, token string, 
 func TestWorkflow_RegisterUploadTagCollect(t *testing.T) {
 	router := setupTestRouter(t)
 	token := registerAndGetToken(t, router, "workflow@test.com", "password123", "Work", "Flow")
-	createTestWallet(t, router, token) // first user is admin
+	// Wallet creation is admin-only; use the seeded bootstrap admin. The
+	// wallet is instance-wide, so the read user's uploads below still use it.
+	adminToken := registerAndGetToken(t, router, seedAdminEmail, seedAdminPassword, "Admin", "User")
+	createTestWallet(t, router, adminToken)
 
 	// Step 1: Upload a file
 	uuid := uploadAndGetUUID(t, router, token, "workflow-doc.pdf")
@@ -128,7 +131,9 @@ func TestWorkflow_MultiUserIsolation(t *testing.T) {
 func TestWorkflow_APITokenFullLifecycle(t *testing.T) {
 	router := setupTestRouter(t)
 	token := registerAndGetToken(t, router, "api-user@test.com", "password123", "API", "User")
-	createTestWallet(t, router, token)
+	// Wallet creation is admin-only; use the seeded bootstrap admin.
+	adminToken := registerAndGetToken(t, router, seedAdminEmail, seedAdminPassword, "Admin", "User")
+	createTestWallet(t, router, adminToken)
 
 	// Create an API token
 	w := jsonRequest(t, router, "POST", "/api/v2/tokens", token,
@@ -170,8 +175,8 @@ func TestWorkflow_APITokenFullLifecycle(t *testing.T) {
 func TestWorkflow_AdminUserManagement(t *testing.T) {
 	router := setupTestRouter(t)
 
-	// Admin is the first registered user
-	adminToken := registerAndGetToken(t, router, "admin@mgmt.com", "password123", "Admin", "Boss")
+	// Admin is the seeded bootstrap admin.
+	adminToken := registerAndGetToken(t, router, seedAdminEmail, seedAdminPassword, "Admin", "Boss")
 	createTestWallet(t, router, adminToken)
 
 	// Register a second user
@@ -192,7 +197,9 @@ func TestWorkflow_AdminUserManagement(t *testing.T) {
 
 func TestWorkflow_WebhookDeliveryOnUpload(t *testing.T) {
 	router := setupTestRouter(t)
-	token := registerAndGetToken(t, router, "webhook@test.com", "password123", "Webhook", "Test")
+	// Wallet + webhook creation are admin-only and the actor also uploads, so
+	// run the whole flow as the seeded bootstrap admin.
+	token := registerAndGetToken(t, router, seedAdminEmail, seedAdminPassword, "Webhook", "Test")
 	createTestWallet(t, router, token)
 
 	// Create a webhook (admin endpoint)

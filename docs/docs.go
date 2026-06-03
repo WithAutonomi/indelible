@@ -3897,7 +3897,7 @@ const docTemplate = `{
         },
         "/auth/register": {
             "post": {
-                "description": "Create a new user account with email, password, and name",
+                "description": "Create a new user account with email, password, and name. Self-registration is disabled by default; an admin must enable it via the registration_enabled setting. Self-registered users receive read-only access.",
                 "consumes": [
                     "application/json"
                 ],
@@ -3928,6 +3928,15 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {

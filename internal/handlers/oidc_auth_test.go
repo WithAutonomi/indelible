@@ -139,8 +139,16 @@ func setupOIDCTest(t *testing.T) *oidcEnv {
 		AntdURL:             "http://localhost:8082",
 		JWTSecret:           "test-secret-for-jwt-signing-1234567890",
 		WalletEncryptionKey: "0000000000000000000000000000000000000000000000000000000000000000",
+		AdminEmail:          seedAdminEmail,
+		AdminPassword:       seedAdminPassword,
 	}
 	db := dbtest.OpenDB(t)
+	if _, err := services.SeedAdmin(db, cfg); err != nil {
+		t.Fatalf("seed admin: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO settings (key, value) VALUES ('registration_enabled', 'true')`); err != nil {
+		t.Fatalf("enable registration: %v", err)
+	}
 	router := handlers.NewRouter(cfg, db, nil)
 
 	idp := startFakeIDP(t, "test-client")

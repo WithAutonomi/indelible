@@ -14,8 +14,8 @@ import (
 // V2-319: aggregate stats endpoints for audit, system, and config logs.
 
 func TestAuditStats_EmptyTableShape(t *testing.T) {
-	router, _ := setupRouterWithDB(t)
-	adminToken := registerAndGetToken(t, router, "admin@test.com", "password123", "Admin", "User")
+	router, db := setupRouterWithDB(t)
+	adminToken := adminTokenCleanAudit(t, router, db)
 
 	req := httptest.NewRequest("GET", "/api/v2/admin/logs/audit/stats", nil)
 	req.Header.Set("Authorization", "Bearer "+adminToken)
@@ -43,7 +43,7 @@ func TestAuditStats_EmptyTableShape(t *testing.T) {
 
 func TestAuditStats_PopulatedTableBucketsCorrectly(t *testing.T) {
 	router, db := setupRouterWithDB(t)
-	adminToken := registerAndGetToken(t, router, "admin@test.com", "password123", "Admin", "User")
+	adminToken := adminTokenCleanAudit(t, router, db)
 	logSvc := services.NewLogService(db)
 
 	uid := int64(1)

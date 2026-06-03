@@ -215,15 +215,27 @@ func Login(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	}
 }
 
+// registrationEnabled reports whether self-registration is turned on. It is
+// OFF unless an admin has explicitly set registration_enabled="true"; a missing
+// or unparseable setting means disabled (fail-closed).
+func registrationEnabled(s *services.SettingsService) bool {
+	v, err := s.Get("registration_enabled")
+	if err != nil {
+		return false
+	}
+	return v == "true"
+}
+
 // Register godoc
 // @Summary Register a new user
-// @Description Create a new user account with email, password, and name
+// @Description Create a new user account with email, password, and name. Self-registration is disabled by default; an admin must enable it via the registration_enabled setting. Self-registered users receive read-only access.
 // @Tags Auth
 // @Accept json
 // @Produce json
 // @Param body body registerRequest true "Registration details"
 // @Success 201 {object} authResponse
 // @Failure 400 {object} map[string]string
+// @Failure 403 {object} map[string]string
 // @Failure 409 {object} map[string]string
 // @Router /auth/register [post]
 func Register(db *database.DB, cfg *config.Config) http.HandlerFunc {
@@ -234,6 +246,15 @@ func Register(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	notifier := services.NewNotifier(cfg, db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Self-registration is gated and disabled by default; an admin turns it
+		// on via the registration_enabled setting. When off, 403 — this is the
+		// primary fix for open/ungated registration. The bootstrap admin is
+		// created out-of-band by SeedAdmin, never through this endpoint.
+		if !registrationEnabled(settingsSvc) {
+			jsonErrorWithCode(w, "self-registration is disabled", "registration_disabled", http.StatusForbidden)
+			return
+		}
+
 		var req registerRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			jsonError(w, "invalid request body", http.StatusBadRequest)
@@ -269,12 +290,11 @@ func Register(db *database.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		// First user becomes admin
-		count, _ := userSvc.Count()
-		permLevel := "read" // default
-		if count == 1 {
-			permLevel = "admin"
-		}
+		// Self-registered users always get read-only access. Admin is granted
+		// only via the bootstrap seed (SeedAdmin) or by an existing admin —
+		// never by self-registration, which would be a first-registrant
+		// land-grab on an exposed instance.
+		permLevel := "read"
 		_ = permSvc.SetDirect(user.ID, permLevel, user.ID)
 
 		// Send verification email (best-effort — don't block registration)
