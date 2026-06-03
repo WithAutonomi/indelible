@@ -291,7 +291,9 @@ func (s *OIDCLoginService) resolveOrProvisionUser(providerID int64, sub, email s
 	if !provider.AutoProvision {
 		return nil, false, ErrOIDCNoAccount
 	}
-	if email == "" {
+	if email == "" || !IsValidEmail(email) {
+		// Treat a malformed IdP-provided email the same as a missing one — there
+		// is no usable address to provision an account against.
 		return nil, false, ErrOIDCMissingEmail
 	}
 	if provider.RequireEmailVerified && !emailVerified {

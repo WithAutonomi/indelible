@@ -3,12 +3,22 @@ package services
 import (
 	"fmt"
 	"log/slog"
+	"net/mail"
 	"net/smtp"
 	"strings"
 
 	"github.com/WithAutonomi/indelible/internal/config"
 	"github.com/WithAutonomi/indelible/internal/database"
 )
+
+// IsValidEmail reports whether s is a single, well-formed email address with no
+// display-name part. Callers are expected to have trimmed and lowercased the
+// value first; we additionally require the parsed address to equal the input so
+// that "Name <addr>" forms are rejected as account emails.
+func IsValidEmail(s string) bool {
+	addr, err := mail.ParseAddress(s)
+	return err == nil && addr.Address == s
+}
 
 // Notifier sends transactional notifications. Method names a delivery channel
 // so /health and admin tooling can surface which path is actually live.

@@ -269,6 +269,10 @@ func Register(db *database.DB, cfg *config.Config) http.HandlerFunc {
 			jsonError(w, "email, password, first_name, and last_name are required", http.StatusBadRequest)
 			return
 		}
+		if !services.IsValidEmail(req.Email) {
+			jsonError(w, "email is not a valid address", http.StatusBadRequest)
+			return
+		}
 		if len(req.Password) < 8 {
 			jsonError(w, "password must be at least 8 characters", http.StatusBadRequest)
 			return
