@@ -127,11 +127,18 @@ func main() {
 		slog.Info("seeded bootstrap admin", "email", cfg.AdminEmail)
 	}
 
-	// Loud warning if the instance has no administrator and no way in. Mirrors
-	// the notifier-status pattern below: don't crash, but make it impossible
-	// to overlook in production triage.
-	if n, err := services.NewPermissionService(db).CountAdmins(); err == nil && n == 0 {
-		slog.Error("no administrator account exists and INDELIBLE_ADMIN_EMAIL/PASSWORD are not set — nobody can administer this instance; set the seed vars (see docker-compose.yml) or have an existing admin enable self-registration")
+	// Refuse to start with no administrator: the instance would be unusable —
+	// nobody could log in, and self-registration is disabled by default. A
+	// transient CountAdmins error is non-fatal (don't crash on a flaky read);
+	// only a confirmed zero count aborts boot.
+	if n, err := services.NewPermissionService(db).CountAdmins(); err != nil {
+		slog.Error("could not verify an administrator exists", "error", err)
+	} else if n == 0 {
+		slog.Error("refusing to start: no administrator account exists — set INDELIBLE_ADMIN_EMAIL and INDELIBLE_ADMIN_PASSWORD to seed the first admin (see docker-compose.yml), then restart")
+		if antdMgr != nil {
+			_ = antdMgr.Stop()
+		}
+		os.Exit(1)
 	}
 
 	// Build router. The manager doubles as the AntdInfoProvider; pass nil
