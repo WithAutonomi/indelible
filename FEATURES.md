@@ -622,7 +622,7 @@ File metadata and virtual folder structure, stored in the local database (not on
 - Hierarchical folder structure (parent/child) for organising uploads
 - Collection-level tags (`GET/PUT /collections/{id}/tags`) — inherited by files when added to the collection
 - Tag inheritance is additive: collection tags propagate to files without overwriting existing file tags
-- Supports bulk operations: bulk tag, bulk legal hold
+- Supports bulk operations: bulk tag
 - Required for dashboard usability at scale — "Case #12345", "Q1 Tax Docs"
 - `collections` table with `collection_files` join table
 
@@ -663,9 +663,6 @@ Configurable per-user event subscriptions. Essential for larger deployments wher
 **FC-3: File Integrity Verification & Chain of Custody**
 Indelible's key differentiator — cryptographic proof of immutability. Autonomi is content-addressed: the upload address IS a hash of the content. Includes: verification endpoint (re-download and confirm hash), chain-of-custody reports (full upload and access history from audit logs), and signed upload receipts. Low effort — the hard crypto is done by the network; we surface it.
 
-**FC-4: Legal Hold**
-Freeze file metadata, tags, and audit records from modification or cleanup during litigation. Files on the network are already permanent; legal hold protects the local metadata layer. Admin creates holds scoped by files, users, tags, or date ranges. Held records cannot be deleted, modified, or re-tagged until released. Implementation: `legal_holds` + `legal_hold_files` tables, cleanup processes check holds before acting.
-
 **FC-2: Multi-Factor Authentication (TOTP)**
 Authenticator app as second login factor. Enforceable by policy (all users, admin-only, optional). Baseline for SOC 2/ISO 27001. TOTP first, WebAuthn/FIDO2 later. Lower priority for launch because smaller first customers will primarily use SSO.
 
@@ -678,6 +675,9 @@ Alternative to SMTP for transactional emails (password reset, email verification
 ---
 
 ## Features — Backlog (customer-driven)
+
+**FC-4: Legal Hold**
+Freeze file metadata, tags, and audit records from modification or cleanup during litigation. Files on the network are already permanent; legal hold protects the local metadata layer. Admin creates holds scoped by files, users, tags, or date ranges. Held records cannot be deleted, modified, or re-tagged until released. Backlogged: a substantial feature — a hold model scoped across files/users/tags/date-ranges plus hold-aware cleanup that must gate every delete/modify/re-tag path — that needs significant testing on a tamper-evidence product; deferred until a concrete litigation-hold / eDiscovery requirement. Sketch: `legal_holds` + `legal_hold_files` tables, cleanup processes check holds before acting.
 
 **FC-5: Shared Links with Controls**
 Password-protected, expiring, download-limited shareable links for external parties. Backlogged because downloading from Autonomi requires a client — the sharing mechanism needs design work around how external recipients actually retrieve files.
@@ -701,4 +701,4 @@ Eliminate the requirement for enterprise deployments to hold both ANT and ETH by
 ## Dropped Features
 
 **FC-14: Retention Policies with Minimum Hold**
-Dropped. Autonomi is permanent storage — data cannot expire or be deleted from the network. The only local data subject to retention is logs, which already have configurable retention. Legal hold (FC-4) covers the compliance case for preserving local metadata. A separate retention policy mechanism solves a problem that doesn't exist on a perpetual storage network.
+Dropped. Autonomi is permanent storage — data cannot expire or be deleted from the network. The only local data subject to retention is logs, which already have configurable retention. Legal hold (FC-4, backlog) would cover the compliance case for preserving local metadata. A separate retention policy mechanism solves a problem that doesn't exist on a perpetual storage network.
