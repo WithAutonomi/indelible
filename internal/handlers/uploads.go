@@ -122,6 +122,7 @@ func CreateUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	settingsSvc := services.NewSettingsService(db)
 	userSvc := services.NewUserService(db)
 	tokenSvc := services.NewTokenService(db)
+	logSvc := services.NewLogService(db)
 
 	walletSvc := services.NewWalletService(db, cfg.WalletEncryptionKey)
 
@@ -301,6 +302,8 @@ func CreateUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 		// tier can resolve the token's department; nil for web-UI uploads.
 		if err := quotaSvc.CheckUserQuota(userID, tID, written); err != nil {
 			os.Remove(tempPath)
+			auditEvent(r, logSvc, "file_upload_denied", "warn", &userID,
+				fmt.Sprintf("reason=quota_exceeded filename=%s size=%d", originalFilename, written))
 			jsonErrorWithCode(w, "quota exceeded: "+err.Error(), "quota_exceeded", http.StatusForbidden)
 			return
 		}
@@ -338,6 +341,9 @@ func CreateUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 		}
 
 		webhookSvc.FireUploadEvent("queued", upload)
+
+		auditEvent(r, logSvc, "file_uploaded", "info", &userID,
+			fmt.Sprintf("uuid=%s filename=%s size=%d visibility=%s", upload.UUID, originalFilename, written, visibility))
 
 		// S10: Include queue position for backpressure signaling
 		queuePos := int64(0)
@@ -632,6 +638,7 @@ func QuoteUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 // @Router       /uploads/{id}/download [get]
 func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	uploadSvc := services.NewUploadService(db)
+	logSvc := services.NewLogService(db)
 	client := antd.NewClient(cfg.AntdURL, antd.WithTimeout(0))
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -650,6 +657,10 @@ func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 
 		// Users can only download their own uploads (unless public — future: allow public access)
 		if upload.UserID != userID {
+			// Audit the denied cross-user access attempt (returns 404 to the client
+			// to avoid leaking existence, but the attempt is security-relevant).
+			auditEvent(r, logSvc, "file_download_denied", "warn", &userID,
+				fmt.Sprintf("uuid=%s reason=not_owner", uploadUUID))
 			jsonError(w, "upload not found", http.StatusNotFound)
 			return
 		}
@@ -700,6 +711,10 @@ func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 			jsonError(w, "upload has no data map or network address", http.StatusInternalServerError)
 			return
 		}
+
+		// Audit the successful access decision before streaming the bytes.
+		auditEvent(r, logSvc, "file_downloaded", "info", &userID,
+			fmt.Sprintf("uuid=%s filename=%s visibility=%s", upload.UUID, upload.OriginalFilename, upload.Visibility))
 
 		// Stream the file back
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, upload.OriginalFilename))
@@ -852,6 +867,7 @@ func ForceRetryUpload(db *database.DB) http.HandlerFunc {
 // @Router       /uploads/{id} [delete]
 func DeleteUpload(db *database.DB) http.HandlerFunc {
 	uploadSvc := services.NewUploadService(db)
+	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID := middleware.GetUserID(r.Context())
@@ -867,6 +883,8 @@ func DeleteUpload(db *database.DB) http.HandlerFunc {
 			return
 		}
 		if upload.UserID != userID {
+			auditEvent(r, logSvc, "file_delete_denied", "warn", &userID,
+				fmt.Sprintf("uuid=%s reason=not_owner", uploadUUID))
 			jsonError(w, "upload not found", http.StatusNotFound)
 			return
 		}
@@ -875,6 +893,9 @@ func DeleteUpload(db *database.DB) http.HandlerFunc {
 			jsonError(w, err.Error(), http.StatusConflict)
 			return
 		}
+
+		auditEvent(r, logSvc, "file_deleted", "info", &userID,
+			fmt.Sprintf("uuid=%s filename=%s", upload.UUID, upload.OriginalFilename))
 
 		jsonResponse(w, http.StatusOK, map[string]string{"message": "upload deleted"})
 	}
