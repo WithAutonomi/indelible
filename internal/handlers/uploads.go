@@ -639,7 +639,7 @@ func QuoteUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	uploadSvc := services.NewUploadService(db)
 	logSvc := services.NewLogService(db)
-	client := antd.NewClient(cfg.AntdURL, antd.WithTimeout(0))
+	settingsSvc := services.NewCachedSettingsService(services.NewSettingsService(db))
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID := middleware.GetUserID(r.Context())
@@ -672,21 +672,28 @@ func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		// Download from antd to temp file, then stream to client
+		// Download from antd to temp file, then stream to client. All branches
+		// use the streaming FileGet*/ primitives so the daemon writes straight to
+		// tempPath — the file bytes never enter indelible's heap, so peak RAM is
+		// bounded independent of file size (private downloads previously buffered
+		// the whole file via DataGet → []byte, an OOM/DoS vector on large files).
 		tempDir := worker.TempUploadDir(cfg)
 		tempPath := filepath.Join(tempDir, "dl-"+uuid.New().String())
 		defer os.Remove(tempPath)
 
+		// Bound the download so a slow or oversized transfer can't hold the
+		// handler (and its temp file) open indefinitely. Operator-tunable like
+		// the quote timeout; default 30m is generous for large files on mainnet.
+		timeout := time.Duration(settingsSvc.GetIntWithBounds(
+			"antd_download_timeout_secs", 1800, 1, 86400,
+		)) * time.Second
+		client := antd.NewClient(cfg.AntdURL, antd.WithTimeout(timeout))
+
 		switch {
 		case upload.DataMap.Valid:
 			// External signer flow: use local DataMap to download directly
-			data, err := client.DataGet(r.Context(), upload.DataMap.String)
-			if err != nil {
+			if err := client.FileGet(r.Context(), upload.DataMap.String, tempPath); err != nil {
 				jsonAntdError(w, "download from network failed", err)
-				return
-			}
-			if err := os.WriteFile(tempPath, data, 0600); err != nil {
-				jsonError(w, "failed to write download", http.StatusInternalServerError)
 				return
 			}
 		case upload.DatamapAddress.Valid:
@@ -697,13 +704,8 @@ func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 					return
 				}
 			} else {
-				data, err := client.DataGet(r.Context(), upload.DatamapAddress.String)
-				if err != nil {
+				if err := client.FileGet(r.Context(), upload.DatamapAddress.String, tempPath); err != nil {
 					jsonAntdError(w, "download from network failed", err)
-					return
-				}
-				if err := os.WriteFile(tempPath, data, 0600); err != nil {
-					jsonError(w, "failed to write download", http.StatusInternalServerError)
 					return
 				}
 			}
