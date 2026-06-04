@@ -13,6 +13,7 @@ All notable changes to Indelible are documented in this file. This project adher
 - The **JWT signing secret must now be at least 32 bytes** at boot.
 - **Webhook URLs are redacted** in logs and the audit trail.
 - **Email addresses are validated** on registration, admin user-creation, and SSO provisioning.
+- SPA authentication unified on **cookie sessions with CSRF protection**.
 - Resolved frontend dependency advisories (`js-cookie`, `ws`).
 
 ### Audit & integrity
@@ -23,11 +24,9 @@ All notable changes to Indelible are documented in this file. This project adher
 ### Features
 - **Global search omnibox** (Ctrl/Cmd+K).
 - **Dark mode** (deep-navy) with a theme toggle.
-- SPA authentication unified on **cookie sessions with CSRF protection**.
 - **Date-range filtering** with quick presets on Uploads and Logs.
 - **Version check** against the upstream release, plus antd version display in external-signer mode.
 - **antd network-health** surfaced in the admin UI.
-- The **antd daemon is now bundled** into the Indelible container image.
 - Indelible logo mark across the favicon, auth pages, and sidebar.
 
 ### Fixes
@@ -38,8 +37,6 @@ All notable changes to Indelible are documented in this file. This project adher
 - Assorted production UI and upload-flow fixes.
 - The disk critical-threshold pause is enforced when creating uploads.
 - Bulk-tag requests are capped at 1000 upload IDs.
-
-### Dependencies
-- **Bundled antd daemon updated to v0.9.2** (from v0.9.0), tracking the latest ant-client / ant-core release and the corrected multi-arch daemon image. No notable functional changes in antd itself.
+- **The antd daemon is now bundled into the container image**, shipping the corrected antd **v0.9.2** multi-arch build (tracks ant-client / ant-core) — resolves the Apple-Silicon (arm64) startup failure (exit code 133) (#85).
 
 [0.10.0]: https://github.com/WithAutonomi/indelible/releases/tag/v0.10.0
