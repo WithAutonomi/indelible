@@ -1,12 +1,46 @@
 package services
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
+	"errors"
 	"fmt"
+	"strconv"
+	"sync"
 	"time"
 
 	"github.com/WithAutonomi/indelible/internal/database"
 )
+
+// auditChainMu serializes audit_log writes process-wide so the hash-chain is
+// computed without races. Every audit_log INSERT funnels through WriteAudit, so
+// this single mutex fully orders the chain. Audit volume is low, so the
+// serialization cost is negligible. It is package-level (not a LogService
+// field) because callers construct a fresh LogService per request.
+var auditChainMu sync.Mutex
+
+// auditGenesisHash is the prev_hash of the first chained row.
+const auditGenesisHash = ""
+
+// auditRowHash computes a chained row hash: SHA256 over prev_hash followed by
+// the NUL-separated content fields. created_at is intentionally NOT included —
+// it stays on its DB default to avoid cross-dialect timestamp round-trip issues
+// and to keep the existing log date-filters working; the chain still detects
+// content edits, row deletion, and reordering. (created_at integrity is a
+// documented Phase-1 follow-up.) The exact preimage is:
+//
+//	prev_hash \x00 event_type \x00 severity \x00 user_id \x00 detail \x00 ip \x00 user_agent \x00 request_id \x00
+//
+// where user_id is "" for NULL or the decimal id otherwise.
+func auditRowHash(prevHash, eventType, severity, userID, detail, ipAddress, userAgent, requestID string) string {
+	h := sha256.New()
+	for _, f := range []string{prevHash, eventType, severity, userID, detail, ipAddress, userAgent, requestID} {
+		h.Write([]byte(f))
+		h.Write([]byte{0})
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
 
 // ExportMaxRows caps streamed log exports. Operators hitting this can
 // narrow the date range and call again.
@@ -52,14 +86,88 @@ func NewLogService(db *database.DB) *LogService {
 // chimw.GetReqID(r.Context()).
 func (s *LogService) WriteAudit(eventType, severity string, userID *int64, detail, ipAddress, userAgent, requestID string) error {
 	var uid sql.NullInt64
+	userIDStr := ""
 	if userID != nil {
 		uid = sql.NullInt64{Int64: *userID, Valid: true}
+		userIDStr = strconv.FormatInt(*userID, 10)
 	}
-	_, err := s.db.Exec(
-		`INSERT INTO audit_log (event_type, severity, user_id, detail, ip_address, user_agent, request_id) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		eventType, severity, uid, detail, ipAddress, userAgent, requestID,
+
+	// Hash-chain (V2-452): serialize so each row links to the current chain head.
+	auditChainMu.Lock()
+	defer auditChainMu.Unlock()
+
+	prevHash := auditGenesisHash
+	err := s.db.QueryRow(
+		`SELECT row_hash FROM audit_log WHERE row_hash != '' ORDER BY id DESC LIMIT 1`,
+	).Scan(&prevHash)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+
+	rowHash := auditRowHash(prevHash, eventType, severity, userIDStr, detail, ipAddress, userAgent, requestID)
+
+	_, err = s.db.Exec(
+		`INSERT INTO audit_log (event_type, severity, user_id, detail, ip_address, user_agent, request_id, prev_hash, row_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		eventType, severity, uid, detail, ipAddress, userAgent, requestID, prevHash, rowHash,
 	)
 	return err
+}
+
+// AuditChainResult reports the outcome of verifying the audit-log hash-chain.
+type AuditChainResult struct {
+	Intact   bool  `json:"intact"`
+	Count    int64 `json:"count"`               // number of chained rows checked
+	BrokenAt int64 `json:"broken_at,omitempty"` // id of the first row that fails (0 when intact)
+}
+
+// VerifyAuditChain walks the chained audit rows (those written since migration
+// 008, i.e. row_hash != '') in insertion order and confirms each row links to
+// the previous row's hash and re-hashes to its stored row_hash. It returns the
+// id of the first row that breaks the chain, which is where tampering (an edit
+// or a deletion) occurred.
+func (s *LogService) VerifyAuditChain() (*AuditChainResult, error) {
+	rows, err := s.db.Query(
+		`SELECT id, event_type, severity, user_id, detail, ip_address, user_agent, request_id, prev_hash, row_hash
+		 FROM audit_log WHERE row_hash != '' ORDER BY id ASC`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	prev := auditGenesisHash
+	var count int64
+	for rows.Next() {
+		var (
+			id                                     int64
+			eventType, severity, detail, requestID string
+			storedPrev, storedRow                  string
+			userID                                 sql.NullInt64
+			ipAddress, userAgent                   sql.NullString
+		)
+		if err := rows.Scan(&id, &eventType, &severity, &userID, &detail, &ipAddress, &userAgent, &requestID, &storedPrev, &storedRow); err != nil {
+			return nil, err
+		}
+
+		userIDStr := ""
+		if userID.Valid {
+			userIDStr = strconv.FormatInt(userID.Int64, 10)
+		}
+		expected := auditRowHash(prev, eventType, severity, userIDStr, detail, ipAddress.String, userAgent.String, requestID)
+
+		// storedPrev must point at the running head, and the row must re-hash to
+		// its stored value. Either mismatch means the row (or one before it) was
+		// altered or removed.
+		if storedPrev != prev || storedRow != expected {
+			return &AuditChainResult{Intact: false, Count: count, BrokenAt: id}, nil
+		}
+		prev = storedRow
+		count++
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return &AuditChainResult{Intact: true, Count: count}, nil
 }
 
 // WriteSystem writes an entry to the system log. requestID is "" for worker-
@@ -223,19 +331,19 @@ type DayCount struct {
 // log type live in dedicated maps; unused maps for a given type are omitted
 // from the JSON via empty-map elision.
 type LogStats struct {
-	TotalEntries int64           `json:"total_entries"`
-	Earliest     *time.Time      `json:"earliest,omitempty"`
-	Latest       *time.Time      `json:"latest,omitempty"`
+	TotalEntries int64      `json:"total_entries"`
+	Earliest     *time.Time `json:"earliest,omitempty"`
+	Latest       *time.Time `json:"latest,omitempty"`
 	// DiskUsageBytes is 0 when the dialect doesn't expose a per-table size
 	// (SQLite has no straightforward way to break a whole-DB file down per
 	// table). On Postgres it's pg_total_relation_size for the underlying table.
 	DiskUsageBytes int64 `json:"disk_usage_bytes"`
 
 	// One of these will be populated depending on the log type.
-	BySeverity   map[string]int64 `json:"by_severity,omitempty"`   // audit_log
-	ByEventType  map[string]int64 `json:"by_event_type,omitempty"` // audit_log (top 10)
-	ByLevel      map[string]int64 `json:"by_level,omitempty"`      // system_log
-	ByComponent  map[string]int64 `json:"by_component,omitempty"`  // system_log (top 10)
+	BySeverity   map[string]int64 `json:"by_severity,omitempty"`    // audit_log
+	ByEventType  map[string]int64 `json:"by_event_type,omitempty"`  // audit_log (top 10)
+	ByLevel      map[string]int64 `json:"by_level,omitempty"`       // system_log
+	ByComponent  map[string]int64 `json:"by_component,omitempty"`   // system_log (top 10)
 	BySettingKey map[string]int64 `json:"by_setting_key,omitempty"` // config_audit (top 10)
 
 	ByDay []DayCount `json:"by_day"` // last 30 days, ascending
