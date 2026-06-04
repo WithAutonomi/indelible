@@ -118,6 +118,23 @@ type AuditChainResult struct {
 	Intact   bool  `json:"intact"`
 	Count    int64 `json:"count"`               // number of chained rows checked
 	BrokenAt int64 `json:"broken_at,omitempty"` // id of the first row that fails (0 when intact)
+
+	// Anchor fields describe how the chain relates to the most recent Autonomi
+	// anchor (V2-453). AnchorChecked is false when no anchor has been recorded.
+	AnchorChecked bool   `json:"anchor_checked"`
+	AnchorMatches bool   `json:"anchor_matches,omitempty"` // recomputed head at the anchored row_count equals the anchored head
+	AnchorAddress string `json:"anchor_address,omitempty"` // network address of the latest anchor
+	AnchoredAt    string `json:"anchored_at,omitempty"`
+}
+
+// AuditAnchor is a recorded commitment of the chain head to Autonomi.
+type AuditAnchor struct {
+	ID             int64
+	HeadHash       string
+	RowCount       int64
+	NetworkAddress string
+	TxHash         string
+	AnchoredAt     time.Time
 }
 
 // VerifyAuditChain walks the chained audit rows (those written since migration
@@ -135,8 +152,14 @@ func (s *LogService) VerifyAuditChain() (*AuditChainResult, error) {
 	}
 	defer rows.Close()
 
+	// The latest anchor (if any) lets us cross-check the chain against an
+	// external commitment: the recomputed head at the anchored row_count must
+	// equal the anchored head_hash, defending against a full local rewrite.
+	anchor, _ := s.LatestAuditAnchor()
+
 	prev := auditGenesisHash
 	var count int64
+	var headAtAnchorCount string
 	for rows.Next() {
 		var (
 			id                                     int64
@@ -163,11 +186,61 @@ func (s *LogService) VerifyAuditChain() (*AuditChainResult, error) {
 		}
 		prev = storedRow
 		count++
+		if anchor != nil && count == anchor.RowCount {
+			headAtAnchorCount = storedRow
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	return &AuditChainResult{Intact: true, Count: count}, nil
+
+	res := &AuditChainResult{Intact: true, Count: count}
+	if anchor != nil {
+		res.AnchorChecked = true
+		// Matches when the recomputed head at the anchored position equals the
+		// anchored head (headAtAnchorCount is "" if the chain is now shorter).
+		res.AnchorMatches = headAtAnchorCount != "" && headAtAnchorCount == anchor.HeadHash
+		res.AnchorAddress = anchor.NetworkAddress
+		res.AnchoredAt = anchor.AnchoredAt.Format("2006-01-02T15:04:05Z")
+	}
+	return res, nil
+}
+
+// AuditChainHead returns the current chain head hash and the number of chained
+// rows. headHash is "" when no chained rows exist yet.
+func (s *LogService) AuditChainHead() (headHash string, count int64, err error) {
+	if err = s.db.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE row_hash != ''`).Scan(&count); err != nil {
+		return "", 0, err
+	}
+	if count == 0 {
+		return "", 0, nil
+	}
+	err = s.db.QueryRow(`SELECT row_hash FROM audit_log WHERE row_hash != '' ORDER BY id DESC LIMIT 1`).Scan(&headHash)
+	return headHash, count, err
+}
+
+// RecordAuditAnchor records a chain-head anchor written to Autonomi.
+func (s *LogService) RecordAuditAnchor(headHash string, rowCount int64, networkAddress, txHash string) error {
+	_, err := s.db.Exec(
+		`INSERT INTO audit_anchors (head_hash, row_count, network_address, tx_hash) VALUES (?, ?, ?, ?)`,
+		headHash, rowCount, networkAddress, txHash,
+	)
+	return err
+}
+
+// LatestAuditAnchor returns the most recent anchor, or (nil, nil) if none exist.
+func (s *LogService) LatestAuditAnchor() (*AuditAnchor, error) {
+	a := &AuditAnchor{}
+	err := s.db.QueryRow(
+		`SELECT id, head_hash, row_count, network_address, tx_hash, anchored_at FROM audit_anchors ORDER BY id DESC LIMIT 1`,
+	).Scan(&a.ID, &a.HeadHash, &a.RowCount, &a.NetworkAddress, &a.TxHash, &a.AnchoredAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return a, nil
 }
 
 // WriteSystem writes an entry to the system log. requestID is "" for worker-

@@ -5610,6 +5610,21 @@
         "github_com_WithAutonomi_indelible_internal_services.AuditChainResult": {
             "type": "object",
             "properties": {
+                "anchor_address": {
+                    "description": "network address of the latest anchor",
+                    "type": "string"
+                },
+                "anchor_checked": {
+                    "description": "Anchor fields describe how the chain relates to the most recent Autonomi\nanchor (V2-453). AnchorChecked is false when no anchor has been recorded.",
+                    "type": "boolean"
+                },
+                "anchor_matches": {
+                    "description": "recomputed head at the anchored row_count equals the anchored head",
+                    "type": "boolean"
+                },
+                "anchored_at": {
+                    "type": "string"
+                },
                 "broken_at": {
                     "description": "id of the first row that fails (0 when intact)",
                     "type": "integer"

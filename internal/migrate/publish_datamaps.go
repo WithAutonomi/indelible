@@ -129,7 +129,7 @@ func PublishDataMaps(
 		}
 
 		start := time.Now()
-		addr, outcome, perRowErr := publishOne(ctx, publisher, payer, walletKey, raw, opts.Verify)
+		addr, outcome, perRowErr := PublishChunk(ctx, publisher, payer, walletKey, raw, opts.Verify)
 		row.DurationMs = time.Since(start).Milliseconds()
 		row.DatamapAddress = addr
 		if perRowErr != nil {
@@ -168,9 +168,11 @@ func PublishDataMaps(
 	return run, nil
 }
 
-// publishOne handles the per-chunk happy path: prepare → maybe pay → finalize → maybe verify.
+// PublishChunk handles the per-chunk happy path: prepare → maybe pay → finalize → maybe verify.
 // Returns (address, outcome-tag, err) where outcome is "already_stored", "verified", or "published".
-func publishOne(
+// Shared beyond migrations: the audit-anchor worker (V2-453) reuses it to store
+// the log-chain digest to Autonomi.
+func PublishChunk(
 	ctx context.Context,
 	publisher ChunkPublisher,
 	payer EvmPayer,

@@ -167,6 +167,12 @@ func main() {
 	diskAlertWorker.Start()
 	defer diskAlertWorker.Stop()
 
+	// Audit-chain anchoring: periodically commit the audit-log hash-chain head
+	// to Autonomi (opt-in; cost-gated). See audit_anchor_enabled setting.
+	auditAnchorWorker := worker.NewAuditAnchorWorker(db, cfg)
+	auditAnchorWorker.Start()
+	defer auditAnchorWorker.Stop()
+
 	// System monitor: antd health, wallet balance, queue backlog, failure rate, etc.
 	sysMonitor := worker.NewSystemMonitor(db, cfg)
 	sysMonitor.Start()
