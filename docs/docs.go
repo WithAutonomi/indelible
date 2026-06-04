@@ -796,6 +796,40 @@ const docTemplate = `{
                 }
             }
         },
+        "/admin/logs/audit/verify": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Walk the audit-log hash-chain and report whether it is intact, or the id of the first tampered/missing row.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin: Logs"
+                ],
+                "summary": "Verify audit-log integrity",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_WithAutonomi_indelible_internal_services.AuditChainResult"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/admin/logs/config": {
             "get": {
                 "security": [
@@ -5579,6 +5613,22 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "github_com_WithAutonomi_indelible_internal_services.AuditChainResult": {
+            "type": "object",
+            "properties": {
+                "broken_at": {
+                    "description": "id of the first row that fails (0 when intact)",
+                    "type": "integer"
+                },
+                "count": {
+                    "description": "number of chained rows checked",
+                    "type": "integer"
+                },
+                "intact": {
+                    "type": "boolean"
+                }
+            }
+        },
         "github_com_WithAutonomi_indelible_internal_services.ComponentVersion": {
             "type": "object",
             "properties": {

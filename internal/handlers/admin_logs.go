@@ -468,6 +468,27 @@ func AdminAuditStats(db *database.DB) http.HandlerFunc {
 	}
 }
 
+// @Summary      Verify audit-log integrity
+// @Description  Walk the audit-log hash-chain and report whether it is intact, or the id of the first tampered/missing row.
+// @Tags         Admin: Logs
+// @Produce      json
+// @Success      200 {object} services.AuditChainResult
+// @Failure      500 {object} map[string]string
+// @Router       /admin/logs/audit/verify [get]
+// @Security     BearerAuth
+// AdminVerifyAuditChain verifies the tamper-evident audit-log hash-chain.
+func AdminVerifyAuditChain(db *database.DB) http.HandlerFunc {
+	logSvc := services.NewLogService(db)
+	return func(w http.ResponseWriter, r *http.Request) {
+		res, err := logSvc.VerifyAuditChain()
+		if err != nil {
+			jsonError(w, "failed to verify audit chain", http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, http.StatusOK, res)
+	}
+}
+
 // @Summary      System log statistics
 // @Tags         Admin: Logs
 // @Produce      json

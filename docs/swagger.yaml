@@ -1,5 +1,16 @@
 basePath: /api/v2
 definitions:
+  github_com_WithAutonomi_indelible_internal_services.AuditChainResult:
+    properties:
+      broken_at:
+        description: id of the first row that fails (0 when intact)
+        type: integer
+      count:
+        description: number of chained rows checked
+        type: integer
+      intact:
+        type: boolean
+    type: object
   github_com_WithAutonomi_indelible_internal_services.ComponentVersion:
     properties:
       checked:
@@ -1222,6 +1233,28 @@ paths:
       security:
       - BearerAuth: []
       summary: Audit log statistics
+      tags:
+      - 'Admin: Logs'
+  /admin/logs/audit/verify:
+    get:
+      description: Walk the audit-log hash-chain and report whether it is intact,
+        or the id of the first tampered/missing row.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_WithAutonomi_indelible_internal_services.AuditChainResult'
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Verify audit-log integrity
       tags:
       - 'Admin: Logs'
   /admin/logs/config:
