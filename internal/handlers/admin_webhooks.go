@@ -104,6 +104,10 @@ func AdminCreateWebhook(db *database.DB) http.HandlerFunc {
 
 		webhook, err := webhookSvc.Create(req.URL, req.IntegrationType, req.Events)
 		if err != nil {
+			if errors.Is(err, services.ErrInvalidURL) {
+				jsonError(w, err.Error(), http.StatusBadRequest)
+				return
+			}
 			jsonError(w, "failed to create webhook", http.StatusInternalServerError)
 			return
 		}
@@ -157,6 +161,10 @@ func AdminUpdateWebhook(db *database.DB) http.HandlerFunc {
 		if err != nil {
 			if errors.Is(err, services.ErrWebhookNotFound) {
 				jsonError(w, "webhook not found", http.StatusNotFound)
+				return
+			}
+			if errors.Is(err, services.ErrInvalidURL) {
+				jsonError(w, err.Error(), http.StatusBadRequest)
 				return
 			}
 			jsonError(w, "failed to update webhook", http.StatusInternalServerError)
