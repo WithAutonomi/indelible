@@ -67,6 +67,11 @@ const (
 	NetworkArbitrumOne     = "arbitrum-one"
 	NetworkArbitrumSepolia = "arbitrum-sepolia"
 	NetworkCustom          = "custom"
+	// NetworkLocal is antd's name for a local devnet. It is accepted as an
+	// alias for "custom" so the two components share the same network vocab —
+	// a local antd devnet uses `--network local`, and pointing Indelible at it
+	// with INDELIBLE_NETWORK=local should not be rejected.
+	NetworkLocal = "local"
 )
 
 // Preset values mirror the canonical constants in autonomi/evmlib/src/lib.rs
@@ -89,6 +94,11 @@ func (c *Config) ApplyNetworkPreset() error {
 	if c.Network == "" {
 		c.Network = NetworkArbitrumOne
 	}
+	// "local" (antd's term for a local devnet) is an alias for "custom"; fold
+	// it in so downstream readers see a single canonical value.
+	if c.Network == NetworkLocal {
+		c.Network = NetworkCustom
+	}
 	var rpc, token string
 	switch c.Network {
 	case NetworkArbitrumOne:
@@ -98,8 +108,8 @@ func (c *Config) ApplyNetworkPreset() error {
 	case NetworkCustom:
 		return nil
 	default:
-		return fmt.Errorf("unknown network %q (expected %q, %q, or %q)",
-			c.Network, NetworkArbitrumOne, NetworkArbitrumSepolia, NetworkCustom)
+		return fmt.Errorf("unknown network %q (expected %q, %q, %q, or %q)",
+			c.Network, NetworkArbitrumOne, NetworkArbitrumSepolia, NetworkCustom, NetworkLocal)
 	}
 	if c.EvmRPCURL == "" {
 		c.EvmRPCURL = rpc
