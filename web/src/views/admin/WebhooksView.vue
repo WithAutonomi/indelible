@@ -36,6 +36,20 @@ interface Delivery {
   created_at: string
 }
 
+interface DeadLetter {
+  id: number
+  webhook_id: number
+  webhook_url: string
+  event_type: string
+  last_status_code: number | null
+  last_error?: string
+  attempts: number
+  resend_count: number
+  is_auth: boolean
+  created_at: string
+  resolved_at?: string
+}
+
 const confirm = useConfirm()
 const toast = useToast()
 
@@ -71,6 +85,11 @@ const secretWebhookId = ref<number | null>(null)
 // Test state
 const testingId = ref<number | null>(null)
 const testResult = ref<{ success: boolean; status_code: number; error?: string } | null>(null)
+
+// Dead-letter queue (failed deliveries that exhausted all retries)
+const deadLetters = ref<DeadLetter[]>([])
+const loadingDLQ = ref(false)
+const resendingDLId = ref<number | null>(null)
 
 const uploadEvents = ['queued', 'processing', 'completed', 'failed']
 const systemEvents = ['disk_warning', 'disk_critical', 'disk_recovered']
@@ -248,6 +267,52 @@ function copySecret() {
   }
 }
 
+async function fetchDeadLetters() {
+  loadingDLQ.value = true
+  try {
+    const res = await api.get('/api/v2/admin/webhooks/dead-letters?limit=100')
+    deadLetters.value = res.data.dead_letters || []
+  } catch {
+    // ignore
+  } finally {
+    loadingDLQ.value = false
+  }
+}
+
+async function resendDeadLetter(d: DeadLetter) {
+  resendingDLId.value = d.id
+  try {
+    await api.post(`/api/v2/admin/webhooks/dead-letters/${d.id}/resend`)
+    toast.add({ severity: 'success', summary: 'Resent', detail: 'Delivery succeeded', life: 3000 })
+    await fetchDeadLetters()
+  } catch (e: any) {
+    toast.add({ severity: 'error', summary: 'Resend failed', detail: e.response?.data?.error || 'Receiver still unavailable', life: 5000 })
+    await fetchDeadLetters()
+  } finally {
+    resendingDLId.value = null
+  }
+}
+
+function dismissDeadLetter(d: DeadLetter) {
+  confirm.require({
+    message: d.is_auth
+      ? 'Dismiss this failed auth-link delivery without retrying? The recovery link will not be delivered.'
+      : 'Dismiss this failed delivery without retrying?',
+    header: 'Confirm Dismiss',
+    icon: 'pi pi-exclamation-triangle',
+    acceptClass: 'p-button-danger',
+    accept: async () => {
+      try {
+        await api.delete(`/api/v2/admin/webhooks/dead-letters/${d.id}`)
+        await fetchDeadLetters()
+        toast.add({ severity: 'success', summary: 'Dismissed', detail: 'Entry resolved', life: 3000 })
+      } catch {
+        toast.add({ severity: 'error', summary: 'Error', detail: 'Failed to dismiss', life: 5000 })
+      }
+    },
+  })
+}
+
 function eventTagSeverity(evt: string): string {
   if (systemEvents.includes(evt)) return 'warn'
   if (authEvents.includes(evt)) return 'danger'
@@ -256,7 +321,10 @@ function eventTagSeverity(evt: string): string {
   return 'info'
 }
 
-onMounted(fetchWebhooks)
+onMounted(() => {
+  fetchWebhooks()
+  fetchDeadLetters()
+})
 </script>
 
 <template>
@@ -397,6 +465,63 @@ onMounted(fetchWebhooks)
                 aria-label="Edit" v-tooltip.top="'Edit'" @click="startEdit(data)" />
               <Button icon="pi pi-trash" severity="danger" text rounded size="small"
                 aria-label="Delete" v-tooltip.top="'Delete'" @click="deleteWebhook(data.id)" />
+            </div>
+          </template>
+        </Column>
+      </DataTable>
+    </div>
+
+    <!-- Dead-letter queue: deliveries that exhausted every retry -->
+    <div v-if="deadLetters.length > 0 || loadingDLQ" class="bg-surface-0 rounded-lg border border-surface-200 mt-6">
+      <div class="px-6 py-4 border-b border-surface-200 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <h2 class="text-base font-semibold">Failed Deliveries</h2>
+          <Tag v-if="deadLetters.length" :value="String(deadLetters.length)" severity="danger" />
+        </div>
+        <Button icon="pi pi-refresh" severity="secondary" text rounded size="small"
+          aria-label="Refresh" v-tooltip.top="'Refresh'" @click="fetchDeadLetters" />
+      </div>
+      <p class="px-6 pt-3 text-xs text-surface-400">
+        Deliveries that failed after all retries. Auth links (password reset / email verification) appear here when the receiver is down — resend once it recovers.
+      </p>
+      <DataTable :value="deadLetters" :loading="loadingDLQ" stripedRows size="small" class="mt-2">
+        <template #empty>No failed deliveries.</template>
+        <Column field="created_at" header="Time" sortable>
+          <template #body="{ data }">
+            <span class="text-surface-500 whitespace-nowrap">{{ formatDate(data.created_at) }}</span>
+          </template>
+        </Column>
+        <Column field="webhook_url" header="Endpoint">
+          <template #body="{ data }">
+            <span class="font-mono text-xs max-w-xs truncate block">{{ data.webhook_url }}</span>
+          </template>
+        </Column>
+        <Column field="event_type" header="Event" sortable>
+          <template #body="{ data }">
+            <div class="flex items-center gap-1">
+              <Tag :value="data.event_type" :severity="eventTagSeverity(data.event_type)" />
+              <Tag v-if="data.is_auth" value="auth" severity="danger" v-tooltip.top="'Recovery link — user-facing if lost'" />
+            </div>
+          </template>
+        </Column>
+        <Column field="last_status_code" header="Last Status" sortable>
+          <template #body="{ data }">
+            <span class="text-surface-500">{{ data.last_status_code || data.last_error || '--' }}</span>
+          </template>
+        </Column>
+        <Column field="resend_count" header="Resends" sortable>
+          <template #body="{ data }">
+            <span class="text-surface-500">{{ data.resend_count }}</span>
+          </template>
+        </Column>
+        <Column header="Actions" style="width: 8rem">
+          <template #body="{ data }">
+            <div class="flex items-center gap-1">
+              <Button icon="pi pi-replay" severity="info" text rounded size="small"
+                :loading="resendingDLId === data.id" :disabled="resendingDLId === data.id"
+                aria-label="Resend" v-tooltip.top="'Resend delivery'" @click="resendDeadLetter(data)" />
+              <Button icon="pi pi-check" severity="secondary" text rounded size="small"
+                aria-label="Dismiss" v-tooltip.top="'Dismiss (mark resolved)'" @click="dismissDeadLetter(data)" />
             </div>
           </template>
         </Column>

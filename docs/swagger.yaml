@@ -363,6 +363,31 @@ definitions:
       url:
         type: string
     type: object
+  internal_handlers.deadLetterResponse:
+    properties:
+      attempts:
+        type: integer
+      created_at:
+        type: string
+      event_type:
+        type: string
+      id:
+        type: integer
+      is_auth:
+        type: boolean
+      last_error:
+        type: string
+      last_status_code:
+        type: integer
+      resend_count:
+        type: integer
+      resolved_at:
+        type: string
+      webhook_id:
+        type: integer
+      webhook_url:
+        type: string
+    type: object
   internal_handlers.deliveryResponse:
     properties:
       attempts:
@@ -3144,6 +3169,125 @@ paths:
       security:
       - BearerAuth: []
       summary: Test a webhook
+      tags:
+      - 'Admin: Webhooks'
+  /admin/webhooks/dead-letters:
+    get:
+      description: Return webhook deliveries that exhausted every retry. By default
+        only unresolved (still-actionable) entries are returned. Payloads are never
+        included (they can carry one-time recovery links).
+      parameters:
+      - description: Include resolved/dismissed entries
+        in: query
+        name: include_resolved
+        type: boolean
+      - description: Max results (default 50, max 200)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              items:
+                $ref: '#/definitions/internal_handlers.deadLetterResponse'
+              type: array
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List webhook dead-letters
+      tags:
+      - 'Admin: Webhooks'
+  /admin/webhooks/dead-letters/{id}:
+    delete:
+      description: Mark a dead-letter entry resolved without re-driving it (e.g. the
+        link has expired or was delivered out-of-band).
+      parameters:
+      - description: Dead-letter entry ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Dismiss a dead-lettered delivery
+      tags:
+      - 'Admin: Webhooks'
+  /admin/webhooks/dead-letters/{id}/resend:
+    post:
+      description: Re-drive a webhook delivery that previously exhausted its retries.
+        On success the entry is marked resolved.
+      parameters:
+      - description: Dead-letter entry ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "502":
+          description: Bad Gateway
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Resend a dead-lettered delivery
       tags:
       - 'Admin: Webhooks'
   /auth/forgot-password:

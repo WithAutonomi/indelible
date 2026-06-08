@@ -287,6 +287,7 @@ Three permission levels: **read**, **write**, **admin**
 - 5-second timeout per attempt
 - Delivery log: every attempt recorded in `webhook_delivery_log` table with status code, success, attempts, error
 - Delivery log auto-pruned alongside log retention settings
+- Dead-letter queue: deliveries that exhaust every retry are persisted to `webhook_dead_letter` with their full payload so an operator can re-drive them (resend) or dismiss them. Auth events (password reset / email verification links) that dead-letter are additionally escalated to the system log, since their loss is directly user-facing. Resolved entries are pruned alongside log retention; unresolved entries are retained regardless of age.
 - System alert deduplication: disk alerts only fire once per threshold transition (not every check interval)
 
 ### 8.4 Payloads
@@ -300,6 +301,9 @@ Three permission levels: **read**, **write**, **admin**
 ### 8.5 Admin API
 - `POST /api/v2/admin/webhooks/{id}/test` — synchronous test ping, returns HTTP status code and success/failure
 - `GET /api/v2/admin/webhooks/{id}/deliveries` — recent delivery history with status, attempts, errors
+- `GET /api/v2/admin/webhooks/dead-letters` — dead-letter queue (deliveries that exhausted all retries); payloads are never returned
+- `POST /api/v2/admin/webhooks/dead-letters/{id}/resend` — re-drive a dead-lettered delivery; marks it resolved on success
+- `DELETE /api/v2/admin/webhooks/dead-letters/{id}` — dismiss a dead-letter entry (mark resolved without retrying)
 
 ---
 
@@ -374,7 +378,7 @@ All settings stored in DB, changeable at runtime without restart.
 - **Group Management** (`/admin/groups`) — create/edit groups, manage membership
 - **Wallet Management** (`/admin/wallets`) — create wallets, set default, view balances, transaction history
 - **Quotas** (`/admin/quotas`) — per-user / per-group / per-department storage and upload-rate limits
-- **Webhooks** (`/admin/webhooks`) — create/edit/delete endpoints, integration type, event subscriptions, test ping, delivery history
+- **Webhooks** (`/admin/webhooks`) — create/edit/delete endpoints, integration type, event subscriptions, test ping, delivery history, dead-letter queue (resend/dismiss failed deliveries)
 - **SCIM Provisioning** (`/admin/scim`) — provisioning toggle, token mint/revoke, base-URL display
 - **SSO Providers** (`/admin/sso`) — OIDC provider management, auto-provision toggle, identity-linking policy
 - **Tag Rules** (`/admin/tag-rules`) — auto-tag rules for uploads (pattern + metadata based)

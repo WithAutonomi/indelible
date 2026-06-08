@@ -220,6 +220,10 @@ func NewRouter(cfg *config.Config, db *database.DB, antdInfo AntdInfoProvider) h
 			r.Post("/admin/webhooks/{id}/test", AdminTestWebhook(db))
 			r.Post("/admin/webhooks/{id}/rotate-secret", AdminRotateWebhookSecret(db))
 			r.Get("/admin/webhooks/{id}/deliveries", AdminGetWebhookDeliveries(db))
+			// Dead-letter queue (static "dead-letters" segment takes priority over {id}).
+			r.Get("/admin/webhooks/dead-letters", AdminGetWebhookDeadLetters(db))
+			r.Post("/admin/webhooks/dead-letters/{id}/resend", AdminResendWebhookDeadLetter(db))
+			r.Delete("/admin/webhooks/dead-letters/{id}", AdminDismissWebhookDeadLetter(db))
 
 			// SCIM token management
 			r.Post("/admin/scim/tokens", AdminCreateScimToken(db))

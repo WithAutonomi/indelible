@@ -99,4 +99,15 @@ func (w *LogRetentionWorker) run() {
 	if whDeleted > 0 {
 		slog.Info("log retention: cleaned up webhook delivery log", "deleted", whDeleted, "retention_days", days)
 	}
+
+	// Prune resolved webhook dead-letter rows on the same schedule. Unresolved
+	// rows (still-actionable recovery links) are kept regardless of age.
+	dlDeleted, err := w.webhookSvc.PruneDeadLetters(time.Duration(days) * 24 * time.Hour)
+	if err != nil {
+		slog.Error("webhook dead-letter cleanup failed", "error", err)
+		return
+	}
+	if dlDeleted > 0 {
+		slog.Info("log retention: cleaned up webhook dead-letter", "deleted", dlDeleted, "retention_days", days)
+	}
 }
