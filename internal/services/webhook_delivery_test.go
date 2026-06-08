@@ -293,12 +293,16 @@ func TestWebhookDeadLetter_PruneResolvedOnly(t *testing.T) {
 		t.Fatalf("expected 2 dead-letters, got %d", len(open))
 	}
 
-	// Resolve the first and backdate everything to be "old".
+	// Resolve the first, then backdate its resolved_at so it's outside the
+	// retention window. PruneDeadLetters keys off resolved_at only; the
+	// unresolved row keeps resolved_at NULL and must survive regardless of age.
 	if err := delSvc.ResolveDeadLetter(open[0].ID); err != nil {
 		t.Fatalf("ResolveDeadLetter: %v", err)
 	}
 	oldTS := time.Now().UTC().Add(-48 * time.Hour).Format("2006-01-02 15:04:05")
-	db.Exec(`UPDATE webhook_dead_letter SET created_at = ?, resolved_at = CASE WHEN resolved_at IS NOT NULL THEN ? ELSE NULL END`, oldTS, oldTS)
+	if _, err := db.Exec(`UPDATE webhook_dead_letter SET resolved_at = ? WHERE resolved_at IS NOT NULL`, oldTS); err != nil {
+		t.Fatalf("backdate resolved_at: %v", err)
+	}
 
 	pruned, err := delSvc.PruneDeadLetters(24 * time.Hour)
 	if err != nil {
