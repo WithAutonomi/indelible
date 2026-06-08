@@ -24,10 +24,11 @@ func (e *ValidationError) Error() string {
 // values that predate a validator (or were set via direct DB write) won't be
 // caught at write time, and the read-side clamp is the safety net.
 var typedValidators = map[string]func(string) error{
-	"antd_quote_timeout_secs":        intInRange(1, 3600),
-	"antd_health_probe_timeout_secs": intInRange(1, 120),
-	"notifier_method":                oneOf("auto", "smtp", "webhook", "noop"),
-	"registration_enabled":           oneOf("true", "false"),
+	"antd_quote_timeout_secs":              intInRange(1, 3600),
+	"antd_health_probe_timeout_secs":       intInRange(1, 120),
+	"notifier_method":                      oneOf("auto", "smtp", "webhook", "noop"),
+	"registration_enabled":                 oneOf("true", "false"),
+	"payment_confirmation_timeout_seconds": optionalIntInRange(30, 3600),
 }
 
 // oneOf builds a validator that requires the value to be in the allowed set.
@@ -39,6 +40,18 @@ func oneOf(allowed ...string) func(string) error {
 			}
 		}
 		return fmt.Errorf("must be one of: %v", allowed)
+	}
+}
+
+// optionalIntInRange is intInRange but treats an empty string as "unset" (valid),
+// so a setting can be cleared in the UI to fall back to its built-in default.
+func optionalIntInRange(min, max int) func(string) error {
+	inRange := intInRange(min, max)
+	return func(s string) error {
+		if s == "" {
+			return nil
+		}
+		return inRange(s)
 	}
 }
 
