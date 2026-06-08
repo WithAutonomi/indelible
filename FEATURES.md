@@ -591,7 +591,7 @@ volumes:
 
 6. **API versioning: `/api/v2/`** — aligns with Autonomi network versioning.
 
-7. **Backup/restore: Configuration export/import.** Structured JSON export includes system settings, webhook configurations, OIDC provider configs (without client secrets), and group definitions. Import supports both the structured format and legacy flat settings format for backwards compatibility. OIDC client secrets must be re-entered after import. Full database backup (SQLite file copy or pg_dump) is the deploying company's responsibility, documented in ops guide.
+7. **Backup/restore: Configuration + uploads export/import.** Structured JSON export of system settings, webhook configurations, OIDC provider configs (without client secrets), and group definitions; import supports both the structured and legacy flat formats (OIDC client secrets re-entered after import). Separately, an **uploads export/import** (`GET`/`POST /admin/uploads/import`) produces a portable NDJSON copy of the upload catalog **and every private DataMap** — the disaster-recovery and anti-lock-in path, since private DataMaps otherwise live only in the local database. Full database backup (SQLite file copy or pg_dump) plus wallet-encryption-key custody remain the deploying company's responsibility. See the [backup &amp; disaster recovery guide](docs/guides/backup-restore.md).
 
 ---
 

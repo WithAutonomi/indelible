@@ -207,6 +207,10 @@ func NewRouter(cfg *config.Config, db *database.DB, antdInfo AntdInfoProvider) h
 			r.Get("/admin/settings/export", AdminExportSettings(db))
 			r.Post("/admin/settings/import", AdminImportSettings(db))
 
+			// Backup / disaster recovery: upload catalog + DataMap export/import
+			r.Get("/admin/uploads/export", AdminExportUploads(db))
+			r.Post("/admin/uploads/import", AdminImportUploads(db))
+
 			// Webhooks
 			r.Get("/admin/webhooks", AdminGetWebhooks(db))
 			r.Post("/admin/webhooks", AdminCreateWebhook(db))

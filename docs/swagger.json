@@ -2424,6 +2424,86 @@
                 }
             }
         },
+        "/admin/uploads/export": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Stream the full upload catalog as NDJSON for disaster recovery or migration. SECRET-GRADE: the export contains every private DataMap (the locally-held retrieval secret for private uploads). Treat the downloaded file like a credential.",
+                "produces": [
+                    "application/x-ndjson"
+                ],
+                "tags": [
+                    "Admin: Backup"
+                ],
+                "summary": "Export uploads (catalog + DataMaps)",
+                "responses": {
+                    "200": {
+                        "description": "NDJSON uploads export (header line + one object per upload)",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/uploads/import": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Restore upload records from an NDJSON export produced by the export endpoint. Records are recreated with their original status, so completed uploads are immediately retrievable and the upload worker never re-uploads or re-pays. A uuid already present is skipped (idempotent restore). Owners are matched by email, falling back to the importing admin when unmatched.",
+                "consumes": [
+                    "application/x-ndjson"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin: Backup"
+                ],
+                "summary": "Import uploads (catalog + DataMaps)",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_WithAutonomi_indelible_internal_services.ImportResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/admin/users": {
             "get": {
                 "security": [
@@ -5672,6 +5752,28 @@
                 "date": {
                     "description": "YYYY-MM-DD",
                     "type": "string"
+                }
+            }
+        },
+        "github_com_WithAutonomi_indelible_internal_services.ImportResult": {
+            "type": "object",
+            "properties": {
+                "errors": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "imported": {
+                    "type": "integer"
+                },
+                "owner_fallback": {
+                    "description": "owner email unmatched → assigned to importer",
+                    "type": "integer"
+                },
+                "skipped": {
+                    "description": "uuid already present on target",
+                    "type": "integer"
                 }
             }
         },
