@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -36,6 +38,73 @@ func isPermanentAntdError(err error) bool {
 // errGasBackoff is a sentinel error indicating the upload should be retried later
 // because gas fees are too high.
 var errGasBackoff = errors.New("gas backoff")
+
+// errFinalizeFailed marks a wave-batch finalize failure. Retrying re-Prepares,
+// which returns already-stored chunks at zero cost (content-addressed dedup), so
+// re-driving finalize is safe and cannot double-charge.
+var errFinalizeFailed = errors.New("finalize failed")
+
+// errPaidNoRetry marks a failure where a payment was made and re-running the
+// whole upload could pay again (the merkle path always submits a payment; its
+// re-payment is not provably zero-cost). The source is preserved for manual /
+// future reconciliation instead.
+var errPaidNoRetry = errors.New("paid, cannot safely retry")
+
+// uploadOutcome is how processOne should react to a failed processUpload attempt.
+type uploadOutcome int
+
+const (
+	outcomeRetry               uploadOutcome = iota // attempts remain and re-running is safe
+	outcomeAbandon                                  // nothing paid → mark failed and delete temp
+	outcomePreservePaid                             // payment confirmed but upload unfinished → keep temp for recovery
+	outcomePreserveUnconfirmed                      // tx broadcast but unconfirmed → keep temp, must NOT re-pay
+)
+
+// classifyFailure decides the outcome for a failed attempt. paymentMade reflects
+// whether any payment has been recorded for this upload (crash/retry-safe);
+// canRetry reflects whether more attempts remain. The ordering is deliberate:
+// the two "don't re-pay" cases (unconfirmed tx, merkle-paid) win over any retry,
+// and a generic transient error is only retried while nothing has been paid.
+func classifyFailure(err error, paymentMade, canRetry bool) uploadOutcome {
+	switch {
+	case errors.Is(err, evm.ErrConfirmationTimeout):
+		return outcomePreserveUnconfirmed
+	case errors.Is(err, errPaidNoRetry):
+		return outcomePreservePaid
+	case errors.Is(err, errFinalizeFailed) && canRetry:
+		return outcomeRetry
+	case isTransientAntdError(err) && canRetry && !paymentMade:
+		return outcomeRetry
+	case paymentMade:
+		return outcomePreservePaid
+	default:
+		return outcomeAbandon
+	}
+}
+
+// estimatedUploadCost returns the cost to compare against max_gas_fee. For
+// wave-batch it's the quoted TotalAmount; for merkle (cost determined on-chain)
+// it's the upper bound the contract could charge — the sum over pools of the
+// largest candidate amount. Unparseable/empty amounts count as zero.
+func estimatedUploadCost(prepared *antd.PrepareUploadResult) *big.Int {
+	if prepared.PaymentType == "merkle" {
+		total := new(big.Int)
+		for _, pc := range prepared.PoolCommitments {
+			poolMax := new(big.Int)
+			for _, c := range pc.Candidates {
+				if amt, ok := new(big.Int).SetString(c.Amount, 10); ok && amt.Cmp(poolMax) > 0 {
+					poolMax = amt
+				}
+			}
+			total.Add(total, poolMax)
+		}
+		return total
+	}
+	if amt, ok := new(big.Int).SetString(strings.TrimSpace(prepared.TotalAmount), 10); ok {
+		return amt
+	}
+	return new(big.Int)
+}
 
 // UploadWorker processes queued file uploads in the background.
 type UploadWorker struct {
@@ -181,10 +250,9 @@ func (w *UploadWorker) processOne(ctx context.Context, upload *services.Upload) 
 	slog.Info("processing upload", "uuid", upload.UUID, "filename", upload.OriginalFilename, "size", upload.FileSize)
 	w.webhookSvc.FireUploadEvent("processing", upload)
 
-	var lastErr error
 	for attempt := 0; attempt <= maxTransientRetries; attempt++ {
-		lastErr = w.processUpload(ctx, upload)
-		if lastErr == nil {
+		err := w.processUpload(ctx, upload)
+		if err == nil {
 			w.prepareFailures = 0
 			w.circuitCooldown = circuitBreakerBaseCooldown
 			// processUpload set upload.Status to "completed" or, for a
@@ -198,48 +266,66 @@ func (w *UploadWorker) processOne(ctx context.Context, upload *services.Upload) 
 			return
 		}
 
-		if errors.Is(lastErr, errGasBackoff) {
+		if errors.Is(err, errGasBackoff) {
 			slog.Warn("upload gas backoff", "uuid", upload.UUID, "attempt", upload.BackoffAttempt+1)
 			return
 		}
 
-		// Permanent errors fail immediately
-		if isPermanentAntdError(lastErr) || !isTransientAntdError(lastErr) {
-			break
-		}
-
-		// Transient error — wait and retry
-		if attempt < maxTransientRetries {
+		paymentMade, _ := w.txnSvc.HasByUpload(upload.ID)
+		outcome := classifyFailure(err, paymentMade, attempt < maxTransientRetries)
+		if outcome == outcomeRetry {
 			delay := time.Duration(attempt+1) * 5 * time.Second
-			slog.Warn("transient antd error, retrying", "uuid", upload.UUID, "attempt", attempt+1, "delay", delay, "error", lastErr)
+			slog.Warn("retrying upload", "uuid", upload.UUID, "attempt", attempt+1, "delay", delay, "error", err)
 			select {
 			case <-ctx.Done():
 				return
 			case <-time.After(delay):
 			}
+			continue
 		}
-	}
 
-	// S9: Track consecutive transient failures with exponential cooldown
-	if isTransientAntdError(lastErr) {
-		w.prepareFailures++
-		if w.prepareFailures >= circuitBreakerThreshold {
-			w.circuitOpenUntil = time.Now().Add(w.circuitCooldown)
-			slog.Warn("circuit breaker opened — antd appears unreachable",
-				"failures", w.prepareFailures, "cooldown", w.circuitCooldown)
-			// Exponential cooldown: 30s → 60s → 120s → ... → 5min max
-			w.circuitCooldown *= 2
-			if w.circuitCooldown > circuitBreakerMaxCooldown {
-				w.circuitCooldown = circuitBreakerMaxCooldown
+		// Terminal outcome — stop retrying and resolve the failure.
+		w.finishFailedUpload(upload, err, outcome)
+		return
+	}
+}
+
+// finishFailedUpload applies the terminal outcome for an upload that will not be
+// retried. The no-payment case is abandoned (mark failed + delete the temp
+// source); when money or chunks may be committed the temp source is preserved
+// with a recoverable status_detail, so the DataMap can still be recovered and the
+// spend isn't lost (V2-425 / V2-426).
+func (w *UploadWorker) finishFailedUpload(upload *services.Upload, err error, outcome uploadOutcome) {
+	switch outcome {
+	case outcomePreserveUnconfirmed:
+		slog.Error("payment unconfirmed — preserving source for reconciliation, not re-paying",
+			"uuid", upload.UUID, "error", err)
+		_ = w.uploadSvc.MarkFailedPreserveTemp(upload.ID, err.Error(), services.StatusDetailPaymentUnconfirmed)
+	case outcomePreservePaid:
+		slog.Error("payment made but upload not finalized — preserving source for recovery",
+			"uuid", upload.UUID, "error", err)
+		_ = w.uploadSvc.MarkFailedPreserveTemp(upload.ID, err.Error(), services.StatusDetailPaidUnfinalized)
+	default: // outcomeAbandon — nothing was paid, so the source is safe to delete
+		// S9: track consecutive transient failures with exponential cooldown.
+		if isTransientAntdError(err) {
+			w.prepareFailures++
+			if w.prepareFailures >= circuitBreakerThreshold {
+				w.circuitOpenUntil = time.Now().Add(w.circuitCooldown)
+				slog.Warn("circuit breaker opened — antd appears unreachable",
+					"failures", w.prepareFailures, "cooldown", w.circuitCooldown)
+				// Exponential cooldown: 30s → 60s → 120s → ... → 5min max
+				w.circuitCooldown *= 2
+				if w.circuitCooldown > circuitBreakerMaxCooldown {
+					w.circuitCooldown = circuitBreakerMaxCooldown
+				}
 			}
 		}
+		slog.Error("upload failed", "uuid", upload.UUID, "error", err)
+		_ = w.uploadSvc.MarkFailed(upload.ID, err.Error())
+		w.cleanupTempFile(upload)
 	}
-
-	slog.Error("upload failed", "uuid", upload.UUID, "error", lastErr)
-	_ = w.uploadSvc.MarkFailed(upload.ID, lastErr.Error())
 	upload.Status = "failed"
 	w.webhookSvc.FireUploadEvent("failed", upload)
-	w.cleanupTempFile(upload)
 }
 
 func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Upload) error {
@@ -291,33 +377,33 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		return fmt.Errorf("Failed to prepare upload: %w", err)
 	}
 
-	// Gas fee check — only applies to wave-batch where cost is known upfront.
-	// Merkle cost is determined on-chain so we skip the pre-check.
-	if prepared.PaymentType != "merkle" {
-		if maxFeeStr, err := w.settingsSvc.Get("max_gas_fee"); err == nil {
-			if maxFee, err := strconv.ParseInt(maxFeeStr, 10, 64); err == nil && maxFee > 0 {
-				var costVal int64
-				_, _ = fmt.Sscanf(prepared.TotalAmount, "%d", &costVal)
-				if costVal > maxFee {
-					attempt := upload.BackoffAttempt + 1
-					if attempt > maxGasBackoffAttempts {
-						return fmt.Errorf("Gas fees too high — try again later")
-					}
-					backoffUntil := calcGasBackoff(attempt)
-					if err := w.uploadSvc.SetGasBackoff(upload.ID, backoffUntil, attempt, prepared.TotalAmount); err != nil {
-						return fmt.Errorf("Internal error scheduling retry")
-					}
-					slog.Info("gas fee too high, backing off",
-						"uuid", upload.UUID, "quoted", prepared.TotalAmount, "max", maxFeeStr,
-						"attempt", attempt, "retry_at", backoffUntil.Format(time.RFC3339))
-					return errGasBackoff
+	// Cost ceiling — applies to wave-batch AND merkle. Wave cost is known upfront
+	// (prepared.TotalAmount); merkle cost is the most the contract could charge
+	// (one winning candidate per pool). Either exceeding max_gas_fee backs off to
+	// a cheaper window rather than paying uncapped. Compared as big.Int so large
+	// atto-token amounts don't overflow.
+	if maxFeeStr, err := w.settingsSvc.Get("max_gas_fee"); err == nil {
+		if maxFee, ok := new(big.Int).SetString(strings.TrimSpace(maxFeeStr), 10); ok && maxFee.Sign() > 0 {
+			estCost := estimatedUploadCost(prepared)
+			if estCost.Cmp(maxFee) > 0 {
+				attempt := upload.BackoffAttempt + 1
+				if attempt > maxGasBackoffAttempts {
+					return fmt.Errorf("Gas fees too high — try again later")
 				}
-				if upload.BackoffAttempt > 0 {
-					_ = w.uploadSvc.ClearBackoff(upload.ID)
-					slog.Info("gas fee acceptable after backoff", "uuid", upload.UUID, "quoted", prepared.TotalAmount, "attempts", upload.BackoffAttempt)
+				backoffUntil := calcGasBackoff(attempt)
+				if err := w.uploadSvc.SetGasBackoff(upload.ID, backoffUntil, attempt, estCost.String()); err != nil {
+					return fmt.Errorf("Internal error scheduling retry")
 				}
-				slog.Info("gas fee check passed", "uuid", upload.UUID, "quoted", prepared.TotalAmount, "max", maxFeeStr)
+				slog.Info("cost too high, backing off",
+					"uuid", upload.UUID, "quoted", estCost.String(), "max", maxFeeStr, "payment_type", prepared.PaymentType,
+					"attempt", attempt, "retry_at", backoffUntil.Format(time.RFC3339))
+				return errGasBackoff
 			}
+			if upload.BackoffAttempt > 0 {
+				_ = w.uploadSvc.ClearBackoff(upload.ID)
+				slog.Info("cost acceptable after backoff", "uuid", upload.UUID, "quoted", estCost.String(), "attempts", upload.BackoffAttempt)
+			}
+			slog.Info("cost check passed", "uuid", upload.UUID, "quoted", estCost.String(), "max", maxFeeStr, "payment_type", prepared.PaymentType)
 		}
 	}
 
@@ -358,6 +444,15 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		w.evmSigner = signer
 	}
 
+	// Optional operator override for how long we wait for a payment tx to
+	// confirm before freeing the worker slot (defaults to the signer's built-in
+	// bound). Read each time so it can be tuned without a restart.
+	if v, err := w.settingsSvc.Get("payment_confirmation_timeout_seconds"); err == nil {
+		if secs, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && secs > 0 {
+			w.evmSigner.SetConfirmationTimeout(time.Duration(secs) * time.Second)
+		}
+	}
+
 	// Phase 2 + 3: Payment and finalization — branches on payment type
 	var result *antd.FinalizeUploadResult
 	var paidAmount string
@@ -377,42 +472,57 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		if err != nil {
 			return fmt.Errorf("EVM merkle payment failed: %w", err)
 		}
+		paidAmount = totalPaid
+		txHash = winnerHash
 
 		slog.Info("EVM merkle payment submitted",
 			"uuid", upload.UUID, "winner_pool_hash", winnerHash, "total_paid", totalPaid)
 
-		// Phase 3: Finalize merkle upload
+		// Record the confirmed spend BEFORE finalize, so a finalize failure still
+		// leaves an accounting record rather than losing the payment (V2-426).
+		w.recordPayment(ctx, wallet, upload, tokenAddr, paidAmount, txHash)
+
+		// Phase 3: Finalize merkle upload. A failure here means money is already
+		// spent; re-running would submit a second merkle payment (not provably
+		// zero-cost), so flag it no-retry and preserve the source for recovery.
 		result, err = w.antdClient.FinalizeMerkleUpload(ctx, prepared.UploadID, winnerHash, false)
 		if err != nil {
-			return fmt.Errorf("Failed to finalize merkle upload: %w", err)
+			return fmt.Errorf("Failed to finalize merkle upload: %w", errors.Join(errPaidNoRetry, err))
 		}
-		paidAmount = totalPaid
-		txHash = winnerHash
 
 	default: // "wave_batch" or empty (backward compat)
 		// Phase 2: Sign wave-batch payment. When prepare returns no quotes,
 		// every chunk is already on-network (content-addressed dedup) — there's
 		// nothing to pay, so skip signing an empty batch and finalize directly.
 		var txHashes map[string]string
+		paymentMade := false
 		if len(prepared.Payments) > 0 {
 			txHashes, err = w.evmSigner.PayForQuotes(ctx, walletKey, prepared.Payments, tokenAddr, prepared.PaymentVaultAddress)
 			if err != nil {
 				return fmt.Errorf("EVM payment failed: %w", err)
 			}
+			paymentMade = true
 			slog.Info("EVM payment submitted", "uuid", upload.UUID, "tx_count", len(txHashes), "total", prepared.TotalAmount)
 		} else {
 			slog.Info("no quotes to pay — chunks already stored", "uuid", upload.UUID)
-		}
-
-		// Phase 3: Finalize wave-batch upload
-		result, err = w.antdClient.FinalizeUpload(ctx, prepared.UploadID, txHashes, false)
-		if err != nil {
-			return fmt.Errorf("Failed to finalize upload: %w", err)
 		}
 		paidAmount = prepared.TotalAmount
 		for _, h := range txHashes {
 			txHash = h
 			break
+		}
+
+		// Record the confirmed spend BEFORE finalize (V2-426). Only when a payment
+		// actually happened — a dedup re-Prepare pays nothing.
+		if paymentMade {
+			w.recordPayment(ctx, wallet, upload, tokenAddr, paidAmount, txHash)
+		}
+
+		// Phase 3: Finalize wave-batch upload. Retrying re-Prepares at zero cost
+		// (dedup), so a finalize failure is safe to retry.
+		result, err = w.antdClient.FinalizeUpload(ctx, prepared.UploadID, txHashes, false)
+		if err != nil {
+			return fmt.Errorf("Failed to finalize upload: %w", errors.Join(errFinalizeFailed, err))
 		}
 	}
 
@@ -454,7 +564,17 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		}
 	}
 
-	// Update wallet balance from chain (best-effort)
+	slog.Info("upload completed", "uuid", upload.UUID, "payment_type", prepared.PaymentType,
+		"cost", paidAmount, "chunks", result.ChunksStored)
+	return nil
+}
+
+// recordPayment persists the wallet spend (and refreshes the cached balance) as
+// soon as a payment is confirmed — before finalize — so a later finalize failure
+// still leaves a queryable accounting record rather than losing the spend. Called
+// exactly once per real payment (a dedup re-Prepare pays nothing, so retries do
+// not double-record).
+func (w *UploadWorker) recordPayment(ctx context.Context, wallet *services.Wallet, upload *services.Upload, tokenAddr, paidAmount, txHash string) {
 	if tokenBal, gasBal, err := w.evmSigner.GetBalances(ctx, wallet.Address, tokenAddr); err == nil {
 		_ = w.walletSvc.UpdateBalance(wallet.ID, tokenBal, gasBal)
 		_, _ = w.txnSvc.Record(wallet.ID, &upload.ID, "upload", paidAmount, tokenBal, txHash)
@@ -462,10 +582,6 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		slog.Warn("failed to query post-payment balance", "error", err)
 		_, _ = w.txnSvc.Record(wallet.ID, &upload.ID, "upload", paidAmount, wallet.PaymentBalance, txHash)
 	}
-
-	slog.Info("upload completed", "uuid", upload.UUID, "payment_type", prepared.PaymentType,
-		"cost", paidAmount, "chunks", result.ChunksStored)
-	return nil
 }
 
 func (w *UploadWorker) cleanupTempFile(upload *services.Upload) {

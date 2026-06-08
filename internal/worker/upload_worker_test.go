@@ -2,6 +2,7 @@ package worker
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	antd "github.com/WithAutonomi/ant-sdk/antd-go"
 
 	"github.com/WithAutonomi/indelible/internal/config"
+	"github.com/WithAutonomi/indelible/internal/evm"
 )
 
 // --- calcGasBackoff tests ---
@@ -362,6 +364,75 @@ func TestErrGasBackoff_IsSentinel(t *testing.T) {
 	wrapped := errors.New("other error")
 	if errors.Is(wrapped, errGasBackoff) {
 		t.Error("unrelated error should not match errGasBackoff")
+	}
+}
+
+// --- classifyFailure (V2-425 / V2-426 failure decision tree) ---
+
+func TestClassifyFailure(t *testing.T) {
+	transient := &antd.NetworkError{AntdError: antd.AntdError{StatusCode: 502, Message: "net"}}
+	confTimeout := fmt.Errorf("payment: %w", evm.ErrConfirmationTimeout)
+	waveFinalize := errors.Join(errFinalizeFailed, transient)
+	merklePaid := errors.Join(errPaidNoRetry, errors.New("finalize reverted"))
+	permanent := &antd.BadRequestError{AntdError: antd.AntdError{StatusCode: 400, Message: "bad"}}
+	generic := errors.New("boom")
+
+	tests := []struct {
+		name        string
+		err         error
+		paymentMade bool
+		canRetry    bool
+		want        uploadOutcome
+	}{
+		{"confirmation timeout → preserve unconfirmed", confTimeout, false, true, outcomePreserveUnconfirmed},
+		{"confirmation timeout wins even if paid", confTimeout, true, true, outcomePreserveUnconfirmed},
+		{"merkle paid-no-retry → preserve paid", merklePaid, true, true, outcomePreservePaid},
+		{"wave finalize retries while attempts remain", waveFinalize, true, true, outcomeRetry},
+		{"wave finalize exhausted + paid → preserve", waveFinalize, true, false, outcomePreservePaid},
+		{"transient retries when nothing paid", transient, false, true, outcomeRetry},
+		{"transient NOT retried after payment → preserve", transient, true, true, outcomePreservePaid},
+		{"transient exhausted, nothing paid → abandon", transient, false, false, outcomeAbandon},
+		{"permanent error, nothing paid → abandon immediately", permanent, false, true, outcomeAbandon},
+		{"generic error after payment → preserve", generic, true, true, outcomePreservePaid},
+		{"generic error, nothing paid → abandon", generic, false, true, outcomeAbandon},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := classifyFailure(tt.err, tt.paymentMade, tt.canRetry); got != tt.want {
+				t.Errorf("classifyFailure = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+// --- estimatedUploadCost (V2-431 merkle cost ceiling) ---
+
+func TestEstimatedUploadCost_Wave(t *testing.T) {
+	p := &antd.PrepareUploadResult{PaymentType: "wave_batch", TotalAmount: "12345"}
+	if got := estimatedUploadCost(p); got.String() != "12345" {
+		t.Errorf("wave cost = %s, want 12345", got)
+	}
+}
+
+func TestEstimatedUploadCost_WaveUnparseable(t *testing.T) {
+	p := &antd.PrepareUploadResult{PaymentType: "wave_batch", TotalAmount: ""}
+	if got := estimatedUploadCost(p); got.Sign() != 0 {
+		t.Errorf("empty wave cost = %s, want 0", got)
+	}
+}
+
+func TestEstimatedUploadCost_Merkle(t *testing.T) {
+	// Two pools; cost ceiling = sum of the max candidate amount in each pool.
+	p := &antd.PrepareUploadResult{
+		PaymentType: "merkle",
+		PoolCommitments: []antd.PoolCommitmentEntry{
+			{Candidates: []antd.CandidateNodeEntry{{Amount: "10"}, {Amount: "70"}, {Amount: "30"}}},
+			{Candidates: []antd.CandidateNodeEntry{{Amount: "5"}, {Amount: "9"}}},
+		},
+	}
+	if got := estimatedUploadCost(p); got.String() != "79" { // 70 + 9
+		t.Errorf("merkle cost = %s, want 79", got)
 	}
 }
 
