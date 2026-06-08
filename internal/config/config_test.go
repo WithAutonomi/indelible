@@ -80,3 +80,27 @@ func TestLoad_JWTSecretAtFloorAccepted(t *testing.T) {
 		t.Fatalf("Load rejected a 32-byte jwt_secret: %v", err)
 	}
 }
+
+func TestApplyNetworkPreset_LocalAliasesCustom(t *testing.T) {
+	// "local" is antd's term for a devnet; Indelible should accept it as an
+	// alias for "custom" rather than rejecting it, and fold it to the canonical
+	// value so it leaves the EVM fields for upload-time auto-population.
+	c := &Config{Network: NetworkLocal}
+	if err := c.ApplyNetworkPreset(); err != nil {
+		t.Fatalf("ApplyNetworkPreset rejected network %q: %v", NetworkLocal, err)
+	}
+	if c.Network != NetworkCustom {
+		t.Errorf("Network = %q, want it normalized to %q", c.Network, NetworkCustom)
+	}
+	if c.EvmRPCURL != "" || c.EvmTokenAddress != "" {
+		t.Errorf("EVM fields should be left untouched for a local/custom network, got rpc=%q token=%q",
+			c.EvmRPCURL, c.EvmTokenAddress)
+	}
+}
+
+func TestApplyNetworkPreset_UnknownRejected(t *testing.T) {
+	c := &Config{Network: "no-such-network"}
+	if err := c.ApplyNetworkPreset(); err == nil {
+		t.Fatal("expected ApplyNetworkPreset to reject an unknown network")
+	}
+}
