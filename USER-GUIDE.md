@@ -204,7 +204,7 @@ When the webhook channel is active, each event POSTs JSON to every subscribed we
 }
 ```
 
-Your webhook handler is responsible for delivering `auth.url` to `auth.to` through whatever channel makes sense (transactional email API, Slack DM, Discord webhook, an internal mail queue). The `X-Signature-256` header is `sha256=<hmac>` over the raw request body using the webhook secret.
+Your webhook handler is responsible for delivering `auth.url` to `auth.to` through whatever channel makes sense (transactional email API, Slack DM, Discord webhook, an internal mail queue). The `X-Signature-256` header is `sha256=<hmac>` over `<X-Webhook-Timestamp>.<raw body>` using the webhook secret — see [Webhook Signatures](#webhook-signatures).
 
 Same shape applies to `auth.email_verification_requested`.
 
@@ -1094,15 +1094,24 @@ All webhook deliveries include HMAC-SHA256 signatures for payload verification:
 
 | Header | Description |
 |--------|-------------|
-| `X-Signature-256` | `sha256=<hex-encoded HMAC>` |
-| `X-Webhook-Timestamp` | Unix timestamp of delivery |
+| `X-Signature-256` | `sha256=<hex-encoded HMAC>` over `<timestamp>.<raw body>` |
+| `X-Webhook-Timestamp` | Unix timestamp of delivery — **signed into** the signature |
 
-To verify in your receiver:
+The signature is computed over the timestamp joined to the raw body
+(`<X-Webhook-Timestamp>.<body>`), so a receiver can bind it to a time window and
+reject replays. To verify in your receiver:
 ```python
-import hmac, hashlib
-expected = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+import hmac, hashlib, time
+ts = request.headers["X-Webhook-Timestamp"]
+signed = ts.encode() + b"." + body  # body = the raw request bytes
+expected = "sha256=" + hmac.new(secret.encode(), signed, hashlib.sha256).hexdigest()
 assert hmac.compare_digest(expected, request.headers["X-Signature-256"])
+# Reject stale deliveries (recommended tolerance: 5 minutes).
+assert abs(time.time() - int(ts)) <= 300
 ```
+
+> **Signature scheme change:** earlier releases signed the body only. Receivers
+> that verified the old scheme must update to sign `<timestamp>.<body>`.
 
 Webhook secrets are generated automatically on creation and shown once. Use the **Rotate Secret** button to generate a new one.
 

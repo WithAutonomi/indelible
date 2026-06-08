@@ -118,7 +118,9 @@ func (s *OIDCLoginService) BuildAuthorizeURL(ctx context.Context, providerID int
 		return "", "", ErrOIDCProviderDisabled
 	}
 
-	idp, err := oidc.NewProvider(ctx, provider.IssuerURL)
+	// SSRF guard: the issuer URL is admin-supplied; discovery must not be able to
+	// fetch from internal/metadata hosts.
+	idp, err := oidc.NewProvider(oidc.ClientContext(ctx, newGuardedHTTPClient(10*time.Second)), provider.IssuerURL)
 	if err != nil {
 		return "", "", fmt.Errorf("oidc discovery: %w", err)
 	}
@@ -194,7 +196,9 @@ func (s *OIDCLoginService) HandleCallback(ctx context.Context, cookieValue, quer
 		return nil, ErrOIDCProviderDisabled
 	}
 
-	idp, err := oidc.NewProvider(ctx, provider.IssuerURL)
+	// SSRF guard: the issuer URL is admin-supplied; discovery must not be able to
+	// fetch from internal/metadata hosts.
+	idp, err := oidc.NewProvider(oidc.ClientContext(ctx, newGuardedHTTPClient(10*time.Second)), provider.IssuerURL)
 	if err != nil {
 		return nil, fmt.Errorf("oidc discovery: %w", err)
 	}

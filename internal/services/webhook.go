@@ -38,6 +38,9 @@ func NewWebhookService(db *database.DB) *WebhookService {
 
 // Create adds a new webhook configuration.
 func (s *WebhookService) Create(url, integrationType, events string) (*Webhook, error) {
+	if err := validateOutboundURL(url); err != nil {
+		return nil, err
+	}
 	if integrationType == "" {
 		integrationType = "generic"
 	}
@@ -101,6 +104,9 @@ func (s *WebhookService) List() ([]*Webhook, error) {
 
 // Update modifies a webhook configuration.
 func (s *WebhookService) Update(id int64, url, integrationType, events string, isEnabled bool) (*Webhook, error) {
+	if err := validateOutboundURL(url); err != nil {
+		return nil, err
+	}
 	_, err := s.db.Exec(
 		`UPDATE webhook_config SET url = ?, integration_type = ?, events = ?, is_enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 		url, integrationType, events, isEnabled, id,

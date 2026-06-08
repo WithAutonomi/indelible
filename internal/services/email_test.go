@@ -175,12 +175,19 @@ func TestWebhookNotifier_FiresSignedPasswordResetEvent(t *testing.T) {
 		t.Errorf("auth.url = %q", payload.Auth.URL)
 	}
 
-	// HMAC-SHA256 signature header.
+	// HMAC-SHA256 signature header — signed over "timestamp.body" (V2-428) so the
+	// timestamp is bound into the signature and replays can be rejected.
 	sigHeader := req.headers.Get("X-Signature-256")
 	if sigHeader == "" {
 		t.Fatal("missing X-Signature-256 header")
 	}
+	ts := req.headers.Get("X-Webhook-Timestamp")
+	if ts == "" {
+		t.Fatal("missing X-Webhook-Timestamp header")
+	}
 	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(ts))
+	mac.Write([]byte("."))
 	mac.Write(req.body)
 	expected := "sha256=" + hex.EncodeToString(mac.Sum(nil))
 	if sigHeader != expected {
