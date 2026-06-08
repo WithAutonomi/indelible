@@ -11,10 +11,19 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/WithAutonomi/indelible/internal/database"
 )
+
+// escapeSlackText escapes the characters Slack treats as mrkdwn control
+// characters in a text span, so user-supplied values can't inject formatting or
+// fake links into a message.
+func escapeSlackText(s string) string {
+	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(s)
+}
 
 // RedactWebhookURL returns at most scheme://host for logging. The path/query is
 // dropped because webhook URLs commonly embed their credential there (e.g. a
@@ -100,14 +109,32 @@ type WebhookDeliveryService struct {
 	client     *http.Client
 }
 
-// NewWebhookDeliveryService creates a new delivery service.
+// NewWebhookDeliveryService creates a new delivery service. The HTTP client is
+// SSRF-guarded — webhook URLs are admin-supplied (and become user-supplied once
+// per-user webhooks ship), so deliveries must not reach internal/metadata hosts.
 func NewWebhookDeliveryService(db *database.DB) *WebhookDeliveryService {
 	return &WebhookDeliveryService{
 		db:         db,
 		webhookSvc: NewWebhookService(db),
-		client: &http.Client{
-			Timeout: 5 * time.Second,
-		},
+		client:     newGuardedHTTPClient(5 * time.Second),
+	}
+}
+
+// setSignedHeaders sets the common webhook request headers and, when the webhook
+// has a signing secret, an HMAC over "timestamp.body" (Stripe-style). Binding the
+// timestamp into the signature lets receivers reject replays; the same timestamp
+// is emitted in X-Webhook-Timestamp for verification.
+func setSignedHeaders(req *http.Request, wh *Webhook, body []byte) {
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "Indelible-Webhook/2.0")
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	req.Header.Set("X-Webhook-Timestamp", ts)
+	if wh.Secret != "" {
+		mac := hmac.New(sha256.New, []byte(wh.Secret))
+		mac.Write([]byte(ts))
+		mac.Write([]byte("."))
+		mac.Write(body)
+		req.Header.Set("X-Signature-256", "sha256="+hex.EncodeToString(mac.Sum(nil)))
 	}
 }
 
@@ -282,16 +309,7 @@ func (s *WebhookDeliveryService) FireTestPing(wh *Webhook) (statusCode int, succ
 		s.logDelivery(wh.ID, "test_ping", 0, false, 1, err.Error())
 		return 0, false, err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "Indelible-Webhook/2.0")
-	req.Header.Set("X-Webhook-Timestamp", fmt.Sprintf("%d", time.Now().Unix()))
-
-	if wh.Secret != "" {
-		mac := hmac.New(sha256.New, []byte(wh.Secret))
-		mac.Write(body)
-		sig := "sha256=" + hex.EncodeToString(mac.Sum(nil))
-		req.Header.Set("X-Signature-256", sig)
-	}
+	setSignedHeaders(req, wh, body)
 
 	resp, err := s.client.Do(req)
 	if err != nil {
@@ -332,17 +350,7 @@ func (s *WebhookDeliveryService) deliver(wh *Webhook, payload WebhookPayload) {
 			s.logDelivery(wh.ID, payload.EventType, 0, false, attempt+1, err.Error())
 			return
 		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("User-Agent", "Indelible-Webhook/2.0")
-		req.Header.Set("X-Webhook-Timestamp", fmt.Sprintf("%d", time.Now().Unix()))
-
-		// HMAC-SHA256 signature if webhook has a signing secret
-		if wh.Secret != "" {
-			mac := hmac.New(sha256.New, []byte(wh.Secret))
-			mac.Write(body)
-			sig := "sha256=" + hex.EncodeToString(mac.Sum(nil))
-			req.Header.Set("X-Signature-256", sig)
-		}
+		setSignedHeaders(req, wh, body)
 
 		resp, err := s.client.Do(req)
 		if err != nil {
@@ -432,28 +440,31 @@ func (s *WebhookDeliveryService) formatPayload(integrationType string, payload W
 func (s *WebhookDeliveryService) formatSlack(payload WebhookPayload) ([]byte, error) {
 	var text string
 
+	// User-controlled values (filenames, error messages, recipient, names) are
+	// escaped so they can't inject Slack mrkdwn control characters into the
+	// message. Slack requires escaping &, <, > in text spans.
 	switch {
 	case payload.Upload != nil:
 		text = fmt.Sprintf("*%s*: `%s` — %s (%d bytes)",
-			payload.EventType, payload.Upload.Filename, payload.Upload.Status, payload.Upload.FileSize)
+			payload.EventType, escapeSlackText(payload.Upload.Filename), escapeSlackText(payload.Upload.Status), payload.Upload.FileSize)
 		if payload.Upload.ActualCost != nil {
-			text += fmt.Sprintf(" | Cost: %s atto", *payload.Upload.ActualCost)
+			text += fmt.Sprintf(" | Cost: %s atto", escapeSlackText(*payload.Upload.ActualCost))
 		}
 		if payload.Upload.ErrorMessage != nil {
-			text += fmt.Sprintf("\nError: %s", *payload.Upload.ErrorMessage)
+			text += fmt.Sprintf("\nError: %s", escapeSlackText(*payload.Upload.ErrorMessage))
 		}
 	case payload.Tags != nil:
-		text = fmt.Sprintf("*%s*: `%s` — %d tags", payload.EventType, payload.Tags.UploadUUID, len(payload.Tags.Tags))
+		text = fmt.Sprintf("*%s*: `%s` — %d tags", payload.EventType, escapeSlackText(payload.Tags.UploadUUID), len(payload.Tags.Tags))
 	case payload.Collection != nil:
-		text = fmt.Sprintf("*%s*: `%s` — collection `%s`", payload.EventType, payload.Collection.UploadUUID, payload.Collection.CollectionName)
+		text = fmt.Sprintf("*%s*: `%s` — collection `%s`", payload.EventType, escapeSlackText(payload.Collection.UploadUUID), escapeSlackText(payload.Collection.CollectionName))
 	case payload.System != nil:
-		text = fmt.Sprintf("*%s*: %s (%.1f%%)", payload.EventType, payload.System.Message, payload.System.Value)
+		text = fmt.Sprintf("*%s*: %s (%.1f%%)", payload.EventType, escapeSlackText(payload.System.Message), payload.System.Value)
 	case payload.Auth != nil:
 		// Slack mrkdwn link format: <url|label>. The recipient address is sent
-		// verbatim — the Slack channel operator needs it to identify who the
-		// link belongs to.
+		// verbatim (escaped) — the Slack channel operator needs it to identify
+		// who the link belongs to.
 		text = fmt.Sprintf("*%s*\nDeliver to: `%s`\n<%s|Click here to continue>",
-			payload.EventType, payload.Auth.To, payload.Auth.URL)
+			payload.EventType, escapeSlackText(payload.Auth.To), payload.Auth.URL)
 	default:
 		text = fmt.Sprintf("*%s* — Indelible test ping at %s", payload.EventType, payload.Timestamp)
 	}
