@@ -3,6 +3,7 @@ package evm
 import (
 	"context"
 	"crypto/ecdsa"
+	"errors"
 	"fmt"
 	"math/big"
 	"strings"
@@ -17,13 +18,25 @@ import (
 	antd "github.com/WithAutonomi/ant-sdk/antd-go"
 )
 
+// ErrConfirmationTimeout means a transaction was broadcast but its receipt did
+// not arrive within the signer's confirmation deadline. The payment may still
+// mine later, so callers must treat it as "unconfirmed — reconcile" rather than
+// a plain failure (re-paying blindly risks a double-spend).
+var ErrConfirmationTimeout = errors.New("payment confirmation timed out")
+
+// defaultConfirmationTimeout bounds how long we wait for a tx receipt before
+// freeing the worker slot. A stuck/underpriced tx that never mines would
+// otherwise block the (single, by default) worker indefinitely.
+const defaultConfirmationTimeout = 5 * time.Minute
+
 // Signer handles EVM transaction signing and submission for storage payments.
 // The private key never leaves this process — only signed transactions are sent.
 type Signer struct {
-	rpcURL  string
-	client  *ethclient.Client
-	chainID *big.Int
-	mu      sync.Mutex // serializes nonce management per wallet
+	rpcURL              string
+	client              *ethclient.Client
+	chainID             *big.Int
+	confirmationTimeout time.Duration
+	mu                  sync.Mutex // serializes nonce management per wallet
 }
 
 // NewSigner connects to the EVM RPC endpoint and determines the chain ID.
@@ -40,10 +53,18 @@ func NewSigner(rpcURL string) (*Signer, error) {
 	}
 
 	return &Signer{
-		rpcURL:  rpcURL,
-		client:  client,
-		chainID: chainID,
+		rpcURL:              rpcURL,
+		client:              client,
+		chainID:             chainID,
+		confirmationTimeout: defaultConfirmationTimeout,
 	}, nil
+}
+
+// SetConfirmationTimeout overrides how long a tx receipt is awaited before
+// returning ErrConfirmationTimeout. A non-positive value disables the bound
+// (waits until the parent context is cancelled).
+func (s *Signer) SetConfirmationTimeout(d time.Duration) {
+	s.confirmationTimeout = d
 }
 
 // RPCUrl returns the configured RPC URL.
@@ -188,9 +209,13 @@ func (s *Signer) ensureAllowance(
 		return nil // sufficient allowance
 	}
 
-	// Approve max uint256
-	maxUint256 := new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 256), big.NewInt(1))
-	approveData, err := packApprove(spender, maxUint256)
+	// Approve exactly what this payment needs, not an unlimited (max-uint256)
+	// allowance, so a buggy/upgraded/malicious payment contract can't move more
+	// than the current payment's worth of ANT. The allowance is re-approved as
+	// needed for subsequent payments — a little extra gas for a bounded blast
+	// radius. (Existing on-chain max approvals from before this change are not
+	// downgraded; this only governs newly granted allowances.)
+	approveData, err := packApprove(spender, required)
 	if err != nil {
 		return err
 	}
@@ -271,10 +296,11 @@ func (s *Signer) PayForMerkleTree(
 		}
 	}
 
-	// Ensure token allowance for merkle payments contract
-	// We don't know the exact cost upfront (contract determines it), so approve max
-	maxUint256 := new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 256), big.NewInt(1))
-	if err := s.ensureAllowance(ctx, privateKey, fromAddress, tokenAddr, merkleAddr, maxUint256); err != nil {
+	// Ensure token allowance for the merkle payments contract. We don't know the
+	// exact cost upfront (the contract picks one winning candidate per pool), so
+	// approve the maximum it could possibly charge rather than an unlimited
+	// max-uint256 allowance.
+	if err := s.ensureAllowance(ctx, privateKey, fromAddress, tokenAddr, merkleAddr, maxMerklePayout(commitments)); err != nil {
 		return "", "", fmt.Errorf("token approval: %w", err)
 	}
 
@@ -359,8 +385,23 @@ func (s *Signer) sendTxWithReceipt(
 		return "", nil, fmt.Errorf("sending tx: %w", err)
 	}
 
-	receipt, err := waitForReceipt(ctx, s.client, signedTx.Hash())
+	// Bound the receipt wait: a stuck/underpriced tx that never mines must not
+	// pin the worker slot forever. A timeout here means the tx was broadcast but
+	// not confirmed — surface a typed error so the caller treats it as
+	// "unconfirmed, reconcile" rather than abandoning paid data.
+	waitCtx := ctx
+	if s.confirmationTimeout > 0 {
+		var cancel context.CancelFunc
+		waitCtx, cancel = context.WithTimeout(ctx, s.confirmationTimeout)
+		defer cancel()
+	}
+	receipt, err := waitForReceipt(waitCtx, s.client, signedTx.Hash())
 	if err != nil {
+		// Our own deadline fired while the parent context is still live → the tx
+		// simply hasn't confirmed yet.
+		if s.confirmationTimeout > 0 && errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+			return "", nil, fmt.Errorf("%w (tx %s)", ErrConfirmationTimeout, signedTx.Hash().Hex())
+		}
 		return "", nil, fmt.Errorf("waiting for receipt: %w", err)
 	}
 
@@ -369,6 +410,24 @@ func (s *Signer) sendTxWithReceipt(
 	}
 
 	return signedTx.Hash().Hex(), receipt, nil
+}
+
+// maxMerklePayout returns the largest total the merkle payment contract could
+// charge: the sum over pools of the highest candidate amount in each pool (the
+// contract pays exactly one winning candidate per pool). Used to bound the
+// ERC-20 allowance instead of approving max-uint256.
+func maxMerklePayout(commitments []MerklePoolCommitment) *big.Int {
+	total := new(big.Int)
+	for _, pc := range commitments {
+		poolMax := new(big.Int)
+		for _, c := range pc.Candidates {
+			if c.Amount != nil && c.Amount.Cmp(poolMax) > 0 {
+				poolMax = c.Amount
+			}
+		}
+		total.Add(total, poolMax)
+	}
+	return total
 }
 
 // waitForReceipt polls for a transaction receipt with a 2-second interval.
