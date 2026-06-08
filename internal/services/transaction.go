@@ -51,6 +51,15 @@ func (s *TransactionService) Record(walletID int64, uploadID *int64, txType, amo
 	return s.GetByID(id)
 }
 
+// HasByUpload reports whether any transaction has been recorded for an upload —
+// i.e. whether a payment was made. Used on a failed upload to decide whether its
+// source must be preserved for reconciliation rather than abandoned.
+func (s *TransactionService) HasByUpload(uploadID int64) (bool, error) {
+	var exists bool
+	err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM transactions WHERE upload_id = ?)`, uploadID).Scan(&exists)
+	return exists, err
+}
+
 // GetByID retrieves a transaction by ID.
 func (s *TransactionService) GetByID(id int64) (*Transaction, error) {
 	t := &Transaction{}
