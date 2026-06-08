@@ -331,6 +331,156 @@ func AdminGetWebhookDeliveries(db *database.DB) http.HandlerFunc {
 	}
 }
 
+type deadLetterResponse struct {
+	ID             int64  `json:"id"`
+	WebhookID      int64  `json:"webhook_id"`
+	WebhookURL     string `json:"webhook_url"`
+	EventType      string `json:"event_type"`
+	LastStatusCode *int64 `json:"last_status_code"`
+	LastError      string `json:"last_error,omitempty"`
+	Attempts       int    `json:"attempts"`
+	ResendCount    int    `json:"resend_count"`
+	IsAuth         bool   `json:"is_auth"`
+	CreatedAt      string `json:"created_at"`
+	ResolvedAt     string `json:"resolved_at,omitempty"`
+}
+
+// @Summary      List webhook dead-letters
+// @Description  Return webhook deliveries that exhausted every retry. By default only unresolved (still-actionable) entries are returned. Payloads are never included (they can carry one-time recovery links).
+// @Tags         Admin: Webhooks
+// @Produce      json
+// @Param        include_resolved query bool false "Include resolved/dismissed entries"
+// @Param        limit            query int  false "Max results (default 50, max 200)"
+// @Success      200 {object} map[string][]deadLetterResponse
+// @Failure      500 {object} map[string]string
+// @Router       /admin/webhooks/dead-letters [get]
+// @Security     BearerAuth
+// AdminGetWebhookDeadLetters returns the dead-letter queue across all webhooks.
+func AdminGetWebhookDeadLetters(db *database.DB) http.HandlerFunc {
+	deliverySvc := services.NewWebhookDeliveryService(db)
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		includeResolved := r.URL.Query().Get("include_resolved") == "true"
+		limit := 50
+		if l := r.URL.Query().Get("limit"); l != "" {
+			if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 && parsed <= 200 {
+				limit = parsed
+			}
+		}
+
+		entries, err := deliverySvc.ListDeadLetters(includeResolved, limit)
+		if err != nil {
+			jsonError(w, "failed to list dead-letters", http.StatusInternalServerError)
+			return
+		}
+
+		resp := make([]deadLetterResponse, 0, len(entries))
+		for _, d := range entries {
+			dr := deadLetterResponse{
+				ID:          d.ID,
+				WebhookID:   d.WebhookID,
+				WebhookURL:  d.WebhookURL,
+				EventType:   d.EventType,
+				Attempts:    d.Attempts,
+				ResendCount: d.ResendCount,
+				IsAuth:      d.IsAuth,
+				CreatedAt:   d.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			}
+			if d.LastStatusCode.Valid {
+				dr.LastStatusCode = &d.LastStatusCode.Int64
+			}
+			if d.LastError.Valid {
+				dr.LastError = d.LastError.String
+			}
+			if d.ResolvedAt.Valid {
+				dr.ResolvedAt = d.ResolvedAt.Time.Format("2006-01-02T15:04:05Z")
+			}
+			resp = append(resp, dr)
+		}
+
+		jsonResponse(w, http.StatusOK, map[string]any{"dead_letters": resp})
+	}
+}
+
+// @Summary      Resend a dead-lettered delivery
+// @Description  Re-drive a webhook delivery that previously exhausted its retries. On success the entry is marked resolved.
+// @Tags         Admin: Webhooks
+// @Produce      json
+// @Param        id path int true "Dead-letter entry ID"
+// @Success      200 {object} map[string]interface{}
+// @Failure      400 {object} map[string]string
+// @Failure      404 {object} map[string]string
+// @Failure      502 {object} map[string]string
+// @Router       /admin/webhooks/dead-letters/{id}/resend [post]
+// @Security     BearerAuth
+// AdminResendWebhookDeadLetter re-drives a single dead-lettered delivery.
+func AdminResendWebhookDeadLetter(db *database.DB) http.HandlerFunc {
+	deliverySvc := services.NewWebhookDeliveryService(db)
+	logSvc := services.NewLogService(db)
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+		if err != nil {
+			jsonError(w, "invalid dead-letter id", http.StatusBadRequest)
+			return
+		}
+
+		callerID := middleware.GetUserID(r.Context())
+		if err := deliverySvc.Resend(id); err != nil {
+			if errors.Is(err, services.ErrDeadLetterNotFound) {
+				jsonError(w, "dead-letter entry not found", http.StatusNotFound)
+				return
+			}
+			auditEvent(r, logSvc, "webhook_dead_letter_resend_failed", "warning", &callerID,
+				fmt.Sprintf("id=%d error=%s", id, err.Error()))
+			// Delivery itself failed again (receiver still down) — surface as 502.
+			jsonResponse(w, http.StatusBadGateway, map[string]any{"success": false, "error": err.Error()})
+			return
+		}
+
+		auditEvent(r, logSvc, "webhook_dead_letter_resent", "info", &callerID, fmt.Sprintf("id=%d", id))
+		jsonResponse(w, http.StatusOK, map[string]any{"success": true})
+	}
+}
+
+// @Summary      Dismiss a dead-lettered delivery
+// @Description  Mark a dead-letter entry resolved without re-driving it (e.g. the link has expired or was delivered out-of-band).
+// @Tags         Admin: Webhooks
+// @Produce      json
+// @Param        id path int true "Dead-letter entry ID"
+// @Success      200 {object} map[string]string
+// @Failure      400 {object} map[string]string
+// @Failure      404 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /admin/webhooks/dead-letters/{id} [delete]
+// @Security     BearerAuth
+// AdminDismissWebhookDeadLetter marks a dead-letter entry resolved.
+func AdminDismissWebhookDeadLetter(db *database.DB) http.HandlerFunc {
+	deliverySvc := services.NewWebhookDeliveryService(db)
+	logSvc := services.NewLogService(db)
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+		if err != nil {
+			jsonError(w, "invalid dead-letter id", http.StatusBadRequest)
+			return
+		}
+
+		if err := deliverySvc.ResolveDeadLetter(id); err != nil {
+			if errors.Is(err, services.ErrDeadLetterNotFound) {
+				jsonError(w, "dead-letter entry not found", http.StatusNotFound)
+				return
+			}
+			jsonError(w, "failed to dismiss dead-letter", http.StatusInternalServerError)
+			return
+		}
+
+		callerID := middleware.GetUserID(r.Context())
+		auditEvent(r, logSvc, "webhook_dead_letter_dismissed", "info", &callerID, fmt.Sprintf("id=%d", id))
+		jsonResponse(w, http.StatusOK, map[string]string{"message": "dead-letter dismissed"})
+	}
+}
+
 // @Summary      Rotate webhook secret
 // @Description  Generate a new signing secret for a webhook endpoint
 // @Tags         Admin: Webhooks

@@ -3387,6 +3387,186 @@
                 }
             }
         },
+        "/admin/webhooks/dead-letters": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Return webhook deliveries that exhausted every retry. By default only unresolved (still-actionable) entries are returned. Payloads are never included (they can carry one-time recovery links).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin: Webhooks"
+                ],
+                "summary": "List webhook dead-letters",
+                "parameters": [
+                    {
+                        "type": "boolean",
+                        "description": "Include resolved/dismissed entries",
+                        "name": "include_resolved",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Max results (default 50, max 200)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "array",
+                                "items": {
+                                    "$ref": "#/definitions/internal_handlers.deadLetterResponse"
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/webhooks/dead-letters/{id}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Mark a dead-letter entry resolved without re-driving it (e.g. the link has expired or was delivered out-of-band).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin: Webhooks"
+                ],
+                "summary": "Dismiss a dead-lettered delivery",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Dead-letter entry ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/webhooks/dead-letters/{id}/resend": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Re-drive a webhook delivery that previously exhausted its retries. On success the entry is marked resolved.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin: Webhooks"
+                ],
+                "summary": "Resend a dead-lettered delivery",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Dead-letter entry ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/admin/webhooks/{id}": {
             "put": {
                 "security": [
@@ -6215,6 +6395,44 @@
                     "type": "string"
                 },
                 "url": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_handlers.deadLetterResponse": {
+            "type": "object",
+            "properties": {
+                "attempts": {
+                    "type": "integer"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "event_type": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "is_auth": {
+                    "type": "boolean"
+                },
+                "last_error": {
+                    "type": "string"
+                },
+                "last_status_code": {
+                    "type": "integer"
+                },
+                "resend_count": {
+                    "type": "integer"
+                },
+                "resolved_at": {
+                    "type": "string"
+                },
+                "webhook_id": {
+                    "type": "integer"
+                },
+                "webhook_url": {
                     "type": "string"
                 }
             }

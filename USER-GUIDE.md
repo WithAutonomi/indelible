@@ -1300,6 +1300,9 @@ All endpoints are under `/api/v2/`. Authentication is via Bearer token (JWT or A
 | DELETE | `/admin/webhooks/{id}` | Delete webhook |
 | POST | `/admin/webhooks/{id}/test` | Send test ping |
 | GET | `/admin/webhooks/{id}/deliveries` | Delivery history |
+| GET | `/admin/webhooks/dead-letters` | Failed-delivery (dead-letter) queue |
+| POST | `/admin/webhooks/dead-letters/{id}/resend` | Re-drive a failed delivery |
+| DELETE | `/admin/webhooks/dead-letters/{id}` | Dismiss a dead-letter entry |
 | GET | `/admin/oidc/providers` | List OIDC providers |
 | POST | `/admin/oidc/providers` | Create provider |
 | PUT | `/admin/oidc/providers/{id}` | Update provider |

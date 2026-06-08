@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -102,11 +103,36 @@ type WebhookDelivery struct {
 	CreatedAt    time.Time
 }
 
+// WebhookDeadLetter is a delivery that exhausted every retry. The full payload
+// is kept so an operator can re-drive it. WebhookURL is populated from a join
+// for display and is empty when loaded without one.
+type WebhookDeadLetter struct {
+	ID             int64
+	WebhookID      int64
+	WebhookURL     string
+	EventType      string
+	Payload        string
+	LastStatusCode sql.NullInt64
+	LastError      sql.NullString
+	Attempts       int
+	ResendCount    int
+	IsAuth         bool
+	CreatedAt      time.Time
+	ResolvedAt     sql.NullTime
+}
+
+// ErrDeadLetterNotFound is returned when a dead-letter row id does not exist.
+var ErrDeadLetterNotFound = errors.New("dead-letter entry not found")
+
 // WebhookDeliveryService handles dispatching webhook notifications.
 type WebhookDeliveryService struct {
 	db         *database.DB
 	webhookSvc *WebhookService
 	client     *http.Client
+	// backoffBase is the unit of the exponential retry backoff between delivery
+	// attempts (sleep = backoffBase << attempt). Defaults to 1s; tests set it to
+	// 0 to avoid the multi-second waits when exercising the retry-exhaustion path.
+	backoffBase time.Duration
 }
 
 // NewWebhookDeliveryService creates a new delivery service. The HTTP client is
@@ -114,9 +140,10 @@ type WebhookDeliveryService struct {
 // per-user webhooks ship), so deliveries must not reach internal/metadata hosts.
 func NewWebhookDeliveryService(db *database.DB) *WebhookDeliveryService {
 	return &WebhookDeliveryService{
-		db:         db,
-		webhookSvc: NewWebhookService(db),
-		client:     newGuardedHTTPClient(5 * time.Second),
+		db:          db,
+		webhookSvc:  NewWebhookService(db),
+		client:      newGuardedHTTPClient(5 * time.Second),
+		backoffBase: time.Second,
 	}
 }
 
@@ -341,7 +368,7 @@ func (s *WebhookDeliveryService) deliver(wh *Webhook, payload WebhookPayload) {
 	// 3 retry attempts with exponential backoff
 	for attempt := 0; attempt < 3; attempt++ {
 		if attempt > 0 {
-			time.Sleep(time.Duration(1<<uint(attempt)) * time.Second)
+			time.Sleep(s.backoffBase << uint(attempt))
 		}
 
 		req, err := http.NewRequest("POST", wh.URL, bytes.NewReader(body))
@@ -372,6 +399,7 @@ func (s *WebhookDeliveryService) deliver(wh *Webhook, payload WebhookPayload) {
 
 	slog.Error("webhook delivery exhausted retries", "webhook_id", wh.ID, "host", RedactWebhookURL(wh.URL))
 	s.logDelivery(wh.ID, payload.EventType, lastStatusCode, false, 3, lastErr)
+	s.recordDeadLetter(wh, payload, lastStatusCode, lastErr)
 }
 
 // logDelivery records a delivery attempt in the database.
@@ -424,6 +452,206 @@ func (s *WebhookDeliveryService) GetDeliveryLog(webhookID int64, limit int) ([]*
 func (s *WebhookDeliveryService) PruneDeliveryLog(olderThan time.Duration) (int64, error) {
 	cutoff := time.Now().Add(-olderThan)
 	result, err := s.db.Exec(`DELETE FROM webhook_delivery_log WHERE created_at < ?`, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+// recordDeadLetter persists a delivery that exhausted every retry so it can be
+// re-driven later. Auth events (recovery links) are additionally escalated to the
+// system log because their loss is directly user-facing.
+func (s *WebhookDeliveryService) recordDeadLetter(wh *Webhook, payload WebhookPayload, lastStatusCode int, lastErr string) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		slog.Error("webhook dead-letter marshal failed", "webhook_id", wh.ID, "error", err)
+		return
+	}
+	var sc sql.NullInt64
+	if lastStatusCode > 0 {
+		sc = sql.NullInt64{Int64: int64(lastStatusCode), Valid: true}
+	}
+	var le sql.NullString
+	if lastErr != "" {
+		le = sql.NullString{String: lastErr, Valid: true}
+	}
+	isAuth := strings.HasPrefix(payload.EventType, "auth.")
+
+	_, err = s.db.Exec(
+		`INSERT INTO webhook_dead_letter (webhook_id, event_type, payload, last_status_code, last_error, attempts, is_auth)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		wh.ID, payload.EventType, string(body), sc, le, 3, isAuth,
+	)
+	if err != nil {
+		slog.Error("failed to record webhook dead-letter", "webhook_id", wh.ID, "error", err)
+		return
+	}
+
+	if isAuth {
+		to := ""
+		if payload.Auth != nil {
+			to = payload.Auth.To
+		}
+		slog.Error("auth webhook delivery failed — user recovery link dead-lettered",
+			"webhook_id", wh.ID, "event", payload.EventType, "to", to, "error", lastErr)
+		// Surface in the system log so operators see the failure without polling
+		// the dead-letter queue. Best-effort: a logging failure must not mask the
+		// (already-persisted) dead-letter row.
+		if err := NewLogService(s.db).WriteSystem("error", "webhook",
+			fmt.Sprintf("auth notification delivery failed (%s) — recovery link queued in dead-letter", payload.EventType),
+			fmt.Sprintf("webhook_id=%d to=%s last_error=%s", wh.ID, to, lastErr), ""); err != nil {
+			slog.Error("failed to escalate auth webhook failure to system log", "webhook_id", wh.ID, "error", err)
+		}
+	}
+}
+
+// ListDeadLetters returns dead-letter entries across all webhooks, newest first.
+// When includeResolved is false only unresolved (still-actionable) rows are
+// returned — the operator queue. The webhook URL is joined for display.
+func (s *WebhookDeliveryService) ListDeadLetters(includeResolved bool, limit int) ([]*WebhookDeadLetter, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	q := `SELECT d.id, d.webhook_id, w.url, d.event_type, d.payload, d.last_status_code, d.last_error,
+	             d.attempts, d.resend_count, d.is_auth, d.created_at, d.resolved_at
+	      FROM webhook_dead_letter d JOIN webhook_config w ON w.id = d.webhook_id`
+	if !includeResolved {
+		q += ` WHERE d.resolved_at IS NULL`
+	}
+	q += ` ORDER BY d.created_at DESC LIMIT ?`
+
+	rows, err := s.db.Query(q, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []*WebhookDeadLetter
+	for rows.Next() {
+		d := &WebhookDeadLetter{}
+		if err := rows.Scan(&d.ID, &d.WebhookID, &d.WebhookURL, &d.EventType, &d.Payload,
+			&d.LastStatusCode, &d.LastError, &d.Attempts, &d.ResendCount, &d.IsAuth,
+			&d.CreatedAt, &d.ResolvedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// getDeadLetter loads a single dead-letter row by id.
+func (s *WebhookDeliveryService) getDeadLetter(id int64) (*WebhookDeadLetter, error) {
+	d := &WebhookDeadLetter{}
+	err := s.db.QueryRow(
+		`SELECT id, webhook_id, event_type, payload, last_status_code, last_error,
+		        attempts, resend_count, is_auth, created_at, resolved_at
+		 FROM webhook_dead_letter WHERE id = ?`, id,
+	).Scan(&d.ID, &d.WebhookID, &d.EventType, &d.Payload, &d.LastStatusCode, &d.LastError,
+		&d.Attempts, &d.ResendCount, &d.IsAuth, &d.CreatedAt, &d.ResolvedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrDeadLetterNotFound
+		}
+		return nil, err
+	}
+	return d, nil
+}
+
+// Resend re-drives a dead-lettered delivery once, synchronously, through the
+// SSRF-guarded client. The stored payload is re-formatted with the webhook's
+// current integration type (it may have changed since the original attempt). On
+// a 2xx the row is marked resolved; otherwise its resend bookkeeping is updated
+// and an error is returned. Every resend is recorded in the delivery log.
+func (s *WebhookDeliveryService) Resend(id int64) error {
+	dl, err := s.getDeadLetter(id)
+	if err != nil {
+		return err
+	}
+	wh, err := s.webhookSvc.GetByID(dl.WebhookID)
+	if err != nil {
+		return err
+	}
+
+	var payload WebhookPayload
+	if err := json.Unmarshal([]byte(dl.Payload), &payload); err != nil {
+		return fmt.Errorf("decode dead-letter payload: %w", err)
+	}
+	body, err := s.formatPayload(wh.IntegrationType, payload)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequest("POST", wh.URL, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	setSignedHeaders(req, wh, body)
+
+	statusCode := 0
+	errMsg := ""
+	resp, derr := s.client.Do(req)
+	if derr != nil {
+		errMsg = derr.Error()
+	} else {
+		statusCode = resp.StatusCode
+		resp.Body.Close()
+		if statusCode < 200 || statusCode >= 300 {
+			errMsg = fmt.Sprintf("HTTP %d", statusCode)
+		}
+	}
+	ok := derr == nil && statusCode >= 200 && statusCode < 300
+
+	// Record the manual resend in the delivery log for the audit trail.
+	s.logDelivery(wh.ID, payload.EventType, statusCode, ok, dl.ResendCount+1, errMsg)
+
+	if ok {
+		_, e := s.db.Exec(
+			`UPDATE webhook_dead_letter SET resolved_at = CURRENT_TIMESTAMP, resend_count = resend_count + 1,
+			        last_status_code = ?, last_error = NULL WHERE id = ?`,
+			sql.NullInt64{Int64: int64(statusCode), Valid: true}, id,
+		)
+		return e
+	}
+
+	var sc sql.NullInt64
+	if statusCode > 0 {
+		sc = sql.NullInt64{Int64: int64(statusCode), Valid: true}
+	}
+	if _, e := s.db.Exec(
+		`UPDATE webhook_dead_letter SET resend_count = resend_count + 1, last_status_code = ?, last_error = ? WHERE id = ?`,
+		sc, sql.NullString{String: errMsg, Valid: errMsg != ""}, id,
+	); e != nil {
+		slog.Error("failed to update dead-letter after failed resend", "dead_letter_id", id, "error", e)
+	}
+	return fmt.Errorf("resend failed: %s", errMsg)
+}
+
+// ResolveDeadLetter marks a dead-letter entry resolved without re-driving it
+// (operator dismissal — e.g. the link has expired or was delivered out-of-band).
+func (s *WebhookDeliveryService) ResolveDeadLetter(id int64) error {
+	result, err := s.db.Exec(
+		`UPDATE webhook_dead_letter SET resolved_at = CURRENT_TIMESTAMP WHERE id = ? AND resolved_at IS NULL`, id,
+	)
+	if err != nil {
+		return err
+	}
+	if n, _ := result.RowsAffected(); n == 0 {
+		// Either it does not exist or it is already resolved; distinguish for the
+		// handler so a missing id maps to 404.
+		if _, gErr := s.getDeadLetter(id); gErr != nil {
+			return gErr
+		}
+	}
+	return nil
+}
+
+// PruneDeadLetters removes resolved dead-letter rows older than the retention
+// window. Unresolved rows are kept regardless of age so a still-actionable
+// recovery link is never silently dropped.
+func (s *WebhookDeliveryService) PruneDeadLetters(olderThan time.Duration) (int64, error) {
+	cutoff := time.Now().Add(-olderThan)
+	result, err := s.db.Exec(
+		`DELETE FROM webhook_dead_letter WHERE resolved_at IS NOT NULL AND resolved_at < ?`, cutoff,
+	)
 	if err != nil {
 		return 0, err
 	}
