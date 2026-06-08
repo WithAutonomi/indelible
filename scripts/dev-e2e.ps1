@@ -10,6 +10,10 @@
 ##   - ant-sdk repo cloned as sibling: ../../ant-sdk  (or set $env:ANT_SDK_DIR)
 ##   - curl + jq on PATH
 ##
+## ant-node compatibility: the devnet manifest's EVM payments-contract field
+## was renamed data_payments_address -> payment_vault_address (~ant-node v0.11.0).
+## This script reads the new name and falls back to the old one, so both work.
+##
 ## Usage:
 ##   .\scripts\dev-e2e.ps1
 ##
@@ -103,7 +107,16 @@ $walletKey = $manifest.evm.wallet_private_key -replace '^0x', ''
 $walletAddress = $manifest.evm.wallet_address
 $evmRpcUrl = $manifest.evm.rpc_url
 $evmTokenAddr = $manifest.evm.payment_token_address
-$evmPaymentsAddr = $manifest.evm.data_payments_address
+# Current ant-node emits the payments-contract address as `payment_vault_address`;
+# older revisions called it `data_payments_address`. Prefer the new name, fall back.
+$evmVaultAddr = $manifest.evm.payment_vault_address
+if (-not $evmVaultAddr) { $evmVaultAddr = $manifest.evm.data_payments_address }
+
+if (-not $evmVaultAddr) {
+    Write-Host "       Manifest has no EVM payment-vault address (checked payment_vault_address + data_payments_address)!" -ForegroundColor Red
+    Write-Host "       antd would start with an empty vault and all uploads would fail. Check: $manifestFile" -ForegroundColor Gray
+    exit 1
+}
 
 Write-Host "       Devnet ready: $($manifest.node_count) nodes" -ForegroundColor Green
 Write-Host "       EVM: $evmRpcUrl" -ForegroundColor Green
@@ -115,10 +128,10 @@ Write-Host "       EVM: $evmRpcUrl" -ForegroundColor Green
 Write-Host "[2/5] Starting antd (external signer mode)..." -ForegroundColor Yellow
 
 $antdEnv = @{
-    ANTD_PEERS                = $bootstrapPeers
-    EVM_RPC_URL               = $evmRpcUrl
-    EVM_PAYMENT_TOKEN_ADDRESS = $evmTokenAddr
-    EVM_DATA_PAYMENTS_ADDRESS = $evmPaymentsAddr
+    ANTD_PEERS                 = $bootstrapPeers
+    EVM_RPC_URL                = $evmRpcUrl
+    EVM_PAYMENT_TOKEN_ADDRESS  = $evmTokenAddr
+    EVM_PAYMENT_VAULT_ADDRESS  = $evmVaultAddr
     # No AUTONOMI_WALLET_KEY — indelible signs payments externally
 }
 
