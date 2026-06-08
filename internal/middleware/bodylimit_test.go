@@ -49,6 +49,28 @@ func TestMaxBodySize_OverLimit(t *testing.T) {
 	}
 }
 
+func TestMaxBodySize_SkipsNDJSON(t *testing.T) {
+	handler := MaxBodySize(10)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("ndjson body should not be limited: %v", err)
+		}
+		if len(body) < 10 {
+			t.Errorf("expected full ndjson body, got %d bytes", len(body))
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("POST", "/", strings.NewReader(strings.Repeat("x", 100)))
+	req.Header.Set("Content-Type", "application/x-ndjson")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200 for ndjson", w.Code)
+	}
+}
+
 func TestMaxBodySize_SkipsMultipart(t *testing.T) {
 	handler := MaxBodySize(10)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
