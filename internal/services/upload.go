@@ -434,6 +434,27 @@ func (s *UploadService) MarkFailed(id int64, errMsg string) error {
 	return err
 }
 
+// Recoverable status_detail values: a payment was made (or may have been) for an
+// upload that did not complete, so its temp source must be preserved — the
+// network chunks may be paid + stored and the DataMap is only regenerable from
+// that source. ListActiveTempPaths keeps these temp files out of the GC.
+const (
+	StatusDetailPaidUnfinalized    = "paid_unfinalized"    // payment confirmed, finalize failed
+	StatusDetailPaymentUnconfirmed = "payment_unconfirmed" // tx broadcast, receipt timed out
+)
+
+// MarkFailedPreserveTemp marks an upload failed but KEEPS its temp file and
+// records a status_detail, for the recoverable cases above. Unlike MarkFailed it
+// does NOT null temp_path, so a later retry can re-Prepare (zero-cost dedup) and
+// recover the DataMap rather than crypto-shredding paid-for private data.
+func (s *UploadService) MarkFailedPreserveTemp(id int64, errMsg, detail string) error {
+	_, err := s.db.Exec(
+		`UPDATE uploads SET status = 'failed', error_message = ?, status_detail = ?, failed_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		errMsg, detail, id,
+	)
+	return err
+}
+
 // SetGasBackoff puts a queued upload into gas backoff, scheduling it for retry later.
 // The upload stays status="queued" with status_detail="gas_backoff".
 func (s *UploadService) SetGasBackoff(id int64, backoffUntil time.Time, attempt int, quotedCost string) error {
@@ -572,7 +593,13 @@ func (s *UploadService) Delete(id int64) error {
 
 // ListActiveTempPaths returns all temp_path values for uploads still in queued or processing state.
 func (s *UploadService) ListActiveTempPaths() ([]string, error) {
-	rows, err := s.db.Query(`SELECT temp_path FROM uploads WHERE status IN ('queued', 'processing') AND temp_path IS NOT NULL AND temp_path != ''`)
+	// Keep temp files for in-flight uploads AND for recoverable failures (a
+	// payment was/maybe made and the source is still needed for reconciliation),
+	// so the temp GC never shreds paid-for data.
+	rows, err := s.db.Query(`SELECT temp_path FROM uploads
+		WHERE temp_path IS NOT NULL AND temp_path != ''
+		AND (status IN ('queued', 'processing')
+		     OR status_detail IN ('` + StatusDetailPaidUnfinalized + `', '` + StatusDetailPaymentUnconfirmed + `'))`)
 	if err != nil {
 		return nil, err
 	}
