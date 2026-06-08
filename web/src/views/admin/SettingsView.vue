@@ -41,8 +41,8 @@ watch(general, () => {
 }, { deep: true })
 
 // Upload Limits card
-const uploadsSaved = ref({ max_upload_gb: '0', max_concurrent_uploads: '', max_gas_fee: '' })
-const uploads = reactive({ max_upload_gb: '0', max_concurrent_uploads: '', max_gas_fee: '' })
+const uploadsSaved = ref({ max_upload_gb: '0', max_concurrent_uploads: '', max_gas_fee: '', payment_confirmation_timeout_seconds: '' })
+const uploads = reactive({ max_upload_gb: '0', max_concurrent_uploads: '', max_gas_fee: '', payment_confirmation_timeout_seconds: '' })
 const uploadsDirty = ref(false)
 const uploadsSaving = ref(false)
 
@@ -50,7 +50,8 @@ watch(uploads, () => {
   uploadsDirty.value =
     uploads.max_upload_gb !== uploadsSaved.value.max_upload_gb ||
     uploads.max_concurrent_uploads !== uploadsSaved.value.max_concurrent_uploads ||
-    uploads.max_gas_fee !== uploadsSaved.value.max_gas_fee
+    uploads.max_gas_fee !== uploadsSaved.value.max_gas_fee ||
+    uploads.payment_confirmation_timeout_seconds !== uploadsSaved.value.payment_confirmation_timeout_seconds
 }, { deep: true })
 
 // Operations card
@@ -114,6 +115,7 @@ async function fetchSettings() {
     uploads.max_upload_gb = bytesToGB(s.max_upload_size_bytes || '0')
     uploads.max_concurrent_uploads = s.max_concurrent_uploads || ''
     uploads.max_gas_fee = s.max_gas_fee || ''
+    uploads.payment_confirmation_timeout_seconds = s.payment_confirmation_timeout_seconds || ''
     uploadsSaved.value = { ...uploads }
 
     // Operations
@@ -149,6 +151,7 @@ async function saveCard(card: string) {
       max_upload_size_bytes: gbToBytes(uploads.max_upload_gb),
       max_concurrent_uploads: uploads.max_concurrent_uploads,
       max_gas_fee: uploads.max_gas_fee,
+      payment_confirmation_timeout_seconds: uploads.payment_confirmation_timeout_seconds,
     }
   } else if (card === 'ops') {
     opsSaving.value = true
@@ -345,6 +348,18 @@ onMounted(async () => {
                 <div class="flex items-center gap-2">
                   <InputText v-model="uploads.max_gas_fee" type="number" class="w-40" />
                   <span class="text-sm text-surface-400">nanos</span>
+                </div>
+              </div>
+            </div>
+            <div class="grid grid-cols-3 gap-6 py-5">
+              <div>
+                <label class="text-sm font-medium">Payment Confirmation Timeout</label>
+                <p class="text-xs text-surface-400 mt-1">How long to wait for a payment transaction to confirm before freeing the worker so a stuck transaction can't halt uploads. Empty for the default (300s).</p>
+              </div>
+              <div class="col-span-2">
+                <div class="flex items-center gap-2">
+                  <InputText v-model="uploads.payment_confirmation_timeout_seconds" type="number" placeholder="300" class="w-40" />
+                  <span class="text-sm text-surface-400">seconds</span>
                 </div>
               </div>
             </div>

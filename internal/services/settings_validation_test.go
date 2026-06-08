@@ -34,6 +34,52 @@ func TestIntInRange(t *testing.T) {
 	}
 }
 
+func TestOptionalIntInRange(t *testing.T) {
+	v := optionalIntInRange(30, 3600)
+	cases := []struct {
+		in      string
+		wantErr bool
+		desc    string
+	}{
+		{"", false, "empty means use default"},
+		{"30", false, "min boundary"},
+		{"300", false, "typical"},
+		{"3600", false, "max boundary"},
+		{"29", true, "below min"},
+		{"3601", true, "above max"},
+		{"abc", true, "non-numeric"},
+	}
+	for _, c := range cases {
+		err := v(c.in)
+		if c.wantErr && err == nil {
+			t.Errorf("%s (%q): expected error, got nil", c.desc, c.in)
+		}
+		if !c.wantErr && err != nil {
+			t.Errorf("%s (%q): expected nil, got %v", c.desc, c.in, err)
+		}
+	}
+}
+
+func TestSettingsUpdatePaymentConfirmationTimeout(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewSettingsService(db)
+	userSvc := NewUserService(db)
+	user := createTestUser(t, userSvc, "pct@example.com", "PCT", "User")
+
+	// A valid value is accepted via the PATCH path.
+	if err := svc.Update(map[string]string{"payment_confirmation_timeout_seconds": "600"}, user.ID, "127.0.0.1", "TestAgent"); err != nil {
+		t.Fatalf("valid timeout rejected: %v", err)
+	}
+	// Clearing it (empty) is accepted → worker falls back to the signer default.
+	if err := svc.Update(map[string]string{"payment_confirmation_timeout_seconds": ""}, user.ID, "127.0.0.1", "TestAgent"); err != nil {
+		t.Fatalf("empty timeout rejected: %v", err)
+	}
+	// An out-of-range value is rejected.
+	if err := svc.Update(map[string]string{"payment_confirmation_timeout_seconds": "5"}, user.ID, "127.0.0.1", "TestAgent"); err == nil {
+		t.Fatal("expected below-min timeout to be rejected")
+	}
+}
+
 func TestSettingsUpdateValidatesTypedKeys(t *testing.T) {
 	db := setupTestDB(t)
 	svc := NewSettingsService(db)
