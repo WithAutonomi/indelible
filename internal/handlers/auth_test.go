@@ -74,21 +74,18 @@ func TestRegisterAndLogin(t *testing.T) {
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	if w.Code != http.StatusCreated {
+	// Registration is anti-enumeration (V2-430): neutral 202, no token, no
+	// auto-login. The user signs in afterward.
+	if w.Code != http.StatusAccepted {
 		t.Fatalf("register: got %d, body: %s", w.Code, w.Body.String())
 	}
-
 	var regResp map[string]any
 	json.Unmarshal(w.Body.Bytes(), &regResp)
-	if regResp["token"] == nil || regResp["token"] == "" {
-		t.Fatal("register: missing token")
+	if _, ok := regResp["token"]; ok {
+		t.Error("register should not return a token (no auto-login)")
 	}
-	user := regResp["user"].(map[string]any)
-	if user["permissions"] != "read" {
-		t.Errorf("self-registered user should be read, got %s", user["permissions"])
-	}
-	if user["email"] != "newuser@test.com" {
-		t.Errorf("email = %s, want newuser@test.com", user["email"])
+	if msg, _ := regResp["message"].(string); msg == "" {
+		t.Error("register should return a neutral message")
 	}
 
 	// Login with same credentials
@@ -110,6 +107,14 @@ func TestRegisterAndLogin(t *testing.T) {
 	token := loginResp["token"].(string)
 	if token == "" {
 		t.Fatal("login: missing token")
+	}
+	// The self-registered user exists with read-only permission.
+	loginUser := loginResp["user"].(map[string]any)
+	if loginUser["permissions"] != "read" {
+		t.Errorf("self-registered user should be read, got %v", loginUser["permissions"])
+	}
+	if loginUser["email"] != "newuser@test.com" {
+		t.Errorf("email = %v, want newuser@test.com", loginUser["email"])
 	}
 
 	// Use token to get profile
@@ -205,8 +210,21 @@ func TestLoginSetsSessionAndCSRFCookies(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
-	if w.Code != http.StatusCreated {
+	// Register no longer auto-logs-in (anti-enumeration), so it sets no cookies.
+	if w.Code != http.StatusAccepted {
 		t.Fatalf("register: %d", w.Code)
+	}
+
+	// Login lands both cookies.
+	loginBody, _ := json.Marshal(map[string]string{
+		"email": "cookies@test.com", "password": "password123",
+	})
+	req = httptest.NewRequest("POST", "/api/v2/auth/login", bytes.NewReader(loginBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("login: %d", w.Code)
 	}
 
 	var sawSession, sawCSRF bool
@@ -231,35 +249,10 @@ func TestLoginSetsSessionAndCSRFCookies(t *testing.T) {
 		}
 	}
 	if !sawSession {
-		t.Error("register did not set session cookie")
+		t.Error("login did not set session cookie")
 	}
 	if !sawCSRF {
-		t.Error("register did not set csrf_token cookie")
-	}
-
-	// Same assertions on Login.
-	loginBody, _ := json.Marshal(map[string]string{
-		"email": "cookies@test.com", "password": "password123",
-	})
-	req = httptest.NewRequest("POST", "/api/v2/auth/login", bytes.NewReader(loginBody))
-	req.Header.Set("Content-Type", "application/json")
-	w = httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("login: %d", w.Code)
-	}
-
-	sawSession, sawCSRF = false, false
-	for _, c := range w.Result().Cookies() {
-		if c.Name == "session" {
-			sawSession = true
-		}
-		if c.Name == "csrf_token" {
-			sawCSRF = true
-		}
-	}
-	if !sawSession || !sawCSRF {
-		t.Errorf("login cookies: session=%v csrf=%v", sawSession, sawCSRF)
+		t.Error("login did not set csrf_token cookie")
 	}
 }
 
@@ -270,7 +263,8 @@ func TestLoginSetsSessionAndCSRFCookies(t *testing.T) {
 func TestCSRFEnforcedOnCookieMutation(t *testing.T) {
 	router := setupTestRouter(t)
 
-	// Register to seed a user + harvest cookies.
+	// Register to seed the user (neutral 202, no cookies), then log in to
+	// harvest the session + csrf cookies.
 	regBody, _ := json.Marshal(map[string]string{
 		"email": "csrf@test.com", "password": "password123",
 		"first_name": "C", "last_name": "S",
@@ -279,8 +273,19 @@ func TestCSRFEnforcedOnCookieMutation(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
-	if w.Code != http.StatusCreated {
+	if w.Code != http.StatusAccepted {
 		t.Fatalf("register: %d", w.Code)
+	}
+
+	harvestBody, _ := json.Marshal(map[string]string{
+		"email": "csrf@test.com", "password": "password123",
+	})
+	req = httptest.NewRequest("POST", "/api/v2/auth/login", bytes.NewReader(harvestBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("login: %d", w.Code)
 	}
 
 	var sessionCookie, csrfCookie *http.Cookie
@@ -367,7 +372,10 @@ func TestCSRFEnforcedOnCookieMutation(t *testing.T) {
 	}
 }
 
-func TestRegisterDuplicateEmail(t *testing.T) {
+// TestRegisterDuplicateEmailIsNeutral asserts the anti-enumeration contract
+// (V2-430): registering an already-taken email returns the SAME neutral 202 as
+// a fresh registration — it must not reveal that the account exists.
+func TestRegisterDuplicateEmailIsNeutral(t *testing.T) {
 	router := setupTestRouter(t)
 
 	body, _ := json.Marshal(map[string]string{
@@ -380,17 +388,21 @@ func TestRegisterDuplicateEmail(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
-	if w.Code != http.StatusCreated {
+	if w.Code != http.StatusAccepted {
 		t.Fatalf("first register: %d", w.Code)
 	}
+	first := w.Body.String()
 
-	// Duplicate
+	// Duplicate must be indistinguishable: same status, same neutral body.
 	req = httptest.NewRequest("POST", "/api/v2/auth/register", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w = httptest.NewRecorder()
 	router.ServeHTTP(w, req)
-	if w.Code != http.StatusConflict {
-		t.Errorf("duplicate register: got %d, want 409", w.Code)
+	if w.Code != http.StatusAccepted {
+		t.Errorf("duplicate register: got %d, want 202 (neutral)", w.Code)
+	}
+	if w.Body.String() != first {
+		t.Errorf("duplicate register body differs from fresh — enumeration oracle: %q vs %q", w.Body.String(), first)
 	}
 }
 
@@ -421,6 +433,35 @@ func TestLoginWrongPassword(t *testing.T) {
 	}
 }
 
+// TestLoginEnumerationResistance asserts the anti-enumeration contract (V2-430):
+// an unknown email and a known email with the wrong password produce an
+// identical response (status + body). The timing half — running bcrypt on the
+// unknown-email path too — is handled by auth.DummyCheckPassword and isn't
+// asserted here (timing tests are flaky); this guards the observable response.
+func TestLoginEnumerationResistance(t *testing.T) {
+	router := setupTestRouter(t)
+	registerAndGetToken(t, router, "known@test.com", "password123", "K", "N")
+
+	do := func(email, password string) (int, string) {
+		body, _ := json.Marshal(map[string]string{"email": email, "password": password})
+		req := httptest.NewRequest("POST", "/api/v2/auth/login", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		return w.Code, w.Body.String()
+	}
+
+	unkCode, unkBody := do("nobody@test.com", "password123")
+	wrongCode, wrongBody := do("known@test.com", "wrongpassword")
+
+	if unkCode != http.StatusUnauthorized || wrongCode != http.StatusUnauthorized {
+		t.Fatalf("expected both 401: unknown-email=%d wrong-password=%d", unkCode, wrongCode)
+	}
+	if unkBody != wrongBody {
+		t.Errorf("login response distinguishes unknown-email from wrong-password (enumeration oracle):\n unknown: %s\n wrong:   %s", unkBody, wrongBody)
+	}
+}
+
 func TestSecondUserGetsReadPermission(t *testing.T) {
 	router := setupTestRouter(t)
 
@@ -444,10 +485,21 @@ func TestSecondUserGetsReadPermission(t *testing.T) {
 	w = httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	if w.Code != http.StatusCreated {
+	if w.Code != http.StatusAccepted {
 		t.Fatalf("second register: %d, %s", w.Code, w.Body.String())
 	}
 
+	// Register no longer returns the user; verify the read grant by logging in.
+	loginBody, _ := json.Marshal(map[string]string{
+		"email": "second@test.com", "password": "password123",
+	})
+	req = httptest.NewRequest("POST", "/api/v2/auth/login", bytes.NewReader(loginBody))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("second user login: %d, %s", w.Code, w.Body.String())
+	}
 	var resp map[string]any
 	json.Unmarshal(w.Body.Bytes(), &resp)
 	user := resp["user"].(map[string]any)

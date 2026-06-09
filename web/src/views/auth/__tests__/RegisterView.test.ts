@@ -70,6 +70,11 @@ describe('RegisterView', () => {
       first_name: 'Test',
       last_name: 'User',
     })
+    // Anti-enumeration: registration does not auto-log-in, so no /me fetch.
+    expect(mockApi.get).not.toHaveBeenCalled()
+    // The form is replaced by a neutral confirmation + a sign-in button.
+    expect(wrapper.find('form').exists()).toBe(false)
+    expect(wrapper.text()).toContain("you'll receive a verification email")
   })
 
   it('shows error on registration failure', async () => {

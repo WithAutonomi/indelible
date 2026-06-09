@@ -3492,7 +3492,10 @@ paths:
       - application/json
       description: Create a new user account with email, password, and name. Self-registration
         is disabled by default; an admin must enable it via the registration_enabled
-        setting. Self-registered users receive read-only access.
+        setting. Self-registered users receive read-only access. To avoid account
+        enumeration the endpoint always returns a neutral 202 (it never reveals whether
+        the email already exists) and does not log the caller in — the user signs
+        in afterward.
       parameters:
       - description: Registration details
         in: body
@@ -3503,10 +3506,12 @@ paths:
       produces:
       - application/json
       responses:
-        "201":
-          description: Created
+        "202":
+          description: Accepted
           schema:
-            $ref: '#/definitions/internal_handlers.authResponse'
+            additionalProperties:
+              type: string
+            type: object
         "400":
           description: Bad Request
           schema:
@@ -3515,12 +3520,6 @@ paths:
             type: object
         "403":
           description: Forbidden
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "409":
-          description: Conflict
           schema:
             additionalProperties:
               type: string

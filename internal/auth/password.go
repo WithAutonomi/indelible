@@ -29,3 +29,25 @@ func HashPassword(password string) (string, error) {
 func CheckPassword(password, hash string) bool {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
 }
+
+// dummyHash is a bcrypt hash computed once at the package's cost factor. It lets
+// the login path perform a real bcrypt comparison even when the email is
+// unknown, so response time doesn't reveal whether an account exists. The
+// plaintext is irrelevant — any compare against it fails.
+var dummyHash = func() string {
+	h, err := bcrypt.GenerateFromPassword([]byte("constant-time-login-placeholder"), bcryptCost)
+	if err != nil {
+		// GenerateFromPassword only errors on an out-of-range cost, which can't
+		// happen with the fixed cost values above.
+		panic("auth: failed to precompute dummy bcrypt hash: " + err.Error())
+	}
+	return string(h)
+}()
+
+// DummyCheckPassword runs a bcrypt comparison against a fixed internal hash and
+// discards the result. Call it on the unknown-email login path so the handler
+// spends roughly the same time as a real wrong-password compare, defeating a
+// timing oracle that would otherwise reveal which emails exist. (V2-430)
+func DummyCheckPassword(password string) {
+	_ = bcrypt.CompareHashAndPassword([]byte(dummyHash), []byte(password))
+}

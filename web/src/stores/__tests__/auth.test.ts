@@ -42,10 +42,9 @@ describe('auth store', () => {
     expect(auth.user).toEqual({ id: 1, email: 'user@test.com', permissions: 'read' })
   })
 
-  it('register posts credentials and fetches profile via cookie', async () => {
-    mockApi.post.mockResolvedValueOnce({})
-    mockApi.get.mockResolvedValueOnce({
-      data: { id: 2, email: 'new@test.com', permissions: 'read' },
+  it('register posts credentials without auto-login (anti-enumeration)', async () => {
+    mockApi.post.mockResolvedValueOnce({
+      data: { message: "if this address can be registered, you'll receive a verification email" },
     })
 
     const auth = useAuthStore()
@@ -57,7 +56,9 @@ describe('auth store', () => {
       first_name: 'Test',
       last_name: 'User',
     })
-    expect(auth.user).toEqual({ id: 2, email: 'new@test.com', permissions: 'read' })
+    // Registration must not log the user in: no /me fetch, no user state.
+    expect(mockApi.get).not.toHaveBeenCalled()
+    expect(auth.user).toBeNull()
   })
 
   it('logout clears user state', async () => {

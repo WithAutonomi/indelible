@@ -4191,7 +4191,7 @@ const docTemplate = `{
         },
         "/auth/register": {
             "post": {
-                "description": "Create a new user account with email, password, and name. Self-registration is disabled by default; an admin must enable it via the registration_enabled setting. Self-registered users receive read-only access.",
+                "description": "Create a new user account with email, password, and name. Self-registration is disabled by default; an admin must enable it via the registration_enabled setting. Self-registered users receive read-only access. To avoid account enumeration the endpoint always returns a neutral 202 (it never reveals whether the email already exists) and does not log the caller in — the user signs in afterward.",
                 "consumes": [
                     "application/json"
                 ],
@@ -4214,10 +4214,13 @@ const docTemplate = `{
                     }
                 ],
                 "responses": {
-                    "201": {
-                        "description": "Created",
+                    "202": {
+                        "description": "Accepted",
                         "schema": {
-                            "$ref": "#/definitions/internal_handlers.authResponse"
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
                         }
                     },
                     "400": {
@@ -4231,15 +4234,6 @@ const docTemplate = `{
                     },
                     "403": {
                         "description": "Forbidden",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "409": {
-                        "description": "Conflict",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {

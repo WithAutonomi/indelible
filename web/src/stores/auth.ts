@@ -19,13 +19,15 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function register(email: string, password: string, firstName: string, lastName: string) {
+    // Registration is anti-enumeration (V2-430): the server returns a neutral
+    // response and does NOT log the user in (no session cookie). The caller
+    // routes to the login page; we deliberately don't fetchProfile here.
     await api.post('/api/v2/auth/register', {
       email,
       password,
       first_name: firstName,
       last_name: lastName,
     })
-    await fetchProfile()
   }
 
   async function fetchProfile() {

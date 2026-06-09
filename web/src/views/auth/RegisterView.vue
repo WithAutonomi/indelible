@@ -16,13 +16,16 @@ const firstName = ref('')
 const lastName = ref('')
 const error = ref('')
 const loading = ref(false)
+const submitted = ref(false)
 
 async function handleRegister() {
   loading.value = true
   error.value = ''
   try {
     await auth.register(email.value, password.value, firstName.value, lastName.value)
-    router.push('/')
+    // Registration no longer auto-logs-in (anti-enumeration): show a neutral
+    // confirmation and send the user to sign in.
+    submitted.value = true
   } catch (e: any) {
     error.value = e.response?.data?.error || 'Registration failed'
   } finally {
@@ -38,9 +41,19 @@ async function handleRegister() {
       <h1 class="text-2xl font-bold text-center text-surface-900">Indelible</h1>
       <p class="text-center text-surface-500">Create your account</p>
 
-      <Message v-if="error" severity="error" :closable="false">{{ error }}</Message>
+      <!-- Neutral post-submit confirmation (anti-enumeration: same regardless
+           of whether the email was already registered). -->
+      <template v-if="submitted">
+        <Message severity="success" :closable="false">
+          If this address can be registered, you'll receive a verification email. You can now sign in.
+        </Message>
+        <Button label="Go to sign in" class="w-full" @click="router.push('/login')" />
+      </template>
 
-      <form @submit.prevent="handleRegister" class="space-y-4">
+      <template v-else>
+        <Message v-if="error" severity="error" :closable="false">{{ error }}</Message>
+
+        <form @submit.prevent="handleRegister" class="space-y-4">
         <div class="grid grid-cols-2 gap-4">
           <div class="flex flex-col gap-1">
             <label class="text-sm font-medium text-surface-700">First name</label>
@@ -60,11 +73,12 @@ async function handleRegister() {
           <Password v-model="password" toggleMask placeholder="Password" class="w-full" :feedback="false" inputClass="w-full" required />
         </div>
         <Button label="Create account" type="submit" :loading="loading" class="w-full" />
-      </form>
+        </form>
 
-      <p class="text-center text-sm text-surface-500">
-        Already have an account? <router-link to="/login" class="text-primary font-medium hover:underline">Sign in</router-link>
-      </p>
+        <p class="text-center text-sm text-surface-500">
+          Already have an account? <router-link to="/login" class="text-primary font-medium hover:underline">Sign in</router-link>
+        </p>
+      </template>
     </div>
   </div>
 </template>
