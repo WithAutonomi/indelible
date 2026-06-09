@@ -15,7 +15,8 @@ test.describe('Admin', () => {
   test('register via API works for a new non-admin user', async ({ request }) => {
     // globalSetup already owns admin@e2e-test.com. This exercises the register
     // path for a second, non-admin user (a regression canary if the server
-    // doesn't come up).
+    // doesn't come up). Registration is anti-enumeration (V2-430): a neutral
+    // 202, no token.
     const response = await request.post('/api/v2/auth/register', {
       data: {
         email: `api-test-${Date.now()}@e2e.com`,
@@ -24,7 +25,7 @@ test.describe('Admin', () => {
         last_name: 'Test',
       },
     })
-    expect(response.status()).toBe(201)
+    expect(response.status()).toBe(202)
   })
 
   test('settings PATCH happy path + GET reflects', async ({ request }) => {
@@ -148,18 +149,20 @@ test.describe('Admin', () => {
   })
 
   test('non-admin user is rejected from admin endpoints', async ({ request }) => {
-    // globalSetup already owns the admin; just register a fresh non-admin
-    // and confirm they get 403 on an admin route.
+    // globalSetup already owns the admin; register a fresh non-admin, then log
+    // in for a token (registration no longer auto-logs-in — V2-430) and confirm
+    // they get 403 on an admin route.
+    const email = `plain-${Date.now()}@e2e-test.com`
     const regRes = await request.post('/api/v2/auth/register', {
-      data: {
-        email: `plain-${Date.now()}@e2e-test.com`,
-        password: 'TestPassword123!',
-        first_name: 'Plain',
-        last_name: 'User',
-      },
+      data: { email, password: 'TestPassword123!', first_name: 'Plain', last_name: 'User' },
     })
-    expect(regRes.status()).toBe(201)
-    const plainToken: string = (await regRes.json()).token
+    expect(regRes.status()).toBe(202)
+
+    const loginRes = await request.post('/api/v2/auth/login', {
+      data: { email, password: 'TestPassword123!' },
+    })
+    expect(loginRes.ok()).toBeTruthy()
+    const plainToken: string = (await loginRes.json()).token
 
     const res = await request.get('/api/v2/admin/users', {
       headers: { Authorization: `Bearer ${plainToken}` },
