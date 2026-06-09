@@ -41,3 +41,37 @@ func TestValidateToken_Garbage(t *testing.T) {
 		t.Error("expected error for garbage token")
 	}
 }
+
+// TestValidateToken_RotationWindow covers the dual-key behaviour: a token signed
+// under an old secret keeps validating while that secret is in the previous list,
+// and stops once it is dropped.
+func TestValidateToken_RotationWindow(t *testing.T) {
+	oldSecret := "old-secret-key-at-least-32-chars-long"
+	newSecret := "new-secret-key-at-least-32-chars-long"
+
+	// Token issued before the rotation, signed with the old secret.
+	oldToken, err := GenerateToken(oldSecret, 7, "u@b.com", 24)
+	if err != nil {
+		t.Fatalf("GenerateToken: %v", err)
+	}
+
+	// During the overlap window: new secret is primary, old is verify-only.
+	claims, err := ValidateToken(newSecret, oldToken, oldSecret)
+	if err != nil {
+		t.Fatalf("old token should validate during overlap window: %v", err)
+	}
+	if claims.UserID != 7 {
+		t.Errorf("UserID = %d, want 7", claims.UserID)
+	}
+
+	// After the window: old secret dropped, only the new primary remains.
+	if _, err := ValidateToken(newSecret, oldToken); err == nil {
+		t.Error("old token should fail once the old secret is dropped")
+	}
+
+	// New tokens are signed with the primary and validate without any previous.
+	newToken, _ := GenerateToken(newSecret, 7, "u@b.com", 24)
+	if _, err := ValidateToken(newSecret, newToken); err != nil {
+		t.Errorf("new token should validate under primary: %v", err)
+	}
+}

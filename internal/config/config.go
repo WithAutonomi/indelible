@@ -18,6 +18,11 @@ type Config struct {
 	AntdURL        string   `toml:"antd_url"`
 	DataDir        string   `toml:"data_dir"`
 	JWTSecret      string   `toml:"jwt_secret"`
+	// JWTSecretsPrevious are verify-only secrets kept during a JWT-secret
+	// rotation: tokens signed under a former secret keep validating until they
+	// expire. New tokens are always signed with JWTSecret. See
+	// docs/guides/key-rotation.md.
+	JWTSecretsPrevious []string `toml:"jwt_secrets_previous"`
 	Debug          bool     `toml:"debug"`
 	CORSOrigins    []string `toml:"cors_allowed_origins"`
 	TrustedProxies []string `toml:"trusted_proxies"`
@@ -165,6 +170,14 @@ func Load(path string) (*Config, error) {
 	if v := os.Getenv("INDELIBLE_JWT_SECRET"); v != "" {
 		cfg.JWTSecret = v
 	}
+	if v := os.Getenv("INDELIBLE_JWT_SECRET_PREVIOUS"); v != "" {
+		cfg.JWTSecretsPrevious = nil
+		for _, s := range strings.Split(v, ",") {
+			if s = strings.TrimSpace(s); s != "" {
+				cfg.JWTSecretsPrevious = append(cfg.JWTSecretsPrevious, s)
+			}
+		}
+	}
 	if v := os.Getenv("INDELIBLE_DEBUG"); v != "" {
 		cfg.Debug = v == "true" || v == "1"
 	}
@@ -250,6 +263,14 @@ func Load(path string) (*Config, error) {
 	}
 	if len(cfg.JWTSecret) < 32 {
 		return nil, fmt.Errorf("jwt_secret must be at least 32 characters (got %d); generate with: openssl rand -hex 32", len(cfg.JWTSecret))
+	}
+	// Previous (verify-only) secrets must clear the same entropy floor — a token
+	// signed under a weak former secret is just as forgeable while it lingers in
+	// the rotation window.
+	for i, prev := range cfg.JWTSecretsPrevious {
+		if len(prev) < 32 {
+			return nil, fmt.Errorf("jwt_secrets_previous[%d] must be at least 32 characters (got %d); set INDELIBLE_JWT_SECRET_PREVIOUS only to former jwt_secret values", i, len(prev))
+		}
 	}
 
 	// Require wallet encryption key

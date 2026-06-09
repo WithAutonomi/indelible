@@ -56,7 +56,7 @@ func Authenticate(db *database.DB, cfg *config.Config) func(http.Handler) http.H
 			}
 
 			// Try JWT first
-			claims, err := auth.ValidateToken(cfg.JWTSecret, tokenStr)
+			claims, err := auth.ValidateToken(cfg.JWTSecret, tokenStr, cfg.JWTSecretsPrevious...)
 			if err == nil {
 				// Verify user still exists and is active
 				user, err := userSvc.GetByID(claims.UserID)
