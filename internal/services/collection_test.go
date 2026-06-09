@@ -270,6 +270,55 @@ func TestCollectionDeleteCleansUpFileAssociations(t *testing.T) {
 	}
 }
 
+// TestCollectionFilesCascadeOnDelete proves the DB-level ON DELETE CASCADE
+// (V2-433 A3.2): deleting a collection or an upload via direct SQL — bypassing
+// the app's cleanup code — still removes the collection_files association rows.
+// This also exercises the per-connection foreign_keys pragma (set via the DSN).
+func TestCollectionFilesCascadeOnDelete(t *testing.T) {
+	db := setupTestDB(t)
+	userSvc := NewUserService(db)
+	user := createTestUser(t, userSvc, "cascade@example.com", "Cas", "Cade")
+	collSvc := NewCollectionService(db)
+	uploadSvc := NewUploadService(db)
+
+	assoc := func() int {
+		var n int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM collection_files`).Scan(&n); err != nil {
+			t.Fatalf("count collection_files: %v", err)
+		}
+		return n
+	}
+
+	// Deleting the parent collection cascades its association rows.
+	coll, _ := collSvc.Create("Cascade", "", nil, user.ID)
+	u1 := createTestUpload(t, uploadSvc, user.ID, "c1.bin", 100)
+	if err := collSvc.AddFile(coll.ID, u1.ID); err != nil {
+		t.Fatalf("AddFile: %v", err)
+	}
+	if assoc() != 1 {
+		t.Fatalf("expected 1 association, got %d", assoc())
+	}
+	if _, err := db.Exec(`DELETE FROM collections WHERE id = ?`, coll.ID); err != nil {
+		t.Fatalf("delete collection: %v", err)
+	}
+	if assoc() != 0 {
+		t.Errorf("collection delete did not cascade: %d association row(s) remain", assoc())
+	}
+
+	// Deleting the referenced upload cascades its association rows.
+	coll2, _ := collSvc.Create("Cascade2", "", nil, user.ID)
+	u2 := createTestUpload(t, uploadSvc, user.ID, "c2.bin", 200)
+	if err := collSvc.AddFile(coll2.ID, u2.ID); err != nil {
+		t.Fatalf("AddFile: %v", err)
+	}
+	if _, err := db.Exec(`DELETE FROM uploads WHERE id = ?`, u2.ID); err != nil {
+		t.Fatalf("delete upload: %v", err)
+	}
+	if assoc() != 0 {
+		t.Errorf("upload delete did not cascade: %d association row(s) remain", assoc())
+	}
+}
+
 func TestCollectionAddFile(t *testing.T) {
 	db := setupTestDB(t)
 	userSvc := NewUserService(db)
