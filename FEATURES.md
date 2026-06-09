@@ -550,6 +550,7 @@ volumes:
 - Session tokens: bcrypt hashed before DB storage
 - API tokens: bcrypt hashed, secret shown once
 - Wallet keys: AES-256-GCM encrypted at rest
+- Database at rest: hardened-deployment pattern documented (encrypted volume / managed-disk encryption) — `docs/guides/db-encryption-at-rest.md`
 - OIDC: PKCE + state + nonce validation
 - Input sanitization: HTML stripped from user inputs
 - Filename sanitization: path traversal and null byte prevention

@@ -225,6 +225,7 @@ docs/                  Generated Swagger/OpenAPI specs
 Indelible includes several layers of security hardening:
 
 - **Wallet encryption** — private keys encrypted at rest with AES-256-GCM
+- **Database encryption at rest** — the DB holds every private DataMap; harden it with an encrypted volume / managed-disk encryption per the [DB-at-rest guide](docs/guides/db-encryption-at-rest.md)
 - **JWT security** — HMAC-only algorithm enforcement, expiry validation, password-change invalidation
 - **HTTP security headers** — CSP, X-Content-Type-Options, X-Frame-Options, Referrer-Policy, Permissions-Policy
 - **Request body limits** — 1MB limit on JSON endpoints (uploads have separate configurable limit)

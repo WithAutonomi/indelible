@@ -23,6 +23,10 @@ the database.
 
 So a complete backup is **layered**. Each layer protects something different.
 
+> **At rest, too.** Because the database concentrates every private DataMap and
+> all PII, encrypt the storage it lives on — and the backups themselves. See
+> [Database encryption at rest](db-encryption-at-rest.md).
+
 ## What to back up
 
 | Layer | Protects | How |
