@@ -17,7 +17,7 @@ import (
 // @Router /system/wallet-status [get]
 // @Security BearerAuth
 func WalletStatus(db *database.DB, cfg *config.Config) http.HandlerFunc {
-	walletSvc := services.NewWalletService(db, cfg.WalletEncryptionKey)
+	walletSvc := services.NewWalletService(db, cfg.WalletKeyring())
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		wallet, err := walletSvc.GetDefault()

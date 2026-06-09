@@ -100,3 +100,51 @@ func TestKeyringUnknownKeyID(t *testing.T) {
 		t.Error("expected error decrypting an envelope tagged with an unknown key-id")
 	}
 }
+
+func TestKeyringPrimaryAndPrevious(t *testing.T) {
+	kr, err := NewKeyring(keyA, keyB)
+	if err != nil {
+		t.Fatalf("NewKeyring: %v", err)
+	}
+	if kr.Primary() != keyA {
+		t.Errorf("Primary() = %q, want %q", kr.Primary(), keyA)
+	}
+	prev := kr.Previous()
+	if len(prev) != 1 || prev[0] != keyB {
+		t.Errorf("Previous() = %v, want [%s]", prev, keyB)
+	}
+}
+
+func TestKeyringDeDupesIdenticalKeys(t *testing.T) {
+	// Passing the same material twice must not create a phantom history entry.
+	kr, err := NewKeyring(keyA, keyA)
+	if err != nil {
+		t.Fatalf("NewKeyring: %v", err)
+	}
+	if prev := kr.Previous(); len(prev) != 0 {
+		t.Errorf("Previous() = %v, want empty (duplicate primary skipped)", prev)
+	}
+}
+
+func TestNewKeyringRaw_NonHexMaterial(t *testing.T) {
+	// Raw keyrings hold arbitrary (non-hex) secrets — e.g. JWT signing secrets —
+	// addressable via Primary/Previous for sign/verify.
+	const (
+		secretA = "primary-jwt-secret-not-hex"
+		secretB = "former-jwt-secret-not-hex"
+	)
+	kr, err := NewKeyringRaw(secretA, secretB)
+	if err != nil {
+		t.Fatalf("NewKeyringRaw: %v", err)
+	}
+	if kr.Primary() != secretA {
+		t.Errorf("Primary() = %q, want %q", kr.Primary(), secretA)
+	}
+	if prev := kr.Previous(); len(prev) != 1 || prev[0] != secretB {
+		t.Errorf("Previous() = %v, want [%s]", prev, secretB)
+	}
+	// PrimaryID is stable and short, like the hex variant.
+	if id := kr.PrimaryID(); len(id) != keyIDLen {
+		t.Errorf("PrimaryID length = %d, want %d", len(id), keyIDLen)
+	}
+}

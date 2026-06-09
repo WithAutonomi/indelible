@@ -124,7 +124,7 @@ func CreateUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	tokenSvc := services.NewTokenService(db)
 	logSvc := services.NewLogService(db)
 
-	walletSvc := services.NewWalletService(db, cfg.WalletEncryptionKey)
+	walletSvc := services.NewWalletService(db, cfg.WalletKeyring())
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Pre-flight: reject early if no wallet is configured

@@ -3,13 +3,15 @@ package services
 import (
 	"strings"
 	"testing"
+
+	"github.com/WithAutonomi/indelible/internal/crypto"
 )
 
 const testEncKey = "0000000000000000000000000000000000000000000000000000000000000000"
 
 func TestWalletCreate_FirstIsDefault(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewWalletService(db, testEncKey)
+	svc := NewWalletService(db, mustKR(t, testEncKey))
 
 	w, err := svc.Create("w1", "0xABC", "privkey1")
 	if err != nil {
@@ -25,7 +27,7 @@ func TestWalletCreate_FirstIsDefault(t *testing.T) {
 
 func TestWalletCreate_SecondNotDefault(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewWalletService(db, testEncKey)
+	svc := NewWalletService(db, mustKR(t, testEncKey))
 
 	svc.Create("w1", "0xAAA", "key1")
 	w2, err := svc.Create("w2", "0xBBB", "key2")
@@ -39,7 +41,7 @@ func TestWalletCreate_SecondNotDefault(t *testing.T) {
 
 func TestWalletCreate_KeyEncrypted(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewWalletService(db, testEncKey)
+	svc := NewWalletService(db, mustKR(t, testEncKey))
 
 	w, err := svc.Create("w1", "0xABC", "my-secret-key")
 	if err != nil {
@@ -55,7 +57,7 @@ func TestWalletCreate_KeyEncrypted(t *testing.T) {
 
 func TestWalletGetByID(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewWalletService(db, testEncKey)
+	svc := NewWalletService(db, mustKR(t, testEncKey))
 
 	created, _ := svc.Create("w1", "0xABC", "key1")
 
@@ -70,7 +72,7 @@ func TestWalletGetByID(t *testing.T) {
 
 func TestWalletGetByID_NotFound(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewWalletService(db, testEncKey)
+	svc := NewWalletService(db, mustKR(t, testEncKey))
 
 	_, err := svc.GetByID(999)
 	if err != ErrWalletNotFound {
@@ -80,7 +82,7 @@ func TestWalletGetByID_NotFound(t *testing.T) {
 
 func TestWalletGetDefault(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewWalletService(db, testEncKey)
+	svc := NewWalletService(db, mustKR(t, testEncKey))
 
 	svc.Create("w1", "0xAAA", "key1")
 	svc.Create("w2", "0xBBB", "key2")
@@ -96,7 +98,7 @@ func TestWalletGetDefault(t *testing.T) {
 
 func TestWalletGetDefault_None(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewWalletService(db, testEncKey)
+	svc := NewWalletService(db, mustKR(t, testEncKey))
 
 	_, err := svc.GetDefault()
 	if err != ErrNoDefaultWallet {
@@ -106,7 +108,7 @@ func TestWalletGetDefault_None(t *testing.T) {
 
 func TestWalletList(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewWalletService(db, testEncKey)
+	svc := NewWalletService(db, mustKR(t, testEncKey))
 
 	svc.Create("w1", "0xA", "k1")
 	svc.Create("w2", "0xB", "k2")
@@ -122,7 +124,7 @@ func TestWalletList(t *testing.T) {
 
 func TestWalletSetDefault(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewWalletService(db, testEncKey)
+	svc := NewWalletService(db, mustKR(t, testEncKey))
 
 	w1, _ := svc.Create("w1", "0xA", "k1")
 	w2, _ := svc.Create("w2", "0xB", "k2")
@@ -146,7 +148,7 @@ func TestWalletSetDefault(t *testing.T) {
 
 func TestWalletSetDefault_NotFound(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewWalletService(db, testEncKey)
+	svc := NewWalletService(db, mustKR(t, testEncKey))
 
 	if err := svc.SetDefault(999); err != ErrWalletNotFound {
 		t.Errorf("expected ErrWalletNotFound, got %v", err)
@@ -155,7 +157,7 @@ func TestWalletSetDefault_NotFound(t *testing.T) {
 
 func TestWalletDelete(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewWalletService(db, testEncKey)
+	svc := NewWalletService(db, mustKR(t, testEncKey))
 
 	svc.Create("w1", "0xA", "k1")
 	w2, _ := svc.Create("w2", "0xB", "k2")
@@ -172,7 +174,7 @@ func TestWalletDelete(t *testing.T) {
 
 func TestWalletDelete_CannotDeleteDefault(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewWalletService(db, testEncKey)
+	svc := NewWalletService(db, mustKR(t, testEncKey))
 
 	w1, _ := svc.Create("w1", "0xA", "k1")
 
@@ -187,7 +189,7 @@ func TestWalletDelete_CannotDeleteDefault(t *testing.T) {
 
 func TestWalletDecryptKey(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewWalletService(db, testEncKey)
+	svc := NewWalletService(db, mustKR(t, testEncKey))
 
 	w, _ := svc.Create("w1", "0xA", "super-secret-key")
 
@@ -202,7 +204,7 @@ func TestWalletDecryptKey(t *testing.T) {
 
 func TestWalletUpdateBalance(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewWalletService(db, testEncKey)
+	svc := NewWalletService(db, mustKR(t, testEncKey))
 
 	w, _ := svc.Create("w1", "0xA", "k1")
 	if w.PaymentBalance != "0" || w.GasBalance != "0" {
@@ -232,7 +234,7 @@ func TestWalletUpdateBalance(t *testing.T) {
 
 func TestWalletCreate_RoundTripPrivateKey(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewWalletService(db, testEncKey)
+	svc := NewWalletService(db, mustKR(t, testEncKey))
 
 	const pk = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 	w, err := svc.Create("rt", "0xRoundTrip", pk)
@@ -250,7 +252,7 @@ func TestWalletCreate_RoundTripPrivateKey(t *testing.T) {
 
 func TestWalletDecrypt_WrongKeyFails(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewWalletService(db, testEncKey)
+	svc := NewWalletService(db, mustKR(t, testEncKey))
 
 	w, err := svc.Create("wk", "0xWrongKey", "private-bytes-here")
 	if err != nil {
@@ -259,7 +261,7 @@ func TestWalletDecrypt_WrongKeyFails(t *testing.T) {
 
 	// Same DB, different key — the existing ciphertext can't be decrypted.
 	otherKey := "1111111111111111111111111111111111111111111111111111111111111111"
-	other := NewWalletService(db, otherKey)
+	other := NewWalletService(db, mustKR(t, otherKey))
 	stored, err := other.GetByID(w.ID)
 	if err != nil {
 		t.Fatalf("GetByID: %v", err)
@@ -271,7 +273,7 @@ func TestWalletDecrypt_WrongKeyFails(t *testing.T) {
 
 func TestWalletDecrypt_TamperedCiphertextFailsAEAD(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewWalletService(db, testEncKey)
+	svc := NewWalletService(db, mustKR(t, testEncKey))
 
 	w, err := svc.Create("tamper", "0xTamper", "secret-private-key")
 	if err != nil {
@@ -303,7 +305,7 @@ func TestWalletDecrypt_TruncatedCiphertextFails(t *testing.T) {
 	// Truncated ciphertext should fail without panicking — the crypto layer
 	// must report "ciphertext too short" cleanly.
 	db := setupTestDB(t)
-	svc := NewWalletService(db, testEncKey)
+	svc := NewWalletService(db, mustKR(t, testEncKey))
 	w, _ := svc.Create("trunc", "0xT", "secret")
 	if _, err := db.Exec(`UPDATE wallets SET encrypted_key = ? WHERE id = ?`, "deadbeef", w.ID); err != nil {
 		t.Fatalf("update: %v", err)
@@ -325,7 +327,7 @@ func TestWalletCreate_DifferentNoncePerEncryption(t *testing.T) {
 	// different ciphertexts thanks to the random nonce. Catches a regression
 	// where someone "optimises" the nonce generator into determinism.
 	db := setupTestDB(t)
-	svc := NewWalletService(db, testEncKey)
+	svc := NewWalletService(db, mustKR(t, testEncKey))
 
 	w1, _ := svc.Create("n1", "0xN1", "identical-secret")
 	w2, _ := svc.Create("n2", "0xN2", "identical-secret")
@@ -341,18 +343,17 @@ func TestWalletCreate_DifferentNoncePerEncryption(t *testing.T) {
 	}
 }
 
-func TestNewWalletService_BadKeyLengthFailsAtEncryptTime(t *testing.T) {
-	// Service construction is lenient (no key validation), so the bad-key
-	// surface is the next Encrypt call. Confirm that surface returns an
-	// error rather than silently writing unencrypted bytes.
-	db := setupTestDB(t)
+func TestWalletKeyring_BadKeyLengthFailsAtBuild(t *testing.T) {
+	// The wallet keyring now comes from the secrets provider, which validates
+	// key material when the keyring is built (V2-450) — so a bad key surfaces
+	// at startup rather than silently on the first Encrypt. Confirm keyring
+	// construction rejects an undersized key.
 	badKey := "deadbeef" // 4 bytes hex-decoded, not 32
-	svc := NewWalletService(db, badKey)
-	_, err := svc.Create("bad", "0xBad", "private-key")
+	_, err := crypto.NewKeyring(badKey)
 	if err == nil {
-		t.Error("Create with bad key length should fail")
+		t.Fatal("NewKeyring with bad key length should fail")
 	}
-	if err != nil && !strings.Contains(err.Error(), "key") {
+	if !strings.Contains(err.Error(), "key") {
 		t.Errorf("error should mention the key, got %q", err.Error())
 	}
 }

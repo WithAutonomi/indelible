@@ -152,7 +152,7 @@ func setupOIDCTest(t *testing.T) *oidcEnv {
 	router := handlers.NewRouter(cfg, db, nil)
 
 	idp := startFakeIDP(t, "test-client")
-	providerSvc := services.NewOIDCProviderService(db, cfg.WalletEncryptionKey)
+	providerSvc := services.NewOIDCProviderService(db, mustKR(t, cfg.WalletEncryptionKey))
 	p, err := providerSvc.Create("test", "Test IdP", idp.server.URL, "test-client", "test-secret", "openid,email,profile")
 	if err != nil {
 		t.Fatalf("create provider: %v", err)
@@ -247,7 +247,7 @@ func (j *cookieJar) applyTo(req *http.Request) {
 
 func TestListOIDCProviders_OnlyEnabledShown(t *testing.T) {
 	env := setupOIDCTest(t)
-	providerSvc := services.NewOIDCProviderService(env.db, env.cfg.WalletEncryptionKey)
+	providerSvc := services.NewOIDCProviderService(env.db, mustKR(t, env.cfg.WalletEncryptionKey))
 	disabled, _ := providerSvc.Create("disabled", "Disabled", "https://example.com", "cid", "sec", "openid")
 	_, _ = providerSvc.Update(disabled.ID, "disabled", "Disabled", "https://example.com", "cid", "", "openid,email,profile", false)
 
@@ -322,8 +322,8 @@ func TestOIDCCallback_EndToEnd_LoginExistingIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create user: %v", err)
 	}
-	providerSvc := services.NewOIDCProviderService(env.db, env.cfg.WalletEncryptionKey)
-	loginSvc := services.NewOIDCLoginService(env.db, providerSvc, env.cfg.WalletEncryptionKey)
+	providerSvc := services.NewOIDCProviderService(env.db, mustKR(t, env.cfg.WalletEncryptionKey))
+	loginSvc := services.NewOIDCLoginService(env.db, providerSvc, mustKR(t, env.cfg.WalletEncryptionKey))
 	if err := loginSvc.LinkIdentity(user.ID, env.providerID, "alice-sub"); err != nil {
 		t.Fatalf("link identity: %v", err)
 	}
@@ -421,8 +421,8 @@ func TestOIDCUnlinkIdentity_LastLoginMethodReturns409(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateFromSCIM: %v", err)
 	}
-	providerSvc := services.NewOIDCProviderService(env.db, env.cfg.WalletEncryptionKey)
-	loginSvc := services.NewOIDCLoginService(env.db, providerSvc, env.cfg.WalletEncryptionKey)
+	providerSvc := services.NewOIDCProviderService(env.db, mustKR(t, env.cfg.WalletEncryptionKey))
+	loginSvc := services.NewOIDCLoginService(env.db, providerSvc, mustKR(t, env.cfg.WalletEncryptionKey))
 	if err := loginSvc.LinkIdentity(scimUser.ID, env.providerID, "ext-1"); err != nil {
 		t.Fatalf("link: %v", err)
 	}
@@ -452,8 +452,8 @@ func TestListMyOIDCIdentities_ReturnsLinked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get admin: %v", err)
 	}
-	providerSvc := services.NewOIDCProviderService(env.db, env.cfg.WalletEncryptionKey)
-	loginSvc := services.NewOIDCLoginService(env.db, providerSvc, env.cfg.WalletEncryptionKey)
+	providerSvc := services.NewOIDCProviderService(env.db, mustKR(t, env.cfg.WalletEncryptionKey))
+	loginSvc := services.NewOIDCLoginService(env.db, providerSvc, mustKR(t, env.cfg.WalletEncryptionKey))
 	if err := loginSvc.LinkIdentity(admin.ID, env.providerID, "admin-sub"); err != nil {
 		t.Fatalf("link: %v", err)
 	}
@@ -496,7 +496,7 @@ func TestAdminSetOIDCAutoProvision_PersistsChanges(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("got %d body=%s", w.Code, w.Body.String())
 	}
-	providerSvc := services.NewOIDCProviderService(env.db, env.cfg.WalletEncryptionKey)
+	providerSvc := services.NewOIDCProviderService(env.db, mustKR(t, env.cfg.WalletEncryptionKey))
 	p, _ := providerSvc.GetByID(env.providerID)
 	if !p.AutoProvision {
 		t.Error("auto_provision was not persisted")
@@ -507,7 +507,7 @@ func TestAdminSetOIDCRequireEmailVerified_PersistsChanges(t *testing.T) {
 	env := setupOIDCTest(t)
 	adminToken := registerAndGetToken(t, env.router, "admin@test.com", "password123", "Admin", "U")
 
-	providerSvc := services.NewOIDCProviderService(env.db, env.cfg.WalletEncryptionKey)
+	providerSvc := services.NewOIDCProviderService(env.db, mustKR(t, env.cfg.WalletEncryptionKey))
 	if before, _ := providerSvc.GetByID(env.providerID); !before.RequireEmailVerified {
 		t.Fatalf("expected default require_email_verified=true, got false")
 	}

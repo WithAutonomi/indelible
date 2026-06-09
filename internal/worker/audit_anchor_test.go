@@ -63,7 +63,7 @@ func newTestAnchorWorker(t *testing.T) (*AuditAnchorWorker, *services.LogService
 		EvmRPCURL:           "http://localhost:8545",
 	}
 	logSvc := services.NewLogService(db)
-	walletSvc := services.NewWalletService(db, cfg.WalletEncryptionKey)
+	walletSvc := services.NewWalletService(db, mustKR(t, cfg.WalletEncryptionKey))
 	if _, err := walletSvc.Create("test", "0xabc", "deadbeef"); err != nil {
 		t.Fatalf("create wallet: %v", err)
 	}

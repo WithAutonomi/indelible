@@ -87,7 +87,7 @@ type updateOIDCRequest struct {
 // @Router       /admin/oidc/providers [get]
 // @Security     BearerAuth
 func AdminListOIDCProviders(db *database.DB, cfg *config.Config) http.HandlerFunc {
-	oidcSvc := services.NewOIDCProviderService(db, cfg.WalletEncryptionKey)
+	oidcSvc := services.NewOIDCProviderService(db, cfg.WalletKeyring())
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		providers, err := oidcSvc.List()
@@ -117,7 +117,7 @@ func AdminListOIDCProviders(db *database.DB, cfg *config.Config) http.HandlerFun
 // @Router       /admin/oidc/providers [post]
 // @Security     BearerAuth
 func AdminCreateOIDCProvider(db *database.DB, cfg *config.Config) http.HandlerFunc {
-	oidcSvc := services.NewOIDCProviderService(db, cfg.WalletEncryptionKey)
+	oidcSvc := services.NewOIDCProviderService(db, cfg.WalletKeyring())
 	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -165,7 +165,7 @@ func AdminCreateOIDCProvider(db *database.DB, cfg *config.Config) http.HandlerFu
 // @Router       /admin/oidc/providers/{id} [put]
 // @Security     BearerAuth
 func AdminUpdateOIDCProvider(db *database.DB, cfg *config.Config) http.HandlerFunc {
-	oidcSvc := services.NewOIDCProviderService(db, cfg.WalletEncryptionKey)
+	oidcSvc := services.NewOIDCProviderService(db, cfg.WalletKeyring())
 	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -220,7 +220,7 @@ func AdminUpdateOIDCProvider(db *database.DB, cfg *config.Config) http.HandlerFu
 // @Router       /admin/oidc/providers/{id} [delete]
 // @Security     BearerAuth
 func AdminDeleteOIDCProvider(db *database.DB, cfg *config.Config) http.HandlerFunc {
-	oidcSvc := services.NewOIDCProviderService(db, cfg.WalletEncryptionKey)
+	oidcSvc := services.NewOIDCProviderService(db, cfg.WalletKeyring())
 	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {

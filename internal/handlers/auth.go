@@ -195,7 +195,7 @@ func Login(db *database.DB, cfg *config.Config) http.HandlerFunc {
 			}
 		}
 
-		token, err := auth.GenerateToken(cfg.JWTSecret, user.ID, user.Email, expiryHours)
+		token, err := auth.GenerateToken(cfg.JWTKeyring().Primary(), user.ID, user.Email, expiryHours)
 		if err != nil {
 			jsonError(w, "failed to generate token", http.StatusInternalServerError)
 			return

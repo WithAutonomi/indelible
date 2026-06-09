@@ -7,6 +7,9 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/WithAutonomi/indelible/internal/crypto"
+	"github.com/WithAutonomi/indelible/internal/secrets"
 )
 
 // Config holds all application configuration. Values can be set via
@@ -28,6 +31,15 @@ type Config struct {
 	TrustedProxies []string `toml:"trusted_proxies"`
 	BaseURL             string   `toml:"base_url"` // External URL (e.g. https://files.acme.com)
 	WalletEncryptionKey string   `toml:"wallet_encryption_key"` // Hex-encoded 32-byte AES key for wallet private keys
+	// WalletEncryptionKeysPrevious are former wallet/OIDC encryption keys kept
+	// decrypt-only during a rotation window, mirroring JWTSecretsPrevious: the
+	// running service can read rows still encrypted under an old key until the
+	// `rotate-keys` CLI has re-encrypted them. See docs/guides/key-rotation.md.
+	WalletEncryptionKeysPrevious []string `toml:"wallet_encryption_keys_previous"`
+	// SecretsBackend selects where key material is sourced from. Empty or "env"
+	// (the default) sources from env / config-file / _FILE. Future values
+	// (Vault, cloud KMS) plug in behind the secrets.Provider seam (V2-450).
+	SecretsBackend string `toml:"secrets_backend"`
 
 	// Managed antd — spawn and monitor antd as a child process
 	AntdManaged bool   `toml:"antd_managed"` // Spawn and manage antd (default: false)
@@ -51,6 +63,40 @@ type Config struct {
 	// INDELIBLE_ADMIN_PASSWORD_FILE for Docker/K8s secrets).
 	AdminEmail    string `toml:"admin_email"`
 	AdminPassword string `toml:"admin_password"`
+
+	// Resolved secrets seam, populated by Load (V2-450). secrets is the
+	// Provider; walletKeyring and jwtKeyring are its pre-built keyrings cached
+	// so request-path accessors never fail.
+	secrets       secrets.Provider
+	walletKeyring *crypto.Keyring
+	jwtKeyring    *crypto.Keyring
+}
+
+// Secrets returns the configured secrets Provider (V2-450). Use it to fetch a
+// keyring by logical name (e.g. secrets.WalletEncryption).
+func (c *Config) Secrets() secrets.Provider { return c.secrets }
+
+// WalletKeyring returns the active wallet/OIDC encryption keyring (active key +
+// decrypt-only history). Load pre-builds it via the provider. As a fallback for
+// a Config assembled directly (e.g. in tests, bypassing Load), it builds a
+// fresh keyring from the raw fields — pure, so concurrent callers don't race.
+func (c *Config) WalletKeyring() *crypto.Keyring {
+	if c.walletKeyring != nil {
+		return c.walletKeyring
+	}
+	kr, _ := crypto.NewKeyring(c.WalletEncryptionKey, c.WalletEncryptionKeysPrevious...)
+	return kr
+}
+
+// JWTKeyring returns the JWT signing keyring (active secret + verify-only
+// history). Sign with Primary(); verify against Primary()+Previous(). Same
+// Load-pre-built / direct-construction fallback as WalletKeyring.
+func (c *Config) JWTKeyring() *crypto.Keyring {
+	if c.jwtKeyring != nil {
+		return c.jwtKeyring
+	}
+	kr, _ := crypto.NewKeyringRaw(c.JWTSecret, c.JWTSecretsPrevious...)
+	return kr
 }
 
 type SMTPConfig struct {
@@ -170,6 +216,15 @@ func Load(path string) (*Config, error) {
 	if v := os.Getenv("INDELIBLE_JWT_SECRET"); v != "" {
 		cfg.JWTSecret = v
 	}
+	// _FILE variant (Docker / K8s secrets) takes precedence over the inline var
+	// so the signing secret need never sit in the compose file.
+	if v := os.Getenv("INDELIBLE_JWT_SECRET_FILE"); v != "" {
+		b, err := os.ReadFile(v)
+		if err != nil {
+			return nil, fmt.Errorf("reading INDELIBLE_JWT_SECRET_FILE: %w", err)
+		}
+		cfg.JWTSecret = strings.TrimSpace(string(b))
+	}
 	if v := os.Getenv("INDELIBLE_JWT_SECRET_PREVIOUS"); v != "" {
 		cfg.JWTSecretsPrevious = nil
 		for _, s := range strings.Split(v, ",") {
@@ -192,6 +247,25 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("INDELIBLE_WALLET_ENCRYPTION_KEY"); v != "" {
 		cfg.WalletEncryptionKey = v
+	}
+	// _FILE variant (Docker / K8s secrets), as for the admin password and JWT secret.
+	if v := os.Getenv("INDELIBLE_WALLET_ENCRYPTION_KEY_FILE"); v != "" {
+		b, err := os.ReadFile(v)
+		if err != nil {
+			return nil, fmt.Errorf("reading INDELIBLE_WALLET_ENCRYPTION_KEY_FILE: %w", err)
+		}
+		cfg.WalletEncryptionKey = strings.TrimSpace(string(b))
+	}
+	if v := os.Getenv("INDELIBLE_WALLET_ENCRYPTION_KEY_PREVIOUS"); v != "" {
+		cfg.WalletEncryptionKeysPrevious = nil
+		for _, s := range strings.Split(v, ",") {
+			if s = strings.TrimSpace(s); s != "" {
+				cfg.WalletEncryptionKeysPrevious = append(cfg.WalletEncryptionKeysPrevious, s)
+			}
+		}
+	}
+	if v := os.Getenv("INDELIBLE_SECRETS_BACKEND"); v != "" {
+		cfg.SecretsBackend = v
 	}
 	if v := os.Getenv("INDELIBLE_SMTP_HOST"); v != "" {
 		cfg.SMTP.Host = v
@@ -276,6 +350,26 @@ func Load(path string) (*Config, error) {
 	// Require wallet encryption key
 	if cfg.WalletEncryptionKey == "" || cfg.WalletEncryptionKey == "0000000000000000000000000000000000000000000000000000000000000000" {
 		return nil, fmt.Errorf("wallet_encryption_key is required (set INDELIBLE_WALLET_ENCRYPTION_KEY or wallet_encryption_key in config); generate with: openssl rand -hex 32")
+	}
+
+	// Build the secrets provider and cache its keyrings (V2-450). This also
+	// validates the wallet keys are well-formed hex, surfacing a bad key (or an
+	// unimplemented backend) at startup rather than on the first request.
+	provider, err := secrets.NewProvider(cfg.SecretsBackend, secrets.EnvConfig{
+		WalletKey:          cfg.WalletEncryptionKey,
+		WalletKeysPrevious: cfg.WalletEncryptionKeysPrevious,
+		JWTSecret:          cfg.JWTSecret,
+		JWTSecretsPrevious: cfg.JWTSecretsPrevious,
+	})
+	if err != nil {
+		return nil, err
+	}
+	cfg.secrets = provider
+	if cfg.walletKeyring, err = provider.Keyring(secrets.WalletEncryption); err != nil {
+		return nil, err
+	}
+	if cfg.jwtKeyring, err = provider.Keyring(secrets.JWT); err != nil {
+		return nil, err
 	}
 
 	return cfg, nil

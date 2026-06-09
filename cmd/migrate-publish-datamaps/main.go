@@ -73,7 +73,7 @@ func main() {
 	client := sdk.NewClient(antdURL, sdk.WithTimeout(0))
 
 	// Resolve indelible's own wallet — same path the upload worker uses.
-	walletSvc := services.NewWalletService(db, cfg.WalletEncryptionKey)
+	walletSvc := services.NewWalletService(db, cfg.WalletKeyring())
 	uploadSvc := services.NewUploadService(db)
 
 	var walletKey string

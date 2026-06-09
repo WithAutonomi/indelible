@@ -247,8 +247,8 @@ func (s *SettingsService) Export() ([]byte, error) {
 		}
 	}
 
-	// OIDC providers (without secrets)
-	oidcSvc := NewOIDCProviderService(s.db, "")
+	// OIDC providers (without secrets) — read-only, no keyring needed.
+	oidcSvc := NewOIDCProviderService(s.db, nil)
 	providers, err := oidcSvc.List()
 	if err == nil {
 		for _, p := range providers {

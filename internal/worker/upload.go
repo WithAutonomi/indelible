@@ -136,7 +136,7 @@ func NewUploadWorker(db *database.DB, cfg *config.Config) *UploadWorker {
 		uploadSvc:       services.NewUploadService(db),
 		quotaSvc:        services.NewQuotaService(db),
 		txnSvc:          services.NewTransactionService(db),
-		walletSvc:       services.NewWalletService(db, cfg.WalletEncryptionKey),
+		walletSvc:       services.NewWalletService(db, cfg.WalletKeyring()),
 		webhookSvc:      services.NewWebhookDeliveryService(db),
 		settingsSvc:     services.NewCachedSettingsService(services.NewSettingsService(db)),
 		antdClient:      antd.NewClient(cfg.AntdURL, antd.WithTimeout(0)),

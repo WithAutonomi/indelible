@@ -110,6 +110,63 @@ func TestLoad_JWTSecretPreviousTooShort(t *testing.T) {
 	}
 }
 
+func TestLoad_SecretFilesTakePrecedence(t *testing.T) {
+	// _FILE variants (Docker/K8s secrets) for the JWT secret and wallet key win
+	// over the inline env vars and are whitespace-trimmed (V2-450).
+	dir := t.TempDir()
+	jwtFile := filepath.Join(dir, "jwt")
+	walletFile := filepath.Join(dir, "wallet")
+	if err := os.WriteFile(jwtFile, []byte("file-jwt-secret-at-least-32-bytes-xx\n"), 0o600); err != nil {
+		t.Fatalf("write jwt file: %v", err)
+	}
+	if err := os.WriteFile(walletFile, []byte("2222222222222222222222222222222222222222222222222222222222222222\n"), 0o600); err != nil {
+		t.Fatalf("write wallet file: %v", err)
+	}
+	t.Setenv("INDELIBLE_JWT_SECRET", "inline-jwt-secret-at-least-32-bytes-x")
+	t.Setenv("INDELIBLE_WALLET_ENCRYPTION_KEY", "1111111111111111111111111111111111111111111111111111111111111111")
+	t.Setenv("INDELIBLE_JWT_SECRET_FILE", jwtFile)
+	t.Setenv("INDELIBLE_WALLET_ENCRYPTION_KEY_FILE", walletFile)
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.JWTSecret != "file-jwt-secret-at-least-32-bytes-xx" {
+		t.Errorf("JWTSecret = %q, want the file value (trimmed)", cfg.JWTSecret)
+	}
+	if cfg.WalletEncryptionKey != "2222222222222222222222222222222222222222222222222222222222222222" {
+		t.Errorf("WalletEncryptionKey = %q, want the file value (trimmed)", cfg.WalletEncryptionKey)
+	}
+	// The provider keyrings reflect the file-sourced material.
+	if cfg.JWTKeyring().Primary() != cfg.JWTSecret {
+		t.Error("JWT keyring primary should match the file-sourced secret")
+	}
+}
+
+func TestLoad_WalletKeysPreviousFeedKeyring(t *testing.T) {
+	setRequiredSecrets(t)
+	t.Setenv("INDELIBLE_WALLET_ENCRYPTION_KEY_PREVIOUS",
+		" 2222222222222222222222222222222222222222222222222222222222222222 ,")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	prev := cfg.WalletKeyring().Previous()
+	if len(prev) != 1 || prev[0] != "2222222222222222222222222222222222222222222222222222222222222222" {
+		t.Errorf("wallet keyring Previous() = %v, want the one former key", prev)
+	}
+}
+
+func TestLoad_UnknownSecretsBackendRejected(t *testing.T) {
+	setRequiredSecrets(t)
+	t.Setenv("INDELIBLE_SECRETS_BACKEND", "vault")
+
+	if _, err := Load(""); err == nil {
+		t.Fatal("expected Load to fail for an unimplemented secrets backend")
+	}
+}
+
 func TestApplyNetworkPreset_LocalAliasesCustom(t *testing.T) {
 	// "local" is antd's term for a devnet; Indelible should accept it as an
 	// alias for "custom" rather than rejecting it, and fold it to the canonical

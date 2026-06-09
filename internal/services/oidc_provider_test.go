@@ -6,7 +6,7 @@ import (
 
 func TestOIDCProviderCreate(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewOIDCProviderService(db, testEncKey)
+	svc := NewOIDCProviderService(db, mustKR(t, testEncKey))
 
 	p, err := svc.Create("google", "Google", "https://accounts.google.com", "client123", "secret456", "openid,email")
 	if err != nil {
@@ -40,7 +40,7 @@ func TestOIDCProviderCreate(t *testing.T) {
 
 func TestOIDCProviderCreate_DefaultScopes(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewOIDCProviderService(db, testEncKey)
+	svc := NewOIDCProviderService(db, mustKR(t, testEncKey))
 
 	p, _ := svc.Create("okta", "Okta", "https://okta.com", "c1", "s1", "")
 	if p.Scopes != "openid,email,profile" {
@@ -50,7 +50,7 @@ func TestOIDCProviderCreate_DefaultScopes(t *testing.T) {
 
 func TestOIDCProviderGetByID(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewOIDCProviderService(db, testEncKey)
+	svc := NewOIDCProviderService(db, mustKR(t, testEncKey))
 
 	created, _ := svc.Create("google", "Google", "https://accounts.google.com", "c1", "s1", "")
 
@@ -65,7 +65,7 @@ func TestOIDCProviderGetByID(t *testing.T) {
 
 func TestOIDCProviderGetByID_NotFound(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewOIDCProviderService(db, testEncKey)
+	svc := NewOIDCProviderService(db, mustKR(t, testEncKey))
 
 	_, err := svc.GetByID(999)
 	if err != ErrOIDCProviderNotFound {
@@ -75,7 +75,7 @@ func TestOIDCProviderGetByID_NotFound(t *testing.T) {
 
 func TestOIDCProviderList(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewOIDCProviderService(db, testEncKey)
+	svc := NewOIDCProviderService(db, mustKR(t, testEncKey))
 
 	svc.Create("google", "Google", "https://accounts.google.com", "c1", "s1", "")
 	svc.Create("okta", "Okta", "https://okta.com", "c2", "s2", "")
@@ -95,7 +95,7 @@ func TestOIDCProviderList(t *testing.T) {
 
 func TestOIDCProviderUpdate(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewOIDCProviderService(db, testEncKey)
+	svc := NewOIDCProviderService(db, mustKR(t, testEncKey))
 
 	p, _ := svc.Create("google", "Google", "https://accounts.google.com", "c1", "s1", "openid")
 
@@ -123,7 +123,7 @@ func TestOIDCProviderUpdate(t *testing.T) {
 
 func TestOIDCProviderUpdate_KeepSecret(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewOIDCProviderService(db, testEncKey)
+	svc := NewOIDCProviderService(db, mustKR(t, testEncKey))
 
 	p, _ := svc.Create("google", "Google", "https://accounts.google.com", "c1", "s1", "openid")
 	origSecret := p.EncryptedSecret
@@ -143,7 +143,7 @@ func TestOIDCProviderUpdate_KeepSecret(t *testing.T) {
 
 func TestOIDCProviderDelete(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewOIDCProviderService(db, testEncKey)
+	svc := NewOIDCProviderService(db, mustKR(t, testEncKey))
 
 	p, _ := svc.Create("google", "Google", "https://accounts.google.com", "c1", "s1", "")
 
@@ -159,7 +159,7 @@ func TestOIDCProviderDelete(t *testing.T) {
 
 func TestOIDCProviderDelete_NotFound(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewOIDCProviderService(db, testEncKey)
+	svc := NewOIDCProviderService(db, mustKR(t, testEncKey))
 
 	err := svc.Delete(999)
 	if err != ErrOIDCProviderNotFound {
@@ -169,7 +169,7 @@ func TestOIDCProviderDelete_NotFound(t *testing.T) {
 
 func TestOIDCProviderDelete_CleansIdentities(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewOIDCProviderService(db, testEncKey)
+	svc := NewOIDCProviderService(db, mustKR(t, testEncKey))
 	userSvc := NewUserService(db)
 	user := createTestUser(t, userSvc, "test@test.com", "Test", "User")
 
@@ -196,7 +196,7 @@ func TestOIDCProviderDelete_CleansIdentities(t *testing.T) {
 
 func TestOIDCProviderSecretEncryptDecrypt(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewOIDCProviderService(db, testEncKey)
+	svc := NewOIDCProviderService(db, mustKR(t, testEncKey))
 
 	secret := "my-oauth-client-secret-value"
 	p, _ := svc.Create("test", "Test", "https://test.com", "c1", secret, "")
@@ -207,7 +207,7 @@ func TestOIDCProviderSecretEncryptDecrypt(t *testing.T) {
 	}
 
 	// Decrypt using the crypto package directly to verify roundtrip
-	decrypted, err := decryptOIDCSecret(testEncKey, p.EncryptedSecret)
+	decrypted, err := decryptOIDCSecret(t, testEncKey, p.EncryptedSecret)
 	if err != nil {
 		t.Fatalf("decrypt: %v", err)
 	}
@@ -217,13 +217,13 @@ func TestOIDCProviderSecretEncryptDecrypt(t *testing.T) {
 }
 
 // decryptOIDCSecret is a test helper that decrypts an OIDC client secret.
-func decryptOIDCSecret(key, ciphertext string) (string, error) {
-	return (&WalletService{encryptionKey: key}).DecryptKey(&Wallet{EncryptedKey: ciphertext})
+func decryptOIDCSecret(t *testing.T, key, ciphertext string) (string, error) {
+	return NewWalletService(nil, mustKR(t, key)).DecryptKey(&Wallet{EncryptedKey: ciphertext})
 }
 
 func TestOIDCProviderExtraAuthorizeParams_DefaultEmpty(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewOIDCProviderService(db, testEncKey)
+	svc := NewOIDCProviderService(db, mustKR(t, testEncKey))
 	p, _ := svc.Create("google", "Google", "https://accounts.google.com", "c1", "s1", "")
 	// A freshly created provider has no extras — nil map (column default '').
 	if len(p.ExtraAuthorizeParams) != 0 {
@@ -233,7 +233,7 @@ func TestOIDCProviderExtraAuthorizeParams_DefaultEmpty(t *testing.T) {
 
 func TestOIDCProviderSetExtraAuthorizeParams_RoundTrip(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewOIDCProviderService(db, testEncKey)
+	svc := NewOIDCProviderService(db, mustKR(t, testEncKey))
 	p, _ := svc.Create("google", "Google", "https://accounts.google.com", "c1", "s1", "")
 
 	want := map[string]string{"hd": "company.com", "prompt": "select_account"}
@@ -257,7 +257,7 @@ func TestOIDCProviderSetExtraAuthorizeParams_RoundTrip(t *testing.T) {
 
 func TestOIDCProviderSetExtraAuthorizeParams_ClearsWithEmptyMap(t *testing.T) {
 	db := setupTestDB(t)
-	svc := NewOIDCProviderService(db, testEncKey)
+	svc := NewOIDCProviderService(db, mustKR(t, testEncKey))
 	p, _ := svc.Create("google", "Google", "https://accounts.google.com", "c1", "s1", "")
 	_ = svc.SetExtraAuthorizeParams(p.ID, map[string]string{"hd": "company.com"})
 

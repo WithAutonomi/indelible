@@ -44,7 +44,7 @@ type oidcIdentityResponse struct {
 // @Success 200 {object} map[string][]publicOIDCProvider
 // @Router /auth/oidc/providers [get]
 func ListOIDCProviders(db *database.DB) http.HandlerFunc {
-	providerSvc := services.NewOIDCProviderService(db, "")
+	providerSvc := services.NewOIDCProviderService(db, nil) // read-only (List); no keyring needed
 	return func(w http.ResponseWriter, r *http.Request) {
 		providers, err := providerSvc.List()
 		if err != nil {
@@ -72,8 +72,8 @@ func ListOIDCProviders(db *database.DB) http.HandlerFunc {
 // @Failure 404 {object} map[string]string
 // @Router /auth/oidc/authorize/{providerId} [get]
 func OIDCAuthorize(db *database.DB, cfg *config.Config) http.HandlerFunc {
-	providerSvc := services.NewOIDCProviderService(db, cfg.WalletEncryptionKey)
-	loginSvc := services.NewOIDCLoginService(db, providerSvc, cfg.WalletEncryptionKey)
+	providerSvc := services.NewOIDCProviderService(db, cfg.WalletKeyring())
+	loginSvc := services.NewOIDCLoginService(db, providerSvc, cfg.WalletKeyring())
 	logSvc := services.NewLogService(db)
 	return func(w http.ResponseWriter, r *http.Request) {
 		providerID, err := strconv.ParseInt(chi.URLParam(r, "providerId"), 10, 64)
@@ -113,8 +113,8 @@ func OIDCAuthorize(db *database.DB, cfg *config.Config) http.HandlerFunc {
 // @Failure 400 {object} map[string]string
 // @Router /auth/oidc/callback [get]
 func OIDCCallback(db *database.DB, cfg *config.Config) http.HandlerFunc {
-	providerSvc := services.NewOIDCProviderService(db, cfg.WalletEncryptionKey)
-	loginSvc := services.NewOIDCLoginService(db, providerSvc, cfg.WalletEncryptionKey)
+	providerSvc := services.NewOIDCProviderService(db, cfg.WalletKeyring())
+	loginSvc := services.NewOIDCLoginService(db, providerSvc, cfg.WalletKeyring())
 	userSvc := services.NewUserService(db)
 	settingsSvc := services.NewSettingsService(db)
 	logSvc := services.NewLogService(db)
@@ -166,7 +166,7 @@ func OIDCCallback(db *database.DB, cfg *config.Config) http.HandlerFunc {
 				expiryHours = n
 			}
 		}
-		token, err := auth.GenerateToken(cfg.JWTSecret, user.ID, user.Email, expiryHours)
+		token, err := auth.GenerateToken(cfg.JWTKeyring().Primary(), user.ID, user.Email, expiryHours)
 		if err != nil {
 			http.Redirect(w, r, "/login?error=internal", http.StatusFound)
 			return
@@ -202,8 +202,8 @@ func OIDCCallback(db *database.DB, cfg *config.Config) http.HandlerFunc {
 // @Security BearerAuth
 // @Router /auth/oidc/link/{providerId} [post]
 func OIDCLinkStart(db *database.DB, cfg *config.Config) http.HandlerFunc {
-	providerSvc := services.NewOIDCProviderService(db, cfg.WalletEncryptionKey)
-	loginSvc := services.NewOIDCLoginService(db, providerSvc, cfg.WalletEncryptionKey)
+	providerSvc := services.NewOIDCProviderService(db, cfg.WalletKeyring())
+	loginSvc := services.NewOIDCLoginService(db, providerSvc, cfg.WalletKeyring())
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID := middleware.GetUserID(r.Context())
 		if userID == 0 {
@@ -250,8 +250,8 @@ func OIDCLinkStart(db *database.DB, cfg *config.Config) http.HandlerFunc {
 // @Security BearerAuth
 // @Router /auth/oidc/identities/{identityId} [delete]
 func OIDCUnlinkIdentity(db *database.DB, cfg *config.Config) http.HandlerFunc {
-	providerSvc := services.NewOIDCProviderService(db, cfg.WalletEncryptionKey)
-	loginSvc := services.NewOIDCLoginService(db, providerSvc, cfg.WalletEncryptionKey)
+	providerSvc := services.NewOIDCProviderService(db, cfg.WalletKeyring())
+	loginSvc := services.NewOIDCLoginService(db, providerSvc, cfg.WalletKeyring())
 	logSvc := services.NewLogService(db)
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID := middleware.GetUserID(r.Context())
@@ -286,8 +286,8 @@ func OIDCUnlinkIdentity(db *database.DB, cfg *config.Config) http.HandlerFunc {
 // @Security BearerAuth
 // @Router /me/oidc/identities [get]
 func ListMyOIDCIdentities(db *database.DB) http.HandlerFunc {
-	providerSvc := services.NewOIDCProviderService(db, "")
-	loginSvc := services.NewOIDCLoginService(db, providerSvc, "")
+	providerSvc := services.NewOIDCProviderService(db, nil) // read-only identity listing; no keyring needed
+	loginSvc := services.NewOIDCLoginService(db, providerSvc, nil)
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID := middleware.GetUserID(r.Context())
 		if userID == 0 {
@@ -401,7 +401,7 @@ type adminOIDCExtraAuthorizeParamsRequest struct {
 // @Security BearerAuth
 // @Router /admin/oidc/providers/{id}/extra-params [put]
 func AdminSetOIDCExtraAuthorizeParams(db *database.DB, cfg *config.Config) http.HandlerFunc {
-	providerSvc := services.NewOIDCProviderService(db, cfg.WalletEncryptionKey)
+	providerSvc := services.NewOIDCProviderService(db, cfg.WalletKeyring())
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 		if err != nil {
@@ -449,7 +449,7 @@ type adminOIDCAutoProvisionRequest struct {
 // @Security BearerAuth
 // @Router /admin/oidc/providers/{id}/auto-provision [put]
 func AdminSetOIDCAutoProvision(db *database.DB, cfg *config.Config) http.HandlerFunc {
-	providerSvc := services.NewOIDCProviderService(db, cfg.WalletEncryptionKey)
+	providerSvc := services.NewOIDCProviderService(db, cfg.WalletKeyring())
 	logSvc := services.NewLogService(db)
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
@@ -492,7 +492,7 @@ type adminOIDCRequireEmailVerifiedRequest struct {
 // @Security BearerAuth
 // @Router /admin/oidc/providers/{id}/require-email-verified [put]
 func AdminSetOIDCRequireEmailVerified(db *database.DB, cfg *config.Config) http.HandlerFunc {
-	providerSvc := services.NewOIDCProviderService(db, cfg.WalletEncryptionKey)
+	providerSvc := services.NewOIDCProviderService(db, cfg.WalletKeyring())
 	logSvc := services.NewLogService(db)
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)

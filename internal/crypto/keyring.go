@@ -26,6 +26,16 @@ func KeyID(hexEncodedKey string) (string, error) {
 	return hex.EncodeToString(sum[:])[:keyIDLen], nil
 }
 
+// rawKeyID derives a key-id from arbitrary secret material (e.g. an HMAC JWT
+// signing secret) by hashing its raw bytes rather than hex-decoding first. Used
+// by NewKeyringRaw for secrets that are not hex-encoded AES keys. It never
+// errors — the error return exists only to share newKeyring's id-function shape
+// with KeyID.
+func rawKeyID(secret string) (string, error) {
+	sum := sha256.Sum256([]byte(secret))
+	return hex.EncodeToString(sum[:])[:keyIDLen], nil
+}
+
 // Keyring encrypts and decrypts a key-id-tagged envelope:
 //
 //	"<keyid>:<hex(nonce‖ciphertext)>"
@@ -37,33 +47,70 @@ func KeyID(hexEncodedKey string) (string, error) {
 // old-key, new-key, and legacy rows in flight — so an interrupted rotation
 // leaves every row identifiable and recoverable rather than silently bricked.
 //
-// This is the seam V2-450 (pluggable secrets backend) will generalize.
+// A keyring is also the unit a secrets.Provider hands consumers (V2-450): the
+// active (primary) key plus verify/decrypt-only history, addressable by key-id.
+// AES consumers use Encrypt/Decrypt; sign/verify consumers (JWT, and the future
+// B-2 audit-signing key) use Primary/Previous to sign with the active key and
+// verify against the whole set.
 type Keyring struct {
-	primary string            // key-id used by Encrypt
-	keys    map[string]string // key-id -> hex-encoded key
+	primary string            // key-id used by Encrypt / Primary
+	order   []string          // key-ids, primary first then extras in insertion order
+	keys    map[string]string // key-id -> key material
 }
 
 // NewKeyring builds a keyring whose primary (encrypt) key is primaryHexKey.
 // Any extraHexKeys are added for decryption only (e.g. the old key during a
 // rotation). All keys are validated as 32-byte hex.
 func NewKeyring(primaryHexKey string, extraHexKeys ...string) (*Keyring, error) {
-	pid, err := KeyID(primaryHexKey)
+	return newKeyring(KeyID, primaryHexKey, extraHexKeys...)
+}
+
+// NewKeyringRaw builds a keyring over arbitrary (non-hex) secret material, such
+// as HMAC JWT signing secrets. Key-ids derive from the raw secret bytes, so
+// these keyrings are for sign/verify via Primary/Previous; the AES Encrypt and
+// Decrypt methods require hex material and will error on a raw keyring.
+func NewKeyringRaw(primary string, previous ...string) (*Keyring, error) {
+	return newKeyring(rawKeyID, primary, previous...)
+}
+
+func newKeyring(idFn func(string) (string, error), primary string, extras ...string) (*Keyring, error) {
+	pid, err := idFn(primary)
 	if err != nil {
 		return nil, fmt.Errorf("primary key: %w", err)
 	}
-	kr := &Keyring{primary: pid, keys: map[string]string{pid: primaryHexKey}}
-	for _, hk := range extraHexKeys {
-		id, err := KeyID(hk)
+	kr := &Keyring{primary: pid, order: []string{pid}, keys: map[string]string{pid: primary}}
+	for _, e := range extras {
+		id, err := idFn(e)
 		if err != nil {
 			return nil, fmt.Errorf("extra key: %w", err)
 		}
-		kr.keys[id] = hk
+		if _, dup := kr.keys[id]; dup {
+			continue // same material as a key already held — no second entry
+		}
+		kr.keys[id] = e
+		kr.order = append(kr.order, id)
 	}
 	return kr, nil
 }
 
-// PrimaryID returns the key-id of the primary (encrypt) key.
+// PrimaryID returns the key-id of the primary (encrypt/sign) key.
 func (k *Keyring) PrimaryID() string { return k.primary }
+
+// Primary returns the material of the active key — the secret to sign new
+// tokens with, or the hex key Encrypt uses.
+func (k *Keyring) Primary() string { return k.keys[k.primary] }
+
+// Previous returns the verify/decrypt-only history key material in insertion
+// order (excluding the primary). Sign/verify consumers try Primary first, then
+// each of these, so a token signed under a former secret keeps validating until
+// the secret is dropped from the keyring.
+func (k *Keyring) Previous() []string {
+	prev := make([]string, 0, len(k.order)-1)
+	for _, id := range k.order[1:] {
+		prev = append(prev, k.keys[id])
+	}
+	return prev
+}
 
 // Encrypt encrypts plaintext under the primary key and returns the tagged
 // envelope "<primaryid>:<hexct>".

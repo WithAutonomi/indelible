@@ -6,7 +6,7 @@ import (
 
 func TestTransactionRecord(t *testing.T) {
 	db := setupTestDB(t)
-	walletSvc := NewWalletService(db, testEncKey)
+	walletSvc := NewWalletService(db, mustKR(t, testEncKey))
 	txSvc := NewTransactionService(db)
 
 	w, _ := walletSvc.Create("w1", "0xA", "key1")
@@ -37,7 +37,7 @@ func TestTransactionRecord(t *testing.T) {
 
 func TestTransactionRecord_WithUploadAndHash(t *testing.T) {
 	db := setupTestDB(t)
-	walletSvc := NewWalletService(db, testEncKey)
+	walletSvc := NewWalletService(db, mustKR(t, testEncKey))
 	userSvc := NewUserService(db)
 	uploadSvc := NewUploadService(db)
 	txSvc := NewTransactionService(db)
@@ -61,7 +61,7 @@ func TestTransactionRecord_WithUploadAndHash(t *testing.T) {
 
 func TestTransactionGetByID(t *testing.T) {
 	db := setupTestDB(t)
-	walletSvc := NewWalletService(db, testEncKey)
+	walletSvc := NewWalletService(db, mustKR(t, testEncKey))
 	txSvc := NewTransactionService(db)
 
 	w, _ := walletSvc.Create("w1", "0xA", "key1")
@@ -78,7 +78,7 @@ func TestTransactionGetByID(t *testing.T) {
 
 func TestTransactionListByWallet(t *testing.T) {
 	db := setupTestDB(t)
-	walletSvc := NewWalletService(db, testEncKey)
+	walletSvc := NewWalletService(db, mustKR(t, testEncKey))
 	txSvc := NewTransactionService(db)
 
 	w1, _ := walletSvc.Create("w1", "0xA", "key1")
@@ -110,7 +110,7 @@ func TestTransactionListByWallet(t *testing.T) {
 
 func TestTransactionListByWallet_Pagination(t *testing.T) {
 	db := setupTestDB(t)
-	walletSvc := NewWalletService(db, testEncKey)
+	walletSvc := NewWalletService(db, mustKR(t, testEncKey))
 	txSvc := NewTransactionService(db)
 
 	w, _ := walletSvc.Create("w1", "0xA", "key1")
@@ -139,7 +139,7 @@ func TestTransactionListByWallet_Pagination(t *testing.T) {
 
 func TestTransactionListByWallet_DefaultLimit(t *testing.T) {
 	db := setupTestDB(t)
-	walletSvc := NewWalletService(db, testEncKey)
+	walletSvc := NewWalletService(db, mustKR(t, testEncKey))
 	txSvc := NewTransactionService(db)
 
 	w, _ := walletSvc.Create("w1", "0xA", "key1")
@@ -156,7 +156,7 @@ func TestTransactionListByWallet_DefaultLimit(t *testing.T) {
 
 func TestTransactionRefundType(t *testing.T) {
 	db := setupTestDB(t)
-	walletSvc := NewWalletService(db, testEncKey)
+	walletSvc := NewWalletService(db, mustKR(t, testEncKey))
 	txSvc := NewTransactionService(db)
 
 	w, _ := walletSvc.Create("w1", "0xA", "key1")

@@ -60,7 +60,7 @@ func NewSystemMonitor(db *database.DB, cfg *config.Config) *SystemMonitor {
 		cfg:         cfg,
 		db:          db,
 		uploadSvc:   services.NewUploadService(db),
-		walletSvc:   services.NewWalletService(db, cfg.WalletEncryptionKey),
+		walletSvc:   services.NewWalletService(db, cfg.WalletKeyring()),
 		settingsSvc: services.NewCachedSettingsService(services.NewSettingsService(db)),
 		logSvc:      services.NewLogService(db),
 		webhookSvc:  services.NewWebhookDeliveryService(db),

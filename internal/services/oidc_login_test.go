@@ -120,8 +120,8 @@ func equalStrings(a, b []string) bool {
 func setupOIDCFixture(t *testing.T) (*OIDCLoginService, *OIDCProviderService, int64, int64) {
 	t.Helper()
 	db := setupTestDB(t)
-	providerSvc := NewOIDCProviderService(db, testCookieKey)
-	loginSvc := NewOIDCLoginService(db, providerSvc, testCookieKey)
+	providerSvc := NewOIDCProviderService(db, mustKR(t, testCookieKey))
+	loginSvc := NewOIDCLoginService(db, providerSvc, mustKR(t, testCookieKey))
 	provider, err := providerSvc.Create("okta", "Okta", "https://issuer.example.com", "client-id", "client-secret", "openid,email,profile")
 	if err != nil {
 		t.Fatalf("create provider: %v", err)
@@ -214,8 +214,8 @@ func TestUnlinkIdentity_AllowsWhenMultipleIdentities(t *testing.T) {
 
 func TestBuildAuthorizeURL_AppendsExtraParams(t *testing.T) {
 	db := setupTestDB(t)
-	providerSvc := NewOIDCProviderService(db, testCookieKey)
-	loginSvc := NewOIDCLoginService(db, providerSvc, testCookieKey)
+	providerSvc := NewOIDCProviderService(db, mustKR(t, testCookieKey))
+	loginSvc := NewOIDCLoginService(db, providerSvc, mustKR(t, testCookieKey))
 
 	idp := newFakeIDP(t, "test-client")
 	provider, err := providerSvc.Create("google", "Google", idp.server.URL, "test-client", "test-secret", "openid,email,profile")
@@ -262,8 +262,8 @@ func TestBuildAuthorizeURL_AppendsExtraParams(t *testing.T) {
 
 func TestBuildAuthorizeURL_NoExtraParamsByDefault(t *testing.T) {
 	db := setupTestDB(t)
-	providerSvc := NewOIDCProviderService(db, testCookieKey)
-	loginSvc := NewOIDCLoginService(db, providerSvc, testCookieKey)
+	providerSvc := NewOIDCProviderService(db, mustKR(t, testCookieKey))
+	loginSvc := NewOIDCLoginService(db, providerSvc, mustKR(t, testCookieKey))
 	idp := newFakeIDP(t, "test-client")
 	provider, _ := providerSvc.Create("okta", "Okta", idp.server.URL, "test-client", "test-secret", "openid,email,profile")
 
@@ -427,8 +427,8 @@ func paramFromURL(s, marker string) string {
 
 func TestHandleCallback_LoginWithExistingIdentity(t *testing.T) {
 	db := setupTestDB(t)
-	providerSvc := NewOIDCProviderService(db, testCookieKey)
-	loginSvc := NewOIDCLoginService(db, providerSvc, testCookieKey)
+	providerSvc := NewOIDCProviderService(db, mustKR(t, testCookieKey))
+	loginSvc := NewOIDCLoginService(db, providerSvc, mustKR(t, testCookieKey))
 
 	idp := newFakeIDP(t, "test-client")
 	provider, err := providerSvc.Create("test", "Test", idp.server.URL, "test-client", "test-secret", "openid,email,profile")
@@ -461,8 +461,8 @@ func TestHandleCallback_LoginWithExistingIdentity(t *testing.T) {
 
 func TestHandleCallback_AutoLinksSCIMUserByExternalID(t *testing.T) {
 	db := setupTestDB(t)
-	providerSvc := NewOIDCProviderService(db, testCookieKey)
-	loginSvc := NewOIDCLoginService(db, providerSvc, testCookieKey)
+	providerSvc := NewOIDCProviderService(db, mustKR(t, testCookieKey))
+	loginSvc := NewOIDCLoginService(db, providerSvc, mustKR(t, testCookieKey))
 	idp := newFakeIDP(t, "test-client")
 	provider, _ := providerSvc.Create("test", "Test", idp.server.URL, "test-client", "test-secret", "openid,email,profile")
 
@@ -494,8 +494,8 @@ func TestHandleCallback_AutoLinksSCIMUserByExternalID(t *testing.T) {
 
 func TestHandleCallback_NoAccountWhenAutoProvisionOff(t *testing.T) {
 	db := setupTestDB(t)
-	providerSvc := NewOIDCProviderService(db, testCookieKey)
-	loginSvc := NewOIDCLoginService(db, providerSvc, testCookieKey)
+	providerSvc := NewOIDCProviderService(db, mustKR(t, testCookieKey))
+	loginSvc := NewOIDCLoginService(db, providerSvc, mustKR(t, testCookieKey))
 	idp := newFakeIDP(t, "test-client")
 	provider, _ := providerSvc.Create("test", "Test", idp.server.URL, "test-client", "test-secret", "openid,email,profile")
 
@@ -512,8 +512,8 @@ func TestHandleCallback_NoAccountWhenAutoProvisionOff(t *testing.T) {
 
 func TestHandleCallback_EmailCollisionWhenAutoProvisionOn(t *testing.T) {
 	db := setupTestDB(t)
-	providerSvc := NewOIDCProviderService(db, testCookieKey)
-	loginSvc := NewOIDCLoginService(db, providerSvc, testCookieKey)
+	providerSvc := NewOIDCProviderService(db, mustKR(t, testCookieKey))
+	loginSvc := NewOIDCLoginService(db, providerSvc, mustKR(t, testCookieKey))
 	idp := newFakeIDP(t, "test-client")
 	provider, _ := providerSvc.Create("test", "Test", idp.server.URL, "test-client", "test-secret", "openid,email,profile")
 	if err := providerSvc.SetAutoProvision(provider.ID, true, 0); err != nil {
@@ -536,8 +536,8 @@ func TestHandleCallback_EmailCollisionWhenAutoProvisionOn(t *testing.T) {
 
 func TestHandleCallback_AutoProvisionsNewUserWithDefaultGroup(t *testing.T) {
 	db := setupTestDB(t)
-	providerSvc := NewOIDCProviderService(db, testCookieKey)
-	loginSvc := NewOIDCLoginService(db, providerSvc, testCookieKey)
+	providerSvc := NewOIDCProviderService(db, mustKR(t, testCookieKey))
+	loginSvc := NewOIDCLoginService(db, providerSvc, mustKR(t, testCookieKey))
 	groupSvc := NewGroupService(db)
 
 	g, err := groupSvc.Create("eng", "", "read")
@@ -580,8 +580,8 @@ func TestHandleCallback_AutoProvisionsNewUserWithDefaultGroup(t *testing.T) {
 
 func TestHandleCallback_RequireEmailVerified_StrictRejectsMissingClaim(t *testing.T) {
 	db := setupTestDB(t)
-	providerSvc := NewOIDCProviderService(db, testCookieKey)
-	loginSvc := NewOIDCLoginService(db, providerSvc, testCookieKey)
+	providerSvc := NewOIDCProviderService(db, mustKR(t, testCookieKey))
+	loginSvc := NewOIDCLoginService(db, providerSvc, mustKR(t, testCookieKey))
 
 	idp := newFakeIDP(t, "test-client")
 	provider, _ := providerSvc.Create("test", "Test", idp.server.URL, "test-client", "test-secret", "openid,email,profile")
@@ -608,8 +608,8 @@ func TestHandleCallback_RequireEmailVerified_StrictRejectsMissingClaim(t *testin
 
 func TestHandleCallback_RequireEmailVerified_LooseAcceptsMissingClaim(t *testing.T) {
 	db := setupTestDB(t)
-	providerSvc := NewOIDCProviderService(db, testCookieKey)
-	loginSvc := NewOIDCLoginService(db, providerSvc, testCookieKey)
+	providerSvc := NewOIDCProviderService(db, mustKR(t, testCookieKey))
+	loginSvc := NewOIDCLoginService(db, providerSvc, mustKR(t, testCookieKey))
 
 	idp := newFakeIDP(t, "test-client")
 	provider, _ := providerSvc.Create("test", "Test", idp.server.URL, "test-client", "test-secret", "openid,email,profile")
@@ -643,8 +643,8 @@ func TestHandleCallback_RequireEmailVerified_LooseAcceptsMissingClaim(t *testing
 
 func TestHandleCallback_StateMismatch(t *testing.T) {
 	db := setupTestDB(t)
-	providerSvc := NewOIDCProviderService(db, testCookieKey)
-	loginSvc := NewOIDCLoginService(db, providerSvc, testCookieKey)
+	providerSvc := NewOIDCProviderService(db, mustKR(t, testCookieKey))
+	loginSvc := NewOIDCLoginService(db, providerSvc, mustKR(t, testCookieKey))
 	idp := newFakeIDP(t, "test-client")
 	provider, _ := providerSvc.Create("test", "Test", idp.server.URL, "test-client", "test-secret", "openid,email,profile")
 
@@ -658,8 +658,8 @@ func TestHandleCallback_StateMismatch(t *testing.T) {
 
 func TestHandleCallback_ExpiredCookie(t *testing.T) {
 	db := setupTestDB(t)
-	providerSvc := NewOIDCProviderService(db, testCookieKey)
-	loginSvc := NewOIDCLoginService(db, providerSvc, testCookieKey)
+	providerSvc := NewOIDCProviderService(db, mustKR(t, testCookieKey))
+	loginSvc := NewOIDCLoginService(db, providerSvc, mustKR(t, testCookieKey))
 	idp := newFakeIDP(t, "test-client")
 	provider, _ := providerSvc.Create("test", "Test", idp.server.URL, "test-client", "test-secret", "openid,email,profile")
 
@@ -676,8 +676,8 @@ func TestHandleCallback_ExpiredCookie(t *testing.T) {
 
 func TestHandleCallback_NonceMismatch(t *testing.T) {
 	db := setupTestDB(t)
-	providerSvc := NewOIDCProviderService(db, testCookieKey)
-	loginSvc := NewOIDCLoginService(db, providerSvc, testCookieKey)
+	providerSvc := NewOIDCProviderService(db, mustKR(t, testCookieKey))
+	loginSvc := NewOIDCLoginService(db, providerSvc, mustKR(t, testCookieKey))
 	idp := newFakeIDP(t, "test-client")
 	provider, _ := providerSvc.Create("test", "Test", idp.server.URL, "test-client", "test-secret", "openid,email,profile")
 
@@ -695,8 +695,8 @@ func TestHandleCallback_NonceMismatch(t *testing.T) {
 
 func TestHandleCallback_LinkingFlowLinksAndSkipsLogin(t *testing.T) {
 	db := setupTestDB(t)
-	providerSvc := NewOIDCProviderService(db, testCookieKey)
-	loginSvc := NewOIDCLoginService(db, providerSvc, testCookieKey)
+	providerSvc := NewOIDCProviderService(db, mustKR(t, testCookieKey))
+	loginSvc := NewOIDCLoginService(db, providerSvc, mustKR(t, testCookieKey))
 	idp := newFakeIDP(t, "test-client")
 	provider, _ := providerSvc.Create("test", "Test", idp.server.URL, "test-client", "test-secret", "openid,email,profile")
 

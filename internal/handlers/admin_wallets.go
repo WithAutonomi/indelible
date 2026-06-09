@@ -58,7 +58,7 @@ type createWalletRequest struct {
 // @Security     BearerAuth
 // AdminListWallets returns all wallets.
 func AdminListWallets(db *database.DB, cfg *config.Config) http.HandlerFunc {
-	walletSvc := services.NewWalletService(db, cfg.WalletEncryptionKey)
+	walletSvc := services.NewWalletService(db, cfg.WalletKeyring())
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		wallets, err := walletSvc.List()
@@ -89,7 +89,7 @@ func AdminListWallets(db *database.DB, cfg *config.Config) http.HandlerFunc {
 // @Security     BearerAuth
 // AdminCreateWallet adds a new wallet with encrypted key storage.
 func AdminCreateWallet(db *database.DB, cfg *config.Config) http.HandlerFunc {
-	walletSvc := services.NewWalletService(db, cfg.WalletEncryptionKey)
+	walletSvc := services.NewWalletService(db, cfg.WalletKeyring())
 	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -145,7 +145,7 @@ func AdminCreateWallet(db *database.DB, cfg *config.Config) http.HandlerFunc {
 // @Security     BearerAuth
 // AdminSetDefaultWallet makes a wallet the default for uploads.
 func AdminSetDefaultWallet(db *database.DB, cfg *config.Config) http.HandlerFunc {
-	walletSvc := services.NewWalletService(db, cfg.WalletEncryptionKey)
+	walletSvc := services.NewWalletService(db, cfg.WalletKeyring())
 	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -183,7 +183,7 @@ func AdminSetDefaultWallet(db *database.DB, cfg *config.Config) http.HandlerFunc
 // @Router       /admin/wallets/{id} [delete]
 // @Security     BearerAuth
 func AdminDeleteWallet(db *database.DB, cfg *config.Config) http.HandlerFunc {
-	walletSvc := services.NewWalletService(db, cfg.WalletEncryptionKey)
+	walletSvc := services.NewWalletService(db, cfg.WalletKeyring())
 	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -224,7 +224,7 @@ func AdminDeleteWallet(db *database.DB, cfg *config.Config) http.HandlerFunc {
 // @Router       /admin/wallets/{id}/balance [post]
 // @Security     BearerAuth
 func AdminRefreshWalletBalance(db *database.DB, cfg *config.Config) http.HandlerFunc {
-	walletSvc := services.NewWalletService(db, cfg.WalletEncryptionKey)
+	walletSvc := services.NewWalletService(db, cfg.WalletKeyring())
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		idStr := chi.URLParam(r, "id")
