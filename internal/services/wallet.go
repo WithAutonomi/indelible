@@ -42,8 +42,13 @@ func NewWalletService(db *database.DB, encryptionKey string) *WalletService {
 
 // Create adds a new wallet. If it's the first wallet, it becomes default.
 func (s *WalletService) Create(name, address, privateKey string) (*Wallet, error) {
-	// Encrypt the private key
-	encryptedKey, err := crypto.Encrypt(s.encryptionKey, privateKey)
+	// Encrypt the private key under a key-id-tagged envelope so the wallet key
+	// can be rotated later without bricking stored rows (V2-448).
+	kr, err := crypto.NewKeyring(s.encryptionKey)
+	if err != nil {
+		return nil, err
+	}
+	encryptedKey, err := kr.Encrypt(privateKey)
 	if err != nil {
 		return nil, err
 	}
@@ -162,9 +167,14 @@ func (s *WalletService) Delete(id int64) error {
 	return err
 }
 
-// DecryptKey decrypts and returns the wallet's private key.
+// DecryptKey decrypts and returns the wallet's private key. The keyring handles
+// both key-id-tagged envelopes and legacy (un-tagged) ciphertext.
 func (s *WalletService) DecryptKey(w *Wallet) (string, error) {
-	return crypto.Decrypt(s.encryptionKey, w.EncryptedKey)
+	kr, err := crypto.NewKeyring(s.encryptionKey)
+	if err != nil {
+		return "", err
+	}
+	return kr.Decrypt(w.EncryptedKey)
 }
 
 // UpdateBalance updates a wallet's payment and gas balances.

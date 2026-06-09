@@ -29,7 +29,7 @@ So a complete backup is **layered**. Each layer protects something different.
 |-------|----------|-----|
 | **1. Application database** | Everything: users, groups, wallets, settings, the upload catalog **and every private DataMap** | SQLite: copy the `.db` file (with its `-wal`/`-shm` sidecars). PostgreSQL: `pg_dump`. |
 | **2. Uploads export (NDJSON)** | A **portable**, instance-independent copy of the upload catalog + DataMaps. Disaster recovery *and* anti-lock-in / migration | `GET /admin/uploads/export` (see below) |
-| **3. Wallet encryption key** | The ability to *use* the wallets in the DB. `INDELIBLE_WALLET_ENCRYPTION_KEY` decrypts stored wallet private keys — **without it, a restored DB's wallets are undecryptable** | Store the env value in your secrets manager, **separate from the DB backup** |
+| **3. Wallet encryption key** | The ability to *use* the wallets in the DB. `INDELIBLE_WALLET_ENCRYPTION_KEY` decrypts stored wallet private keys (and OIDC client secrets) — **without it, a restored DB's wallets are undecryptable** | Store the env value in your secrets manager, **separate from the DB backup**. To change it safely, see [Key rotation](key-rotation.md) |
 | **4. Settings export** | Config: system settings, webhooks, OIDC providers (without secrets), groups | `GET /admin/settings/export` ([details](#settings)) |
 
 Layers 1 and 2 overlap deliberately: the DB backup is your primary restore path;

@@ -36,6 +36,12 @@ import (
 // @description Enter your JWT or API token as: Bearer <token>
 
 func main() {
+	// Subcommands run an offline task and exit, bypassing the server bootstrap.
+	if len(os.Args) > 1 && os.Args[1] == "rotate-keys" {
+		runRotateKeys(os.Args[2:])
+		return
+	}
+
 	var (
 		configPath  string
 		showVer     bool
@@ -218,4 +224,48 @@ func main() {
 	}
 
 	slog.Info("stopped")
+}
+
+// runRotateKeys re-encrypts wallet private keys and OIDC client secrets from the
+// --old key to the --new key, then exits. Offline tool: stop the service, run
+// this, set INDELIBLE_WALLET_ENCRYPTION_KEY=<new>, and restart. Key material is
+// passed on the command line (never an HTTP endpoint) so it stays off the
+// request path. (V2-448)
+func runRotateKeys(args []string) {
+	fs := flag.NewFlagSet("rotate-keys", flag.ExitOnError)
+	var oldKey, newKey, configPath string
+	fs.StringVar(&oldKey, "old", "", "current (old) hex-encoded 32-byte encryption key")
+	fs.StringVar(&newKey, "new", "", "new hex-encoded 32-byte encryption key")
+	fs.StringVar(&configPath, "config", "", "path to indelible.toml (for the DB connection)")
+	_ = fs.Parse(args)
+
+	if oldKey == "" || newKey == "" {
+		fmt.Fprintln(os.Stderr, "rotate-keys: --old and --new are required")
+		os.Exit(2)
+	}
+
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "rotate-keys: load config: %v\n", err)
+		os.Exit(1)
+	}
+	if cfg.WalletEncryptionKey != "" && cfg.WalletEncryptionKey != oldKey {
+		fmt.Fprintln(os.Stderr, "rotate-keys: warning — --old does not match the configured WALLET_ENCRYPTION_KEY; rows encrypted under the configured key may not decrypt")
+	}
+
+	db, err := database.Open(cfg.DBURL)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "rotate-keys: open database: %v\n", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	res, err := services.RotateEncryptionKey(db, oldKey, newKey)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "rotate-keys: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("rotated %d wallet(s) and %d OIDC provider(s) from key %s to key %s\n",
+		res.Wallets, res.OIDCProviders, res.OldKeyID, res.NewKeyID)
+	fmt.Println("now set INDELIBLE_WALLET_ENCRYPTION_KEY to the new key and restart indelible")
 }
