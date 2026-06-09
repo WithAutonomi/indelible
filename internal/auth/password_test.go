@@ -19,3 +19,12 @@ func TestHashAndCheckPassword(t *testing.T) {
 		t.Error("CheckPassword returned true for wrong password")
 	}
 }
+
+// TestDummyCheckPassword asserts the constant-time login helper is callable
+// without panicking — the dummy hash must have precomputed successfully at
+// init. There's nothing to assert about its result (it exists only to consume
+// bcrypt time on the unknown-email path); the value is its side-effect timing.
+func TestDummyCheckPassword(t *testing.T) {
+	DummyCheckPassword("anything")
+	DummyCheckPassword("")
+}

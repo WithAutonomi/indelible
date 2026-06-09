@@ -1,12 +1,12 @@
 import { test, expect } from '@playwright/test'
 
 test.describe('Authentication', () => {
-  test('register a fresh non-admin user and land on dashboard', async ({ page }) => {
-    // globalSetup already registered the shared admin (admin@e2e-test.com),
-    // so this test uses a distinct email and only verifies the register-form
-    // → POST /auth/register → redirect-to-dashboard path. The new account
-    // ends up with default "read" permissions, which is the same path most
-    // SSO/SCIM-provisioned users go through.
+  test('register a fresh non-admin user, then sign in', async ({ page }) => {
+    // globalSetup seeds the shared admin (admin@e2e-test.com), so this test
+    // uses a distinct email and verifies the register-form path. Registration
+    // is anti-enumeration (V2-430): it shows a neutral confirmation and does
+    // NOT auto-log-in, so the user signs in afterward. The new account ends up
+    // with default "read" permissions.
     const email = `register-${Date.now()}@e2e-test.com`
 
     await page.goto('/register')
@@ -16,9 +16,16 @@ test.describe('Authentication', () => {
     await page.locator('input[placeholder="Password"]').fill('TestPassword123!')
     await page.getByRole('button', { name: 'Create account' }).click()
 
-    await page.waitForURL((url) => !url.pathname.includes('/register'), { timeout: 10000 })
+    // Neutral confirmation appears instead of a redirect into the app.
+    await expect(page.getByRole('button', { name: 'Go to sign in' })).toBeVisible({ timeout: 10000 })
 
-    // /me should reflect the freshly-registered, non-admin user.
+    // Sign in to confirm the account exists with read-only permissions. Logging
+    // in via the page context sets the session cookie so /me resolves.
+    const loginRes = await page.request.post('/api/v2/auth/login', {
+      data: { email, password: 'TestPassword123!' },
+    })
+    expect(loginRes.ok()).toBeTruthy()
+
     const meRes = await page.request.get('/api/v2/me')
     expect(meRes.ok()).toBeTruthy()
     const me = await meRes.json()

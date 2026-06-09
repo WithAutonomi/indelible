@@ -42,7 +42,7 @@ func TestRegister_RejectsMalformedEmail(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("register valid email: got %d, want 201; body: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("register valid email: got %d, want 202; body: %s", w.Code, w.Body.String())
 	}
 }

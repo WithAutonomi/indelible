@@ -148,8 +148,9 @@ When registration is enabled:
 
 1. Navigate to `/register` in your browser
 2. Enter email, password (minimum 8 characters), first name, last name
-3. Self-registered users receive **read-only** permissions; an admin can grant more
-4. A verification email is sent if SMTP is configured (non-blocking — you can use the app immediately)
+3. Submit. Registration always returns the same neutral response and does **not** log you in — an anti-enumeration measure: it never reveals whether the address is already registered
+4. Sign in at `/login` with your new credentials. Self-registered users receive **read-only** permissions; an admin can grant more
+5. A verification email is sent if SMTP is configured (verification is not required to sign in)
 
 ### Login
 
@@ -1071,10 +1072,10 @@ Rate-limited endpoints (login, password-reset, uploads — see [Rate Limiting](#
 Error responses include a machine-readable `code` field alongside the human-readable `error` message:
 
 ```json
-{"error": "email already registered", "code": "email_taken"}
+{"error": "invalid email or password", "code": "invalid_credentials"}
 ```
 
-Common codes: `unauthorized`, `forbidden`, `validation_error`, `not_found`, `email_taken`, `invalid_credentials`, `quota_exceeded`, `file_too_large`, `rate_limit_exceeded`, `maintenance_mode`, `wallet_not_configured`.
+Common codes: `unauthorized`, `forbidden`, `validation_error`, `not_found`, `invalid_credentials`, `quota_exceeded`, `file_too_large`, `rate_limit_exceeded`, `maintenance_mode`, `wallet_not_configured`.
 
 ### Idempotency Keys
 

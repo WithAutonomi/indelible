@@ -164,9 +164,12 @@ func Login(db *database.DB, cfg *config.Config) http.HandlerFunc {
 
 		user, err := userSvc.GetByEmail(req.Email)
 		if err != nil {
-			// Constant-time: don't reveal whether email exists in the response, but
-			// audit the attempt with the supplied email so credential-stuffing
-			// detection has something to work with.
+			// Constant-time: run a bcrypt compare even though the email is unknown,
+			// so response time doesn't reveal whether the account exists (the
+			// known-email path always runs CheckPassword below). Don't reveal
+			// existence in the response, but audit the attempt with the supplied
+			// email so credential-stuffing detection has something to work with.
+			auth.DummyCheckPassword(req.Password)
 			auditEvent(r, logSvc, "login_failed", "warn", nil, "unknown email: "+req.Email)
 			jsonErrorWithCode(w, "invalid email or password", "invalid_credentials", http.StatusUnauthorized)
 			return
@@ -228,15 +231,14 @@ func registrationEnabled(s *services.SettingsService) bool {
 
 // Register godoc
 // @Summary Register a new user
-// @Description Create a new user account with email, password, and name. Self-registration is disabled by default; an admin must enable it via the registration_enabled setting. Self-registered users receive read-only access.
+// @Description Create a new user account with email, password, and name. Self-registration is disabled by default; an admin must enable it via the registration_enabled setting. Self-registered users receive read-only access. To avoid account enumeration the endpoint always returns a neutral 202 (it never reveals whether the email already exists) and does not log the caller in — the user signs in afterward.
 // @Tags Auth
 // @Accept json
 // @Produce json
 // @Param body body registerRequest true "Registration details"
-// @Success 201 {object} authResponse
+// @Success 202 {object} map[string]string
 // @Failure 400 {object} map[string]string
 // @Failure 403 {object} map[string]string
-// @Failure 409 {object} map[string]string
 // @Router /auth/register [post]
 func Register(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	userSvc := services.NewUserService(db)
@@ -284,53 +286,36 @@ func Register(db *database.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
+		// Anti-enumeration (V2-430): registration never reveals whether the email
+		// already exists, and never auto-logs-in — an auto-login (token + session)
+		// response would be trivially distinguishable from the email-taken case,
+		// reintroducing the oracle. Both the freshly-created and already-registered
+		// paths return the same neutral 202; the user proceeds by signing in (and
+		// verifying their email). bcrypt runs on both paths so timing matches too.
 		user, err := userSvc.Create(req.Email, hash, req.FirstName, req.LastName)
-		if err != nil {
-			if errors.Is(err, services.ErrEmailTaken) {
-				jsonErrorWithCode(w, "email already registered", "email_taken", http.StatusConflict)
-				return
-			}
+		if err != nil && !errors.Is(err, services.ErrEmailTaken) {
 			jsonError(w, "failed to create user", http.StatusInternalServerError)
 			return
 		}
+		if err == nil {
+			// New account. Self-registered users always get read-only access; admin
+			// is granted only via the bootstrap seed (SeedAdmin) or by an existing
+			// admin — never by self-registration, which would be a first-registrant
+			// land-grab on an exposed instance.
+			_ = permSvc.SetDirect(user.ID, "read", user.ID)
 
-		// Self-registered users always get read-only access. Admin is granted
-		// only via the bootstrap seed (SeedAdmin) or by an existing admin —
-		// never by self-registration, which would be a first-registrant
-		// land-grab on an exposed instance.
-		permLevel := "read"
-		_ = permSvc.SetDirect(user.ID, permLevel, user.ID)
-
-		// Send verification email (best-effort — don't block registration)
-		if token, err := verifySvc.Create(user.ID); err == nil {
-			baseURL := cfg.BaseURL
-			if baseURL == "" {
-				baseURL = "http://localhost:8080"
-			}
-			_ = notifier.SendEmailVerification(user.Email, baseURL+"/verify-email?token="+token)
-		}
-
-		expiryHours := 24
-		if v, err := settingsSvc.Get("jwt_expiry_hours"); err == nil {
-			if n, err := strconv.Atoi(v); err == nil && n > 0 {
-				expiryHours = n
+			// Send verification email (best-effort — don't block registration).
+			if token, err := verifySvc.Create(user.ID); err == nil {
+				baseURL := cfg.BaseURL
+				if baseURL == "" {
+					baseURL = "http://localhost:8080"
+				}
+				_ = notifier.SendEmailVerification(user.Email, baseURL+"/verify-email?token="+token)
 			}
 		}
 
-		token, err := auth.GenerateToken(cfg.JWTSecret, user.ID, user.Email, expiryHours)
-		if err != nil {
-			jsonError(w, "failed to generate token", http.StatusInternalServerError)
-			return
-		}
-
-		if _, err := setSessionCookies(w, r, token, expiryHours); err != nil {
-			jsonError(w, "failed to set session cookies", http.StatusInternalServerError)
-			return
-		}
-
-		jsonResponse(w, http.StatusCreated, authResponse{
-			Token: token,
-			User:  toUserResponse(user, permLevel),
+		jsonResponse(w, http.StatusAccepted, map[string]string{
+			"message": "if this address can be registered, you'll receive a verification email",
 		})
 	}
 }

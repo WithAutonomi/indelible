@@ -70,6 +70,12 @@ describe('RegisterView', () => {
       first_name: 'Test',
       last_name: 'User',
     })
+    // Anti-enumeration: registration does not auto-log-in, so no /me fetch.
+    expect(mockApi.get).not.toHaveBeenCalled()
+    // The form is replaced by the neutral confirmation (PrimeVue components
+    // aren't registered in this mount, so assert state rather than slot text).
+    expect((wrapper.vm as any).submitted).toBe(true)
+    expect(wrapper.find('form').exists()).toBe(false)
   })
 
   it('shows error on registration failure', async () => {

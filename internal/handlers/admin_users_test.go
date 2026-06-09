@@ -33,13 +33,12 @@ func registerAndGetToken(t *testing.T, router http.Handler, email, password, fir
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
+	// Registration is anti-enumeration (V2-430): it returns a neutral 202 and no
+	// longer auto-logs-in, so obtain the token via a follow-up login. A 409 from
+	// an older path (or 202 for an already-registered user) is handled the same
+	// way — log in to get the token.
 	switch w.Code {
-	case http.StatusCreated:
-		var resp map[string]any
-		json.Unmarshal(w.Body.Bytes(), &resp)
-		return resp["token"].(string)
-	case http.StatusConflict:
-		// Pre-seeded user (bootstrap admin). Log in to obtain the token.
+	case http.StatusAccepted, http.StatusCreated, http.StatusConflict:
 		return loginAndGetToken(t, router, email, password)
 	default:
 		t.Fatalf("register %s: got %d, body: %s", email, w.Code, w.Body.String())
