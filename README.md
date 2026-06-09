@@ -182,7 +182,11 @@ curl -X POST /api/v2/tokens \
 |----------|-------------|---------|
 | `INDELIBLE_JWT_SECRET` | **Required.** Secret for JWT signing; **minimum 32 characters** (the server refuses to start below this). Generate with `openssl rand -hex 32` | -- |
 | `INDELIBLE_JWT_SECRET_PREVIOUS` | Comma-separated **verify-only** former JWT secrets, kept during a rotation so live sessions survive. New tokens always sign with `INDELIBLE_JWT_SECRET`; these only verify already-issued tokens until they expire. See [key-rotation guide](docs/guides/key-rotation.md#rotating-the-jwt-secret) | -- |
+| `INDELIBLE_JWT_SECRET_FILE` | Path to a file holding the JWT secret (Docker/K8s secrets); takes precedence over `INDELIBLE_JWT_SECRET` | -- |
 | `INDELIBLE_WALLET_ENCRYPTION_KEY` | **Required.** 64-char hex key for wallet encryption (AES-256-GCM) | -- |
+| `INDELIBLE_WALLET_ENCRYPTION_KEY_FILE` | Path to a file holding the wallet encryption key (Docker/K8s secrets); takes precedence over `INDELIBLE_WALLET_ENCRYPTION_KEY` | -- |
+| `INDELIBLE_WALLET_ENCRYPTION_KEY_PREVIOUS` | Comma-separated **decrypt-only** former wallet keys, so the running service can read rows not yet re-encrypted during a rotation. See [key-rotation guide](docs/guides/key-rotation.md#rotating-the-wallet-encryption-key) | -- |
+| `INDELIBLE_SECRETS_BACKEND` | Where key material is sourced from. `env` sources from env / config-file / `_FILE`. Other backends (Vault, cloud KMS) plug in behind the same provider seam | `env` |
 | `INDELIBLE_ADMIN_EMAIL` | Bootstrap admin email. Seeds the first admin on a fresh DB; the server refuses to start with no admin and no seed | -- |
 | `INDELIBLE_ADMIN_PASSWORD` | Bootstrap admin password (or use `_FILE`) | -- |
 | `INDELIBLE_ADMIN_PASSWORD_FILE` | Path to a file holding the bootstrap admin password (Docker/K8s secrets); takes precedence over `INDELIBLE_ADMIN_PASSWORD` | -- |

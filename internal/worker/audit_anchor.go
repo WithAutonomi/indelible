@@ -48,7 +48,7 @@ type AuditAnchorWorker struct {
 func NewAuditAnchorWorker(db *database.DB, cfg *config.Config) *AuditAnchorWorker {
 	return &AuditAnchorWorker{
 		logSvc:      services.NewLogService(db),
-		walletSvc:   services.NewWalletService(db, cfg.WalletEncryptionKey),
+		walletSvc:   services.NewWalletService(db, cfg.WalletKeyring()),
 		settingsSvc: services.NewSettingsService(db),
 		publisher:   antd.NewClient(cfg.AntdURL, antd.WithTimeout(0)),
 		cfg:         cfg,

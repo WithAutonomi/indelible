@@ -31,24 +31,21 @@ type Wallet struct {
 
 // WalletService handles wallet operations.
 type WalletService struct {
-	db            *database.DB
-	encryptionKey string // hex-encoded AES-256 key
+	db *database.DB
+	kr *crypto.Keyring // wallet/OIDC encryption keyring (active key + decrypt-only history)
 }
 
-// NewWalletService creates a new WalletService.
-func NewWalletService(db *database.DB, encryptionKey string) *WalletService {
-	return &WalletService{db: db, encryptionKey: encryptionKey}
+// NewWalletService creates a new WalletService. kr is the wallet-encryption
+// keyring from the secrets provider (typically cfg.WalletKeyring()).
+func NewWalletService(db *database.DB, kr *crypto.Keyring) *WalletService {
+	return &WalletService{db: db, kr: kr}
 }
 
 // Create adds a new wallet. If it's the first wallet, it becomes default.
 func (s *WalletService) Create(name, address, privateKey string) (*Wallet, error) {
 	// Encrypt the private key under a key-id-tagged envelope so the wallet key
 	// can be rotated later without bricking stored rows (V2-448).
-	kr, err := crypto.NewKeyring(s.encryptionKey)
-	if err != nil {
-		return nil, err
-	}
-	encryptedKey, err := kr.Encrypt(privateKey)
+	encryptedKey, err := s.kr.Encrypt(privateKey)
 	if err != nil {
 		return nil, err
 	}
@@ -170,11 +167,7 @@ func (s *WalletService) Delete(id int64) error {
 // DecryptKey decrypts and returns the wallet's private key. The keyring handles
 // both key-id-tagged envelopes and legacy (un-tagged) ciphertext.
 func (s *WalletService) DecryptKey(w *Wallet) (string, error) {
-	kr, err := crypto.NewKeyring(s.encryptionKey)
-	if err != nil {
-		return "", err
-	}
-	return kr.Decrypt(w.EncryptedKey)
+	return s.kr.Decrypt(w.EncryptedKey)
 }
 
 // UpdateBalance updates a wallet's payment and gas balances.

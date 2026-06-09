@@ -81,7 +81,7 @@ type OIDCLoginService struct {
 	providerSvc *OIDCProviderService
 	userSvc     *UserService
 	groupSvc    *GroupService
-	cookieKey   string // hex-encoded AES-256 key (same as wallet key); also keys the stored-secret keyring
+	kr          *crypto.Keyring // wallet/OIDC keyring: state-cookie AEAD + stored-secret decryption
 	now         func() time.Time
 }
 
@@ -89,20 +89,20 @@ type OIDCLoginService struct {
 // transparently handles both key-id-tagged envelopes (V2-448) and legacy
 // un-tagged ciphertext.
 func (s *OIDCLoginService) decryptProviderSecret(encrypted string) (string, error) {
-	kr, err := crypto.NewKeyring(s.cookieKey)
-	if err != nil {
-		return "", err
-	}
-	return kr.Decrypt(encrypted)
+	return s.kr.Decrypt(encrypted)
 }
 
-func NewOIDCLoginService(db *database.DB, providerSvc *OIDCProviderService, cookieKey string) *OIDCLoginService {
+// NewOIDCLoginService creates the login service. kr is the wallet-encryption
+// keyring (cfg.WalletKeyring()); it both AEAD-encrypts the state cookie and
+// decrypts stored provider secrets. kr may be nil for read-only callers that
+// only list identities.
+func NewOIDCLoginService(db *database.DB, providerSvc *OIDCProviderService, kr *crypto.Keyring) *OIDCLoginService {
 	return &OIDCLoginService{
 		db:          db,
 		providerSvc: providerSvc,
 		userSvc:     NewUserService(db),
 		groupSvc:    NewGroupService(db),
-		cookieKey:   cookieKey,
+		kr:          kr,
 		now:         time.Now,
 	}
 }
@@ -174,7 +174,7 @@ func (s *OIDCLoginService) BuildAuthorizeURL(ctx context.Context, providerID int
 		LinkToUserID: opts.LinkToUserID,
 		Exp:          s.now().Add(OIDCStateCookieTTL).Unix(),
 	}
-	cookieValue, err = encodeOIDCStateCookie(s.cookieKey, payload)
+	cookieValue, err = encodeOIDCStateCookie(s.kr.Primary(), payload)
 	if err != nil {
 		return "", "", err
 	}
@@ -188,7 +188,7 @@ func (s *OIDCLoginService) HandleCallback(ctx context.Context, cookieValue, quer
 	if cookieValue == "" {
 		return nil, ErrOIDCStateCookieMissing
 	}
-	payload, err := decodeOIDCStateCookie(s.cookieKey, cookieValue)
+	payload, err := decodeOIDCStateCookie(s.kr.Primary(), cookieValue)
 	if err != nil {
 		return nil, fmt.Errorf("decode state cookie: %w", err)
 	}

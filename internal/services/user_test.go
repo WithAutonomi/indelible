@@ -124,8 +124,8 @@ func TestUserSoftDelete_FreesEmailSlot(t *testing.T) {
 func TestUserSoftDelete_DropsOIDCIdentities(t *testing.T) {
 	db := setupTestDB(t)
 	svc := NewUserService(db)
-	providerSvc := NewOIDCProviderService(db, testCookieKey)
-	loginSvc := NewOIDCLoginService(db, providerSvc, testCookieKey)
+	providerSvc := NewOIDCProviderService(db, mustKR(t, testCookieKey))
+	loginSvc := NewOIDCLoginService(db, providerSvc, mustKR(t, testCookieKey))
 
 	provider, err := providerSvc.Create("okta", "Okta", "https://issuer.example.com", "cid", "cs", "openid,email,profile")
 	if err != nil {

@@ -11,7 +11,7 @@ func TestPaymentReconcileHelpers(t *testing.T) {
 	userSvc := NewUserService(db)
 	uploadSvc := NewUploadService(db)
 	txnSvc := NewTransactionService(db)
-	walletSvc := NewWalletService(db, "1111111111111111111111111111111111111111111111111111111111111111")
+	walletSvc := NewWalletService(db, mustKR(t, "1111111111111111111111111111111111111111111111111111111111111111"))
 
 	user := createTestUser(t, userSvc, "recon@test.local", "R", "R")
 	const tempPath = "/tmp/recon-test.bin"

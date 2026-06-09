@@ -55,8 +55,11 @@ func Authenticate(db *database.DB, cfg *config.Config) func(http.Handler) http.H
 				authSource = AuthSourceHeader
 			}
 
-			// Try JWT first
-			claims, err := auth.ValidateToken(cfg.JWTSecret, tokenStr, cfg.JWTSecretsPrevious...)
+			// Try JWT first. Secrets come from the provider keyring (V2-450):
+			// sign with the primary, accept any previous (verify-only) secret
+			// still inside its rotation window.
+			jwtKR := cfg.JWTKeyring()
+			claims, err := auth.ValidateToken(jwtKR.Primary(), tokenStr, jwtKR.Previous()...)
 			if err == nil {
 				// Verify user still exists and is active
 				user, err := userSvc.GetByID(claims.UserID)

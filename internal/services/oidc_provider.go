@@ -48,23 +48,22 @@ type OIDCProvider struct {
 
 // OIDCProviderService handles OIDC provider configuration.
 type OIDCProviderService struct {
-	db            *database.DB
-	encryptionKey string
+	db *database.DB
+	kr *crypto.Keyring // wallet/OIDC encryption keyring (client secrets share the wallet key)
 }
 
-// NewOIDCProviderService creates a new OIDCProviderService.
-func NewOIDCProviderService(db *database.DB, encryptionKey string) *OIDCProviderService {
-	return &OIDCProviderService{db: db, encryptionKey: encryptionKey}
+// NewOIDCProviderService creates a new OIDCProviderService. kr is the
+// wallet-encryption keyring from the secrets provider (cfg.WalletKeyring()).
+// kr may be nil for read-only callers (List/GetByID never touch it); only
+// Create and Update encrypt the client secret.
+func NewOIDCProviderService(db *database.DB, kr *crypto.Keyring) *OIDCProviderService {
+	return &OIDCProviderService{db: db, kr: kr}
 }
 
 // Create adds a new OIDC provider. The client secret is encrypted at rest.
 func (s *OIDCProviderService) Create(name, displayName, issuerURL, clientID, clientSecret, scopes string) (*OIDCProvider, error) {
 	// Key-id-tagged envelope so the secret survives a wallet/OIDC key rotation (V2-448).
-	kr, err := crypto.NewKeyring(s.encryptionKey)
-	if err != nil {
-		return nil, err
-	}
-	encryptedSecret, err := kr.Encrypt(clientSecret)
+	encryptedSecret, err := s.kr.Encrypt(clientSecret)
 	if err != nil {
 		return nil, err
 	}
@@ -127,11 +126,7 @@ func (s *OIDCProviderService) List() ([]*OIDCProvider, error) {
 // Update modifies an OIDC provider. If clientSecret is empty, the existing secret is kept.
 func (s *OIDCProviderService) Update(id int64, name, displayName, issuerURL, clientID, clientSecret, scopes string, isEnabled bool) (*OIDCProvider, error) {
 	if clientSecret != "" {
-		kr, err := crypto.NewKeyring(s.encryptionKey)
-		if err != nil {
-			return nil, err
-		}
-		encrypted, err := kr.Encrypt(clientSecret)
+		encrypted, err := s.kr.Encrypt(clientSecret)
 		if err != nil {
 			return nil, err
 		}

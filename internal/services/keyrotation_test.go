@@ -14,13 +14,13 @@ const (
 func TestRotateEncryptionKey_WalletAndOIDC(t *testing.T) {
 	db := setupTestDB(t)
 
-	oldWalletSvc := NewWalletService(db, rotOldKey)
+	oldWalletSvc := NewWalletService(db, mustKR(t, rotOldKey))
 	w, err := oldWalletSvc.Create("primary", "0xabc", "wallet-private-key")
 	if err != nil {
 		t.Fatalf("create wallet: %v", err)
 	}
 
-	oldOIDC := NewOIDCProviderService(db, rotOldKey)
+	oldOIDC := NewOIDCProviderService(db, mustKR(t, rotOldKey))
 	p, err := oldOIDC.Create("okta", "Okta", "https://issuer.example.com", "client-id", "oidc-client-secret", "")
 	if err != nil {
 		t.Fatalf("create oidc provider: %v", err)
@@ -51,13 +51,13 @@ func TestRotateEncryptionKey_WalletAndOIDC(t *testing.T) {
 	}
 
 	// Everything decrypts under the NEW key with the original plaintext.
-	newWalletSvc := NewWalletService(db, rotNewKey)
+	newWalletSvc := NewWalletService(db, mustKR(t, rotNewKey))
 	gotW, _ := newWalletSvc.GetByID(w.ID)
 	if pk, err := newWalletSvc.DecryptKey(gotW); err != nil || pk != "wallet-private-key" {
 		t.Errorf("wallet decrypt under new key: got %q err %v", pk, err)
 	}
 	newKR, _ := crypto.NewKeyring(rotNewKey)
-	gotP, _ := NewOIDCProviderService(db, rotNewKey).GetByID(p.ID)
+	gotP, _ := NewOIDCProviderService(db, mustKR(t, rotNewKey)).GetByID(p.ID)
 	if sec, err := newKR.Decrypt(gotP.EncryptedSecret); err != nil || sec != "oidc-client-secret" {
 		t.Errorf("oidc secret decrypt under new key: got %q err %v", sec, err)
 	}
@@ -85,7 +85,7 @@ func TestRotateEncryptionKey_WalletAndOIDC(t *testing.T) {
 
 func TestRotateEncryptionKey_IdempotentReRun(t *testing.T) {
 	db := setupTestDB(t)
-	oldWalletSvc := NewWalletService(db, rotOldKey)
+	oldWalletSvc := NewWalletService(db, mustKR(t, rotOldKey))
 	w, err := oldWalletSvc.Create("w", "0x1", "pk")
 	if err != nil {
 		t.Fatalf("create wallet: %v", err)
@@ -100,7 +100,7 @@ func TestRotateEncryptionKey_IdempotentReRun(t *testing.T) {
 		t.Fatalf("re-run rotate: %v", err)
 	}
 
-	newWalletSvc := NewWalletService(db, rotNewKey)
+	newWalletSvc := NewWalletService(db, mustKR(t, rotNewKey))
 	gotW, _ := newWalletSvc.GetByID(w.ID)
 	if pk, err := newWalletSvc.DecryptKey(gotW); err != nil || pk != "pk" {
 		t.Errorf("decrypt after re-run: got %q err %v", pk, err)

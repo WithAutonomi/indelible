@@ -8,6 +8,31 @@ This service has two independent rotations:
   rotate with an overlap window so live sessions survive (see
   [Rotating the JWT secret](#rotating-the-jwt-secret)).
 
+## Where secrets come from
+
+All key material is resolved through a **secrets provider** at startup. Each
+logical secret (the wallet/OIDC encryption key, the JWT signing secret) is held
+as a **keyring**: an active key for new operations plus verify/decrypt-only
+history for a rotation window.
+
+The default backend sources material from configuration, in precedence order:
+
+1. a `_FILE` env var pointing at a file (Docker / Kubernetes secrets) —
+   whitespace-trimmed,
+2. the inline env var,
+3. the value in `indelible.toml`.
+
+| Secret | Active | `_FILE` variant | History (verify/decrypt-only) |
+| --- | --- | --- | --- |
+| Wallet/OIDC key | `INDELIBLE_WALLET_ENCRYPTION_KEY` | `…_FILE` | `INDELIBLE_WALLET_ENCRYPTION_KEY_PREVIOUS` (comma-separated) |
+| JWT secret | `INDELIBLE_JWT_SECRET` | `…_FILE` | `INDELIBLE_JWT_SECRET_PREVIOUS` (comma-separated) |
+
+`INDELIBLE_SECRETS_BACKEND` selects the backend; it defaults to `env` (the
+sourcing above). Other backends (HashiCorp Vault, a cloud KMS / secret manager)
+plug in behind the same provider interface without changing how the application
+reads secrets — setting it to anything other than `env` is rejected until such a
+backend ships.
+
 ## Rotating the wallet encryption key
 
 `INDELIBLE_WALLET_ENCRYPTION_KEY` is the AES-256 key that encrypts two kinds of
@@ -83,6 +108,12 @@ read decrypts the key) and a test SSO login both confirm the rotation took.
   the rotation.
 - If `--old` doesn't match the key the rows were actually encrypted under,
   `rotate-keys` fails loudly (per-row decrypt error) rather than corrupting data.
+- **Decrypt-only window for the running service:** set
+  `INDELIBLE_WALLET_ENCRYPTION_KEY_PREVIOUS` (comma-separated former keys) so a
+  running service can still decrypt rows that haven't been re-encrypted yet —
+  useful if you must start before `rotate-keys` finishes, or after an
+  interrupted run. New writes always use the active key; drop the previous entry
+  once `rotate-keys` has re-encrypted every row.
 
 ## Rotating the JWT secret
 
