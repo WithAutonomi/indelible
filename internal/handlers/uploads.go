@@ -718,9 +718,13 @@ func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 		auditEvent(r, logSvc, "file_downloaded", "info", &userID,
 			fmt.Sprintf("uuid=%s filename=%s visibility=%s", upload.UUID, upload.OriginalFilename, upload.Visibility))
 
-		// Stream the file back
+		// Stream the file back. Content-Disposition: attachment already forces a
+		// download (no inline render); X-Content-Type-Options: nosniff stops the
+		// browser from MIME-sniffing the bytes into an executable type, closing
+		// the stored-XSS-on-open vector if a stored Content-Type is risky (V2-433 A3.6).
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, upload.OriginalFilename))
 		w.Header().Set("Content-Type", upload.ContentType)
+		w.Header().Set("X-Content-Type-Options", "nosniff")
 		http.ServeFile(w, r, tempPath)
 	}
 }

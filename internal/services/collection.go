@@ -86,18 +86,26 @@ func (s *CollectionService) List(userID int64, parentID *int64) ([]*Collection, 
 	var rows *sql.Rows
 	var err error
 
+	// V2-433 (A3.4): aggregate file_count with a single LEFT JOIN + GROUP BY
+	// instead of a per-row correlated subquery.
 	if parentID != nil {
 		rows, err = s.db.Query(
 			`SELECT c.id, c.name, c.description, c.parent_id, c.created_by, c.created_at, c.updated_at,
-			        (SELECT COUNT(*) FROM collection_files cf WHERE cf.collection_id = c.id) as file_count
-			 FROM collections c WHERE c.created_by = ? AND c.parent_id = ? ORDER BY c.name ASC`,
+			        COUNT(cf.upload_id) AS file_count
+			 FROM collections c LEFT JOIN collection_files cf ON cf.collection_id = c.id
+			 WHERE c.created_by = ? AND c.parent_id = ?
+			 GROUP BY c.id, c.name, c.description, c.parent_id, c.created_by, c.created_at, c.updated_at
+			 ORDER BY c.name ASC`,
 			userID, *parentID,
 		)
 	} else {
 		rows, err = s.db.Query(
 			`SELECT c.id, c.name, c.description, c.parent_id, c.created_by, c.created_at, c.updated_at,
-			        (SELECT COUNT(*) FROM collection_files cf WHERE cf.collection_id = c.id) as file_count
-			 FROM collections c WHERE c.created_by = ? AND c.parent_id IS NULL ORDER BY c.name ASC`,
+			        COUNT(cf.upload_id) AS file_count
+			 FROM collections c LEFT JOIN collection_files cf ON cf.collection_id = c.id
+			 WHERE c.created_by = ? AND c.parent_id IS NULL
+			 GROUP BY c.id, c.name, c.description, c.parent_id, c.created_by, c.created_at, c.updated_at
+			 ORDER BY c.name ASC`,
 			userID,
 		)
 	}

@@ -44,13 +44,14 @@ func Open(dbURL string) (*DB, error) {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}
 
-	// SQLite pragmas for performance
+	// SQLite pragmas for performance. (foreign_keys is set per-connection via the
+	// DSN in parseURL — see the note there; a one-shot Exec would only cover one
+	// pooled connection.)
 	if driver == "sqlite" {
 		if _, err := db.Exec(`
 			PRAGMA journal_mode=WAL;
 			PRAGMA busy_timeout=5000;
 			PRAGMA synchronous=NORMAL;
-			PRAGMA foreign_keys=ON;
 		`); err != nil {
 			db.Close()
 			return nil, sqliteOpenError(err, dsn)
@@ -129,6 +130,15 @@ func parseURL(dbURL string) (driver, dsn string, err error) {
 			id := memDBCounter.Add(1)
 			dsn = fmt.Sprintf("file:memdb%d?mode=memory&cache=shared", id)
 		}
+		// foreign_keys is a *connection-level* pragma in SQLite — setting it once
+		// after Open only covers a single pooled connection, leaving ON DELETE
+		// CASCADE / FK enforcement unreliable on the rest. modernc.org/sqlite
+		// applies _pragma params on every connection it opens, so set it here.
+		sep := "?"
+		if strings.Contains(dsn, "?") {
+			sep = "&"
+		}
+		dsn += sep + "_pragma=foreign_keys(1)"
 		return "sqlite", dsn, nil
 	case strings.HasPrefix(dbURL, "postgres://"), strings.HasPrefix(dbURL, "postgresql://"):
 		return "postgres", dbURL, nil
