@@ -181,6 +181,7 @@ curl -X POST /api/v2/tokens \
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `INDELIBLE_JWT_SECRET` | **Required.** Secret for JWT signing; **minimum 32 characters** (the server refuses to start below this). Generate with `openssl rand -hex 32` | -- |
+| `INDELIBLE_JWT_SECRET_PREVIOUS` | Comma-separated **verify-only** former JWT secrets, kept during a rotation so live sessions survive. New tokens always sign with `INDELIBLE_JWT_SECRET`; these only verify already-issued tokens until they expire. See [key-rotation guide](docs/guides/key-rotation.md#rotating-the-jwt-secret) | -- |
 | `INDELIBLE_WALLET_ENCRYPTION_KEY` | **Required.** 64-char hex key for wallet encryption (AES-256-GCM) | -- |
 | `INDELIBLE_ADMIN_EMAIL` | Bootstrap admin email. Seeds the first admin on a fresh DB; the server refuses to start with no admin and no seed | -- |
 | `INDELIBLE_ADMIN_PASSWORD` | Bootstrap admin password (or use `_FILE`) | -- |

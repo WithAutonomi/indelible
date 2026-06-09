@@ -1,4 +1,14 @@
-# Rotating the encryption key
+# Rotating keys and secrets
+
+This service has two independent rotations:
+
+- **the wallet encryption key** (`INDELIBLE_WALLET_ENCRYPTION_KEY`) — encrypts
+  secrets at rest; rotate with the offline `rotate-keys` command (below).
+- **the JWT signing secret** (`INDELIBLE_JWT_SECRET`) — signs session tokens;
+  rotate with an overlap window so live sessions survive (see
+  [Rotating the JWT secret](#rotating-the-jwt-secret)).
+
+## Rotating the wallet encryption key
 
 `INDELIBLE_WALLET_ENCRYPTION_KEY` is the AES-256 key that encrypts two kinds of
 secret at rest:
@@ -73,3 +83,51 @@ read decrypts the key) and a test SSO login both confirm the rotation took.
   the rotation.
 - If `--old` doesn't match the key the rows were actually encrypted under,
   `rotate-keys` fails loudly (per-row decrypt error) rather than corrupting data.
+
+## Rotating the JWT secret
+
+`INDELIBLE_JWT_SECRET` signs every session token (HS256). Changing it outright
+**invalidates every live session at once** — everyone is logged out — because a
+token is only valid if it verifies against the current secret.
+
+To rotate without logging everyone out, keep the old secret as a **verify-only**
+secret for one token lifetime. New tokens are always signed with the new
+(primary) secret; the old secret only verifies tokens already issued under it,
+until they expire.
+
+- `INDELIBLE_JWT_SECRET` — the primary; **all new tokens are signed with this**.
+- `INDELIBLE_JWT_SECRET_PREVIOUS` — comma-separated **verify-only** former
+  secrets. A token validates if it verifies against the primary **or** any of
+  these. Each must clear the same 32-character floor as the primary.
+
+The **overlap window** is one token lifetime — the token TTL, which is the
+login's "remember me" choice (`expiryHours`, max 24h). After that window every
+token in circulation has been re-issued under the new primary, so the old secret
+can be dropped.
+
+### Procedure
+
+```bash
+# 0. Generate the new secret.
+NEW=$(openssl rand -hex 32)
+
+# 1. Make the current secret verify-only and the new one primary, then deploy.
+#    (No downtime, no DB step — JWT secrets aren't stored anywhere.)
+#    e.g. in docker-compose.yml / the systemd unit / your secrets manager:
+INDELIBLE_JWT_SECRET="$NEW"
+INDELIBLE_JWT_SECRET_PREVIOUS="<the secret that was just primary>"
+#    (Already mid-rotation? Prepend, keep prior entries: "<prev1>,<prev2>".)
+
+# 2. Restart the service so it picks up the new env.
+docker compose up -d indelible        # or: systemctl restart indelible
+
+# 3. Wait out one token lifetime (up to 24h — the max expiryHours).
+#    Existing sessions keep working; new logins use the new secret.
+
+# 4. Drop the old secret: remove INDELIBLE_JWT_SECRET_PREVIOUS (or remove just
+#    the expired entry), then restart again. Rotation complete.
+```
+
+If a secret leaks and you must invalidate sessions immediately, skip the overlap:
+set the new secret as primary with **no** previous list. Every existing token
+stops validating at once (everyone re-authenticates) — which is the point.

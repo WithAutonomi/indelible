@@ -81,6 +81,35 @@ func TestLoad_JWTSecretAtFloorAccepted(t *testing.T) {
 	}
 }
 
+func TestLoad_JWTSecretsPrevious(t *testing.T) {
+	setRequiredSecrets(t)
+	// Comma-separated, with whitespace and a trailing empty entry to trim.
+	t.Setenv("INDELIBLE_JWT_SECRET_PREVIOUS", " old-secret-key-at-least-32-chars-long , another-old-key-at-least-32-chars-x ,")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := []string{"old-secret-key-at-least-32-chars-long", "another-old-key-at-least-32-chars-x"}
+	if len(cfg.JWTSecretsPrevious) != len(want) {
+		t.Fatalf("JWTSecretsPrevious = %v, want %v", cfg.JWTSecretsPrevious, want)
+	}
+	for i, s := range want {
+		if cfg.JWTSecretsPrevious[i] != s {
+			t.Errorf("JWTSecretsPrevious[%d] = %q, want %q", i, cfg.JWTSecretsPrevious[i], s)
+		}
+	}
+}
+
+func TestLoad_JWTSecretPreviousTooShort(t *testing.T) {
+	setRequiredSecrets(t)
+	t.Setenv("INDELIBLE_JWT_SECRET_PREVIOUS", "short-old-secret") // below the 32-byte floor
+
+	if _, err := Load(""); err == nil {
+		t.Fatal("expected Load to fail when a previous jwt secret is shorter than 32 bytes")
+	}
+}
+
 func TestApplyNetworkPreset_LocalAliasesCustom(t *testing.T) {
 	// "local" is antd's term for a devnet; Indelible should accept it as an
 	// alias for "custom" rather than rejecting it, and fold it to the canonical
