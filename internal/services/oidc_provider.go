@@ -59,7 +59,12 @@ func NewOIDCProviderService(db *database.DB, encryptionKey string) *OIDCProvider
 
 // Create adds a new OIDC provider. The client secret is encrypted at rest.
 func (s *OIDCProviderService) Create(name, displayName, issuerURL, clientID, clientSecret, scopes string) (*OIDCProvider, error) {
-	encryptedSecret, err := crypto.Encrypt(s.encryptionKey, clientSecret)
+	// Key-id-tagged envelope so the secret survives a wallet/OIDC key rotation (V2-448).
+	kr, err := crypto.NewKeyring(s.encryptionKey)
+	if err != nil {
+		return nil, err
+	}
+	encryptedSecret, err := kr.Encrypt(clientSecret)
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +127,11 @@ func (s *OIDCProviderService) List() ([]*OIDCProvider, error) {
 // Update modifies an OIDC provider. If clientSecret is empty, the existing secret is kept.
 func (s *OIDCProviderService) Update(id int64, name, displayName, issuerURL, clientID, clientSecret, scopes string, isEnabled bool) (*OIDCProvider, error) {
 	if clientSecret != "" {
-		encrypted, err := crypto.Encrypt(s.encryptionKey, clientSecret)
+		kr, err := crypto.NewKeyring(s.encryptionKey)
+		if err != nil {
+			return nil, err
+		}
+		encrypted, err := kr.Encrypt(clientSecret)
 		if err != nil {
 			return nil, err
 		}

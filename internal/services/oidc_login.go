@@ -81,8 +81,19 @@ type OIDCLoginService struct {
 	providerSvc *OIDCProviderService
 	userSvc     *UserService
 	groupSvc    *GroupService
-	cookieKey   string // hex-encoded AES-256 key (same as wallet key)
+	cookieKey   string // hex-encoded AES-256 key (same as wallet key); also keys the stored-secret keyring
 	now         func() time.Time
+}
+
+// decryptProviderSecret decrypts a provider's stored client secret. The keyring
+// transparently handles both key-id-tagged envelopes (V2-448) and legacy
+// un-tagged ciphertext.
+func (s *OIDCLoginService) decryptProviderSecret(encrypted string) (string, error) {
+	kr, err := crypto.NewKeyring(s.cookieKey)
+	if err != nil {
+		return "", err
+	}
+	return kr.Decrypt(encrypted)
 }
 
 func NewOIDCLoginService(db *database.DB, providerSvc *OIDCProviderService, cookieKey string) *OIDCLoginService {
@@ -125,7 +136,7 @@ func (s *OIDCLoginService) BuildAuthorizeURL(ctx context.Context, providerID int
 		return "", "", fmt.Errorf("oidc discovery: %w", err)
 	}
 
-	secret, err := crypto.Decrypt(s.cookieKey, provider.EncryptedSecret)
+	secret, err := s.decryptProviderSecret(provider.EncryptedSecret)
 	if err != nil {
 		return "", "", fmt.Errorf("decrypt provider secret: %w", err)
 	}
@@ -202,7 +213,7 @@ func (s *OIDCLoginService) HandleCallback(ctx context.Context, cookieValue, quer
 	if err != nil {
 		return nil, fmt.Errorf("oidc discovery: %w", err)
 	}
-	secret, err := crypto.Decrypt(s.cookieKey, provider.EncryptedSecret)
+	secret, err := s.decryptProviderSecret(provider.EncryptedSecret)
 	if err != nil {
 		return nil, fmt.Errorf("decrypt provider secret: %w", err)
 	}
