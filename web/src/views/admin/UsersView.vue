@@ -33,9 +33,30 @@ const saving = ref(false)
 // endpoints; this surfaces what the list response already carries.
 const detailVisible = ref(false)
 const detailUser = ref<User | null>(null)
-function openDetail(u: User) {
+
+// Related content loaded lazily when the drawer opens (groups/tokens/quota/SSO
+// aren't in the list response). Each section degrades to its own empty state.
+interface UserDetails {
+  groups: { id: number; name: string; permission_level: string }[]
+  tokens: { uuid: string; name: string; last_used_at?: string | null; revoked_at?: string | null }[]
+  quota: { max_bytes: number; used_bytes: number; used_pct: number } | null
+  identities: { id: number; provider_id: number; provider_name: string; subject: string }[]
+}
+const detailData = ref<UserDetails | null>(null)
+const detailLoading = ref(false)
+
+async function openDetail(u: User) {
   detailUser.value = u
   detailVisible.value = true
+  detailData.value = null
+  detailLoading.value = true
+  try {
+    detailData.value = (await api.get(`/api/v2/admin/users/${u.id}/details`)).data
+  } catch {
+    detailData.value = null
+  } finally {
+    detailLoading.value = false
+  }
 }
 // Whole-row click opens the details drawer. The Actions cell stops propagation
 // (@click.stop on its buttons) so edit/delete never also open the drawer.
@@ -387,7 +408,63 @@ onMounted(fetchUsers)
           </dl>
         </section>
 
-        <!-- Related content (groups, API tokens, quota usage) coming in a follow-up. -->
+        <!-- Related content (loaded lazily on open). -->
+        <div v-if="detailLoading" class="flex items-center gap-2 text-xs text-surface-400">
+          <i class="pi pi-spin pi-spinner"></i> Loading related content…
+        </div>
+        <template v-else>
+          <section>
+            <h3 class="text-xs font-semibold uppercase text-surface-400 mb-2">Groups</h3>
+            <div v-if="detailData?.groups?.length" class="flex flex-wrap gap-1">
+              <Tag v-for="g in detailData.groups" :key="g.id" :value="`${g.name} · ${g.permission_level}`"
+                :severity="permissionSeverity(g.permission_level)" />
+            </div>
+            <span v-else class="text-surface-400">No group memberships</span>
+          </section>
+
+          <section>
+            <h3 class="text-xs font-semibold uppercase text-surface-400 mb-2">API tokens</h3>
+            <ul v-if="detailData?.tokens?.length" class="flex flex-col gap-2">
+              <li v-for="t in detailData.tokens" :key="t.uuid" class="flex justify-between gap-3 items-center">
+                <span class="min-w-0">
+                  <span class="truncate block">{{ t.name }}</span>
+                  <span class="text-xs text-surface-400">{{ t.last_used_at ? `Last used ${fmtDateTime(t.last_used_at)}` : 'Never used' }}</span>
+                </span>
+                <Tag :value="t.revoked_at ? 'Revoked' : 'Active'" :severity="t.revoked_at ? 'danger' : 'success'" />
+              </li>
+            </ul>
+            <span v-else class="text-surface-400">No API tokens</span>
+          </section>
+
+          <section>
+            <h3 class="text-xs font-semibold uppercase text-surface-400 mb-2">Storage quota</h3>
+            <template v-if="detailData?.quota">
+              <div class="flex justify-between text-sm mb-1.5">
+                <span class="text-surface-500">Used</span>
+                <span class="text-surface-700">
+                  {{ formatBytes(detailData.quota.used_bytes) }} / {{ formatBytes(detailData.quota.max_bytes) }}
+                  ({{ detailData.quota.used_pct.toFixed(0) }}%)
+                </span>
+              </div>
+              <div class="w-full h-2 rounded-full bg-surface-200 overflow-hidden">
+                <div class="h-full rounded-full bg-primary" :style="{ width: Math.min(100, detailData.quota.used_pct) + '%' }"></div>
+              </div>
+            </template>
+            <span v-else class="text-surface-400">No per-user quota (uses system default)</span>
+          </section>
+
+          <section>
+            <h3 class="text-xs font-semibold uppercase text-surface-400 mb-2">SSO identities</h3>
+            <ul v-if="detailData?.identities?.length" class="flex flex-col gap-2">
+              <li v-for="idn in detailData.identities" :key="idn.id" class="flex justify-between gap-3">
+                <span class="text-surface-700">{{ idn.provider_name || `Provider ${idn.provider_id}` }}</span>
+                <span class="font-mono text-xs text-surface-500 truncate" v-tooltip.left="idn.subject">{{ idn.subject }}</span>
+              </li>
+            </ul>
+            <span v-else class="text-surface-400">No linked SSO identities</span>
+          </section>
+        </template>
+
         <div class="pt-3 border-t border-surface-200">
           <Button label="Edit user" icon="pi pi-pencil" size="small" outlined @click="editFromDetail" />
         </div>

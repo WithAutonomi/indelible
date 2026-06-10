@@ -2898,6 +2898,58 @@ const docTemplate = `{
                 }
             }
         },
+        "/admin/users/{id}/details": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Aggregated detail for the admin user drawer: group memberships, the user's API tokens (no secrets), per-user storage quota usage (if set), and linked SSO/OIDC identities.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin: Users"
+                ],
+                "summary": "Get a user's related content",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "User ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_handlers.adminUserDetailsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/admin/users/{id}/permissions": {
             "put": {
                 "security": [
@@ -6209,6 +6261,60 @@ const docTemplate = `{
             "properties": {
                 "require_email_verified": {
                     "type": "boolean"
+                }
+            }
+        },
+        "internal_handlers.adminUserDetailsResponse": {
+            "type": "object",
+            "properties": {
+                "groups": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_handlers.adminUserGroupMembership"
+                    }
+                },
+                "identities": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_handlers.oidcIdentityResponse"
+                    }
+                },
+                "quota": {
+                    "$ref": "#/definitions/internal_handlers.adminUserQuota"
+                },
+                "tokens": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_handlers.tokenResponse"
+                    }
+                }
+            }
+        },
+        "internal_handlers.adminUserGroupMembership": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "permission_level": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_handlers.adminUserQuota": {
+            "type": "object",
+            "properties": {
+                "max_bytes": {
+                    "type": "integer"
+                },
+                "used_bytes": {
+                    "type": "integer"
+                },
+                "used_pct": {
+                    "type": "number"
                 }
             }
         },

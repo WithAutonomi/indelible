@@ -42,6 +42,33 @@ func NewGroupService(db *database.DB) *GroupService {
 	return &GroupService{db: db}
 }
 
+// ListByUser returns the groups a user belongs to, each carrying its own
+// permission level. Used by the admin user-details view.
+func (s *GroupService) ListByUser(userID int64) ([]*Group, error) {
+	rows, err := s.db.Query(
+		`SELECT g.id, g.name, g.description, g.permission_level, g.is_active, g.external_id, g.created_at, g.updated_at
+		   FROM groups g
+		   JOIN group_members gm ON gm.group_id = g.id
+		  WHERE gm.user_id = ?
+		  ORDER BY g.name`,
+		userID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	groups := []*Group{}
+	for rows.Next() {
+		g := &Group{}
+		if err := rows.Scan(&g.ID, &g.Name, &g.Description, &g.PermissionLevel, &g.IsActive, &g.ExternalID, &g.CreatedAt, &g.UpdatedAt); err != nil {
+			return nil, err
+		}
+		groups = append(groups, g)
+	}
+	return groups, rows.Err()
+}
+
 func (s *GroupService) Create(name, description, permissionLevel string) (*Group, error) {
 	var id int64
 	err := s.db.QueryRow(

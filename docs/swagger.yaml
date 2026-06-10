@@ -224,6 +224,41 @@ definitions:
       require_email_verified:
         type: boolean
     type: object
+  internal_handlers.adminUserDetailsResponse:
+    properties:
+      groups:
+        items:
+          $ref: '#/definitions/internal_handlers.adminUserGroupMembership'
+        type: array
+      identities:
+        items:
+          $ref: '#/definitions/internal_handlers.oidcIdentityResponse'
+        type: array
+      quota:
+        $ref: '#/definitions/internal_handlers.adminUserQuota'
+      tokens:
+        items:
+          $ref: '#/definitions/internal_handlers.tokenResponse'
+        type: array
+    type: object
+  internal_handlers.adminUserGroupMembership:
+    properties:
+      id:
+        type: integer
+      name:
+        type: string
+      permission_level:
+        type: string
+    type: object
+  internal_handlers.adminUserQuota:
+    properties:
+      max_bytes:
+        type: integer
+      used_bytes:
+        type: integer
+      used_pct:
+        type: number
+    type: object
   internal_handlers.adminUserResponse:
     properties:
       allowed_file_types:
@@ -2638,6 +2673,41 @@ paths:
       security:
       - BearerAuth: []
       summary: Update a user
+      tags:
+      - 'Admin: Users'
+  /admin/users/{id}/details:
+    get:
+      description: 'Aggregated detail for the admin user drawer: group memberships,
+        the user''s API tokens (no secrets), per-user storage quota usage (if set),
+        and linked SSO/OIDC identities.'
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_handlers.adminUserDetailsResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get a user's related content
       tags:
       - 'Admin: Users'
   /admin/users/{id}/permissions:
