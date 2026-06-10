@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
+import { useToast } from 'primevue/usetoast'
 import { api } from '../../api/client'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
@@ -12,6 +13,7 @@ import Card from 'primevue/card'
 import { presetRange, PRESET_OPTIONS, type DatePreset } from '../../composables/useDateRangePresets'
 
 const route = useRoute()
+const toast = useToast()
 
 type Tx = {
   id: number
@@ -147,6 +149,15 @@ function truncateHash(h: string | null): string {
   return h.slice(0, 8) + '…' + h.slice(-6)
 }
 
+async function copyHash(h: string) {
+  try {
+    await navigator.clipboard.writeText(h)
+    toast.add({ severity: 'success', summary: 'Copied', detail: 'Transaction hash copied', life: 2000 })
+  } catch {
+    toast.add({ severity: 'warn', summary: 'Copy failed', detail: 'Select and copy manually', life: 3000 })
+  }
+}
+
 onMounted(async () => {
   await fetchWallets()
   // Deep-link from the wallet drawer: /admin/transactions?wallet=<id>
@@ -244,7 +255,11 @@ onMounted(async () => {
           </Column>
           <Column field="tx_hash" header="Tx Hash">
             <template #body="{ data }">
-              <code v-if="data.tx_hash" class="text-xs text-surface-400" :title="data.tx_hash">{{ truncateHash(data.tx_hash) }}</code>
+              <span v-if="data.tx_hash" class="inline-flex items-center gap-1">
+                <code class="text-xs text-surface-400" :title="data.tx_hash">{{ truncateHash(data.tx_hash) }}</code>
+                <Button icon="pi pi-copy" text rounded size="small" severity="secondary"
+                  aria-label="Copy transaction hash" v-tooltip.top="'Copy full hash'" @click="copyHash(data.tx_hash)" />
+              </span>
               <span v-else class="text-xs text-surface-300">-</span>
             </template>
           </Column>
