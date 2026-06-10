@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useConfirm } from 'primevue/useconfirm'
 import { useToast } from 'primevue/usetoast'
 import { api } from '../../api/client'
@@ -22,6 +22,7 @@ import DatePicker from 'primevue/datepicker'
 import { presetRange, PRESET_OPTIONS, type DatePreset } from '../../composables/useDateRangePresets'
 
 const auth = useAuthStore()
+const route = useRoute()
 const router = useRouter()
 const confirm = useConfirm()
 const toast = useToast()
@@ -613,9 +614,36 @@ function onSort(event: any) {
   fetchUploads()
 }
 
+// V2-459: a global-search result can deep-link here. ?focus=<uuid> opens that
+// file's detail drawer (fetched directly, so it works even when the file isn't
+// on the current page); ?tagKey/?tagValue pre-applies the tag filter.
+async function openFocused(uuid: string) {
+  try {
+    const u = (await api.get(`/api/v2/uploads/${uuid}`)).data
+    if (u && u.uuid) openDetail(u)
+  } catch {
+    // file may have been deleted or isn't visible — leave the list as-is.
+  }
+}
+
 onMounted(() => {
-  fetchUploads()
+  const tagKeyQ = route.query.tagKey as string | undefined
+  const tagValueQ = route.query.tagValue as string | undefined
+  if (tagKeyQ && tagValueQ) {
+    tagKey.value = tagKeyQ
+    tagValue.value = tagValueQ
+    searchByTags()
+  } else {
+    fetchUploads()
+  }
   checkWalletStatus()
+  if (route.query.focus) openFocused(route.query.focus as string)
+})
+
+// Selecting another result while already on this page only changes the query —
+// the component stays mounted, so react to focus changes here too.
+watch(() => route.query.focus, (f, old) => {
+  if (f && f !== old) openFocused(f as string)
 })
 </script>
 
