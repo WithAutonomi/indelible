@@ -511,27 +511,46 @@ func TestSecondUserGetsReadPermission(t *testing.T) {
 func TestHealthEndpoint(t *testing.T) {
 	router := setupTestRouter(t)
 
+	// Unauthenticated: thin public liveness only (V2-485). status/database/antd
+	// for the 200/503 signal monitors rely on — and NONE of the recon-grade
+	// detail (version, antd_url, queue depth, notifier, antd_* diagnostics).
 	req := httptest.NewRequest("GET", "/health", nil)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
-
 	if w.Code != http.StatusOK {
 		t.Errorf("health: got %d, want 200", w.Code)
 	}
-
-	var resp map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+	var pub map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &pub); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
-	// Indelible's own version is always reported, even without a managed antd.
-	if _, ok := resp["version"]; !ok {
-		t.Errorf("expected version field in /health response, got %v", resp)
+	if pub["status"] == nil || pub["database"] == nil {
+		t.Errorf("public /health must keep status/database, got %v", pub)
 	}
-	// With nil AntdInfoProvider, antd_* diagnostic fields stay unset rather
-	// than emitting confusing zero values.
+	for _, k := range []string{"version", "antd_url", "queued", "processing", "notifier", "antd_version"} {
+		if _, ok := pub[k]; ok {
+			t.Errorf("unauthenticated /health must not expose %q, got %v", k, pub[k])
+		}
+	}
+
+	// Authenticated admin: gets the full diagnostics. Indelible's own version is
+	// always reported; with a nil AntdInfoProvider and no reachable antd the
+	// antd_* fields stay unset rather than emitting confusing zero values.
+	adminToken := registerAndGetToken(t, router, seedAdminEmail, seedAdminPassword, "Admin", "User")
+	req = httptest.NewRequest("GET", "/health", nil)
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	var adm map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &adm); err != nil {
+		t.Fatalf("decode admin body: %v", err)
+	}
+	if _, ok := adm["version"]; !ok {
+		t.Errorf("admin /health should include version, got %v", adm)
+	}
 	for _, k := range []string{"antd_version", "antd_evm_network", "antd_uptime_seconds"} {
-		if _, ok := resp[k]; ok {
-			t.Errorf("unmanaged antd should leave %q unset, got %v", k, resp[k])
+		if _, ok := adm[k]; ok {
+			t.Errorf("unmanaged antd should leave %q unset, got %v", k, adm[k])
 		}
 	}
 }
@@ -542,8 +561,13 @@ func TestHealthEndpointSurfacesAntdInfo(t *testing.T) {
 		AntdURL:             "http://localhost:8082",
 		JWTSecret:           "test-secret-for-jwt-signing-1234567890",
 		WalletEncryptionKey: "0000000000000000000000000000000000000000000000000000000000000000",
+		AdminEmail:          seedAdminEmail,
+		AdminPassword:       seedAdminPassword,
 	}
 	db := dbtest.OpenDB(t)
+	if _, err := services.SeedAdmin(db, cfg); err != nil {
+		t.Fatalf("seed admin: %v", err)
+	}
 
 	provider := fakeAntdInfo{h: &antd.HealthStatus{
 		OK:                  true,
@@ -557,12 +581,28 @@ func TestHealthEndpointSurfacesAntdInfo(t *testing.T) {
 	}}
 	router := handlers.NewRouter(cfg, db, provider)
 
+	// The antd diagnostics are admin-only (V2-485) — an unauthenticated probe
+	// gets the thin response with no antd_* fields, even in managed mode.
 	req := httptest.NewRequest("GET", "/health", nil)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
-
 	if w.Code != http.StatusOK {
 		t.Fatalf("health: got %d, want 200", w.Code)
+	}
+	var pub map[string]any
+	json.Unmarshal(w.Body.Bytes(), &pub)
+	if _, ok := pub["antd_version"]; ok {
+		t.Errorf("unauthenticated /health must not expose antd_version, got %v", pub["antd_version"])
+	}
+
+	// An authenticated admin sees the full managed-mode snapshot.
+	adminToken := registerAndGetToken(t, router, seedAdminEmail, seedAdminPassword, "Admin", "User")
+	req = httptest.NewRequest("GET", "/health", nil)
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("admin health: got %d, want 200", w.Code)
 	}
 	var resp map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {

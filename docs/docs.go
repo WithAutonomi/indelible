@@ -4658,7 +4658,7 @@ const docTemplate = `{
         },
         "/health": {
             "get": {
-                "description": "Returns system health status including database, antd, and queue",
+                "description": "Public liveness (status/database/antd + 200/503). Full diagnostics (version, antd_url, queue depth, antd_* network/build/payment detail) are returned only to an authenticated admin.",
                 "produces": [
                     "application/json"
                 ],
