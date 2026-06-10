@@ -136,6 +136,43 @@ definitions:
       indelible:
         $ref: '#/definitions/github_com_WithAutonomi_indelible_internal_services.ComponentVersion'
     type: object
+  internal_handlers.StorageInfo:
+    properties:
+      available:
+        description: false when disk figures couldn't be read
+        type: boolean
+      data_dir:
+        description: configured data directory path
+        type: string
+      free_bytes:
+        description: bytes free on that filesystem
+        type: integer
+      quota:
+        allOf:
+        - $ref: '#/definitions/internal_handlers.StorageQuota'
+        description: present only when a system storage quota is set
+      total_bytes:
+        description: capacity of the backing filesystem
+        type: integer
+      used_bytes:
+        description: bytes in use on that filesystem
+        type: integer
+      used_pct:
+        description: used / total * 100
+        type: number
+      volume:
+        description: drive letter on Windows (e.g. "C:"), empty on Unix
+        type: string
+    type: object
+  internal_handlers.StorageQuota:
+    properties:
+      max_bytes:
+        type: integer
+      used_bytes:
+        type: integer
+      used_pct:
+        type: number
+    type: object
   internal_handlers.addMemberRequest:
     properties:
       user_id:
@@ -2271,6 +2308,23 @@ paths:
       summary: Import settings
       tags:
       - 'Admin: Settings'
+  /admin/storage:
+    get:
+      description: Disk usage of the data directory (used/free/total bytes + percent)
+        and, when a system-wide storage quota is configured, used-vs-quota. Degrades
+        gracefully when disk figures can't be read.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_handlers.StorageInfo'
+      security:
+      - BearerAuth: []
+      summary: Storage usage
+      tags:
+      - 'Admin: System'
   /admin/tokens:
     get:
       description: Return a paginated list of all API tokens across all users
