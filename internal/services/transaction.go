@@ -101,3 +101,57 @@ func (s *TransactionService) ListByWallet(walletID int64, limit, offset int) ([]
 	}
 	return txns, total, rows.Err()
 }
+
+// List returns transactions across all wallets, newest first, with optional
+// filters: a specific wallet, a tx type, and a created_at range. Powers the
+// dedicated Transactions page. The date format mirrors the logs filter
+// (buildLogFilter) so both behave identically across dialects.
+func (s *TransactionService) List(walletID *int64, txType string, since, until *time.Time, limit, offset int) ([]*Transaction, int64, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+
+	where := " WHERE 1=1"
+	args := []any{}
+	if walletID != nil {
+		where += " AND wallet_id = ?"
+		args = append(args, *walletID)
+	}
+	if txType != "" {
+		where += " AND tx_type = ?"
+		args = append(args, txType)
+	}
+	if since != nil {
+		where += " AND created_at >= ?"
+		args = append(args, since.Format("2006-01-02T15:04:05"))
+	}
+	if until != nil {
+		where += " AND created_at <= ?"
+		args = append(args, until.Format("2006-01-02T15:04:05"))
+	}
+
+	var total int64
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM transactions`+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	rows, err := s.db.Query(
+		`SELECT id, wallet_id, upload_id, tx_type, amount, balance_after, tx_hash, created_at
+		 FROM transactions`+where+` ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+		append(args, limit, offset)...,
+	)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var txns []*Transaction
+	for rows.Next() {
+		t := &Transaction{}
+		if err := rows.Scan(&t.ID, &t.WalletID, &t.UploadID, &t.TxType, &t.Amount, &t.BalanceAfter, &t.TxHash, &t.CreatedAt); err != nil {
+			return nil, 0, err
+		}
+		txns = append(txns, t)
+	}
+	return txns, total, rows.Err()
+}

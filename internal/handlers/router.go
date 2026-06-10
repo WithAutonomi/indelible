@@ -200,6 +200,7 @@ func NewRouter(cfg *config.Config, db *database.DB, antdInfo AntdInfoProvider) h
 			r.Delete("/admin/wallets/{id}", AdminDeleteWallet(db, cfg))
 			r.Post("/admin/wallets/{id}/balance", AdminRefreshWalletBalance(db, cfg))
 			r.Get("/admin/wallets/{id}/transactions", AdminWalletTransactions(db))
+			r.Get("/admin/transactions", AdminCrossWalletTransactions(db))
 
 			// System settings
 			r.Get("/admin/settings", AdminGetSettings(db))

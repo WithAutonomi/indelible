@@ -29,6 +29,7 @@ const PAGES: Array<{ label: string; path: string; admin?: boolean }> = [
   { label: 'Users', path: '/admin/users', admin: true },
   { label: 'Groups', path: '/admin/groups', admin: true },
   { label: 'Wallets', path: '/admin/wallets', admin: true },
+  { label: 'Transactions', path: '/admin/transactions', admin: true },
   { label: 'Quotas', path: '/admin/quotas', admin: true },
   { label: 'Tag Rules', path: '/admin/tag-rules', admin: true },
   { label: 'Webhooks', path: '/admin/webhooks', admin: true },
