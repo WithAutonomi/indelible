@@ -64,11 +64,13 @@ async function handleReset() {
         <form @submit.prevent="handleReset" class="space-y-4">
           <div class="flex flex-col gap-1">
             <label class="text-sm font-medium text-surface-700">New Password</label>
-            <Password v-model="newPassword" toggleMask placeholder="New password" class="w-full" :feedback="false" inputClass="w-full" required />
+            <Password v-model="newPassword" toggleMask placeholder="New password" class="w-full" :feedback="false" inputClass="w-full"
+              :inputProps="{ name: 'new-password', autocomplete: 'new-password' }" required />
           </div>
           <div class="flex flex-col gap-1">
             <label class="text-sm font-medium text-surface-700">Confirm Password</label>
-            <Password v-model="confirmPassword" toggleMask placeholder="Confirm password" class="w-full" :feedback="false" inputClass="w-full" required />
+            <Password v-model="confirmPassword" toggleMask placeholder="Confirm password" class="w-full" :feedback="false" inputClass="w-full"
+              :inputProps="{ name: 'confirm-password', autocomplete: 'new-password' }" required />
           </div>
           <Button label="Reset Password" type="submit" :loading="loading" class="w-full" />
         </form>

@@ -44,7 +44,7 @@ async function handleSubmit() {
         <form @submit.prevent="handleSubmit" class="space-y-4">
           <div class="flex flex-col gap-1">
             <label class="text-sm font-medium text-surface-700">Email</label>
-            <InputText v-model="email" type="email" placeholder="Email" class="w-full" required />
+            <InputText v-model="email" type="email" name="email" autocomplete="username" placeholder="Email" class="w-full" required />
           </div>
           <Button label="Send Reset Link" type="submit" :loading="loading" class="w-full" />
         </form>
