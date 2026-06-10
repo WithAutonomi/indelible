@@ -29,8 +29,11 @@ type SystemMonitor struct {
 	uploadSvc   *services.UploadService
 	walletSvc   *services.WalletService
 	settingsSvc *services.CachedSettingsService
-	logSvc      *services.LogService
-	webhookSvc  *services.WebhookDeliveryService
+	// settingsWriter writes the antd_unavailable flag straight to the DB (the
+	// cached service is read-only); CreateUpload reads it uncached.
+	settingsWriter *services.SettingsService
+	logSvc         *services.LogService
+	webhookSvc     *services.WebhookDeliveryService
 
 	wg     sync.WaitGroup
 	cancel context.CancelFunc
@@ -47,6 +50,11 @@ type SystemMonitor struct {
 	// it needs no lock. Escalates to critical only after a sustained streak so
 	// a single slow quote probe doesn't fire a false critical (V2-394).
 	antdSoftFailures int
+
+	// antdUnavailable mirrors the persisted AntdUnavailableSetting flag so we
+	// only write to the DB on a state transition. Like antdSoftFailures, it is
+	// touched only by the fast-checks goroutine and needs no lock.
+	antdUnavailable bool
 }
 
 // antdHealthCriticalThreshold is the number of consecutive slow/degraded antd
@@ -54,17 +62,27 @@ type SystemMonitor struct {
 // Process-down (transport failure) bypasses this and goes critical immediately.
 const antdHealthCriticalThreshold = 3
 
+// AntdUnavailableSetting is the settings key the monitor writes when antd is
+// persistently unreachable, mirroring uploads_paused. CreateUpload reads it to
+// fast-fail uploads with 503 instead of buffering a temp file that would only
+// fail to store. It tracks the same "critical" state the antd_health alert uses
+// (hard-down immediately, or a sustained soft-failure streak), so it doesn't
+// flap on a single slow probe (V2-486 / V2-394 debounce).
+const AntdUnavailableSetting = "antd_unavailable"
+
 // NewSystemMonitor creates a new consolidated system monitor.
 func NewSystemMonitor(db *database.DB, cfg *config.Config) *SystemMonitor {
+	settingsWriter := services.NewSettingsService(db)
 	return &SystemMonitor{
-		cfg:         cfg,
-		db:          db,
-		uploadSvc:   services.NewUploadService(db),
-		walletSvc:   services.NewWalletService(db, cfg.WalletKeyring()),
-		settingsSvc: services.NewCachedSettingsService(services.NewSettingsService(db)),
-		logSvc:      services.NewLogService(db),
-		webhookSvc:  services.NewWebhookDeliveryService(db),
-		lastAlerts:  make(map[string]string),
+		cfg:            cfg,
+		db:             db,
+		uploadSvc:      services.NewUploadService(db),
+		walletSvc:      services.NewWalletService(db, cfg.WalletKeyring()),
+		settingsSvc:    services.NewCachedSettingsService(settingsWriter),
+		settingsWriter: settingsWriter,
+		logSvc:         services.NewLogService(db),
+		webhookSvc:     services.NewWebhookDeliveryService(db),
+		lastAlerts:     make(map[string]string),
 	}
 }
 
@@ -80,6 +98,14 @@ func (m *SystemMonitor) RecordDequeue() {
 func (m *SystemMonitor) Start() {
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
+
+	// Seed the in-memory antd-unavailable flag from its persisted value so the
+	// first transition writes only on a real change. A stale value self-corrects
+	// on the first fast-check tick (≤30s) — fail-safe either way: stale-true
+	// briefly rejects uploads, stale-false briefly accepts them as before.
+	if v, err := m.settingsWriter.Get(AntdUnavailableSetting); err == nil {
+		m.antdUnavailable = v == "true"
+	}
 
 	// Fast checks: every 30 seconds
 	m.wg.Add(1)
@@ -162,6 +188,7 @@ func (m *SystemMonitor) checkAntdHealth() {
 	_, err := probe.DataCost(ctx, []byte{0, 0, 0}, antd.PaymentModeAuto)
 	if err == nil {
 		m.antdSoftFailures = 0
+		m.setAntdUnavailable(false)
 		m.clearAlert("antd_health", "antd_recovered",
 			"antd is connected to the Autonomi network again", 0)
 		return
@@ -170,6 +197,7 @@ func (m *SystemMonitor) checkAntdHealth() {
 	// Process-down / unreachable (transport failure, not a daemon response) is
 	// unambiguous — alert critical immediately.
 	if isAntdHardDown(err) {
+		m.setAntdUnavailable(true)
 		m.fireAlert("antd_health", "critical", "antd_unreachable",
 			"antd is unreachable at "+m.cfg.AntdURL+" (connection failed): "+err.Error(), 0)
 		return
@@ -182,14 +210,37 @@ func (m *SystemMonitor) checkAntdHealth() {
 	// critical after a sustained streak.
 	m.antdSoftFailures++
 	if m.antdSoftFailures >= antdHealthCriticalThreshold {
+		// Only now do we consider antd persistently unavailable for uploads —
+		// matching the critical alert so a single slow probe doesn't pause uploads.
+		m.setAntdUnavailable(true)
 		m.fireAlert("antd_health", "critical", "antd_unreachable",
 			fmt.Sprintf("antd cannot reach the Autonomi network at %s — %d consecutive failed probes",
 				m.cfg.AntdURL, m.antdSoftFailures), float64(m.antdSoftFailures))
 	} else {
+		// Still within the debounce window — leave the upload-gating flag
+		// unchanged (don't pause uploads on a transient blip).
 		m.fireAlert("antd_health", "warning", "antd_unreachable",
 			fmt.Sprintf("antd network probe slow/degraded at %s (%d/%d before critical): %s",
 				m.cfg.AntdURL, m.antdSoftFailures, antdHealthCriticalThreshold, err.Error()),
 			float64(m.antdSoftFailures))
+	}
+}
+
+// setAntdUnavailable persists the upload-gating flag, but only on an actual
+// transition so we don't write to the DB on every 30-second tick. CreateUpload
+// reads this flag (uncached) to fast-fail uploads when antd can't serve the
+// network, mirroring the disk-pressure uploads_paused shed-load path.
+func (m *SystemMonitor) setAntdUnavailable(unavailable bool) {
+	if m.antdUnavailable == unavailable {
+		return
+	}
+	m.antdUnavailable = unavailable
+	val := "false"
+	if unavailable {
+		val = "true"
+	}
+	if err := m.settingsWriter.SetInternal(AntdUnavailableSetting, val); err != nil {
+		slog.Error("failed to persist antd_unavailable state", "unavailable", unavailable, "error", err)
 	}
 }
 

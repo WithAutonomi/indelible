@@ -143,6 +143,16 @@ func CreateUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
+		// Network back-pressure: the system monitor sets "antd_unavailable" when
+		// antd is persistently unreachable (debounced). Fast-fail here rather than
+		// buffering a temp file and queueing an upload that can't be stored —
+		// same shed-load shape as the disk-pressure check above (V2-486).
+		if down, err := settingsSvc.Get("antd_unavailable"); err == nil && down == "true" {
+			w.Header().Set("Retry-After", "30")
+			jsonErrorWithCode(w, "The Autonomi network is currently unreachable, please try again shortly", "network_unavailable", http.StatusServiceUnavailable)
+			return
+		}
+
 		userID := middleware.GetUserID(r.Context())
 		tokenID := middleware.GetTokenID(r.Context())
 
