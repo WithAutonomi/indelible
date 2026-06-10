@@ -315,9 +315,9 @@ onMounted(refresh)
               <dt class="text-surface-500">Total capacity</dt>
               <dd class="text-surface-700">{{ formatBytes(storage.total_bytes) }}</dd>
             </div>
-            <div class="flex justify-between gap-4">
+            <div v-if="storage.volume" class="flex justify-between gap-4">
               <dt class="text-surface-500">Drive</dt>
-              <dd class="font-mono text-surface-700">{{ storage.volume || 'root (/)' }}</dd>
+              <dd class="font-mono text-surface-700">{{ storage.volume }}</dd>
             </div>
             <div class="flex justify-between gap-4 sm:col-span-2">
               <dt class="text-surface-500 shrink-0">Data directory</dt>

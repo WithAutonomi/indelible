@@ -45,12 +45,17 @@ func AdminStorage(cfg *config.Config, db *database.DB) http.HandlerFunc {
 	quotaSvc := services.NewQuotaService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
-		info := StorageInfo{
-			DataDir: cfg.DataDir,
-			Volume:  filepath.VolumeName(cfg.DataDir),
+		info := StorageInfo{DataDir: cfg.DataDir}
+		// Derive the volume (drive letter on Windows) from the absolute path —
+		// VolumeName resolves nothing on a relative data_dir. Empty on Unix,
+		// which has no drive-letter concept; the UI then shows the path alone.
+		probePath := cfg.DataDir
+		if abs, err := filepath.Abs(cfg.DataDir); err == nil {
+			probePath = abs
+			info.Volume = filepath.VolumeName(abs)
 		}
 
-		if total, free, used, ok := diskusage.Usage(cfg.DataDir); ok && total > 0 {
+		if total, free, used, ok := diskusage.Usage(probePath); ok && total > 0 {
 			info.Available = true
 			info.TotalBytes = total
 			info.FreeBytes = free
