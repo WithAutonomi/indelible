@@ -2323,6 +2323,31 @@ const docTemplate = `{
                 }
             }
         },
+        "/admin/storage": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Disk usage of the data directory (used/free/total bytes + percent) and, when a system-wide storage quota is configured, used-vs-quota. Degrades gracefully when disk figures can't be read.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin: System"
+                ],
+                "summary": "Storage usage",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_handlers.StorageInfo"
+                        }
+                    }
+                }
+            }
+        },
         "/admin/tokens": {
             "get": {
                 "security": [
@@ -6050,6 +6075,61 @@ const docTemplate = `{
                 },
                 "indelible": {
                     "$ref": "#/definitions/github_com_WithAutonomi_indelible_internal_services.ComponentVersion"
+                }
+            }
+        },
+        "internal_handlers.StorageInfo": {
+            "type": "object",
+            "properties": {
+                "available": {
+                    "description": "false when disk figures couldn't be read",
+                    "type": "boolean"
+                },
+                "data_dir": {
+                    "description": "configured data directory path",
+                    "type": "string"
+                },
+                "free_bytes": {
+                    "description": "bytes free on that filesystem",
+                    "type": "integer"
+                },
+                "quota": {
+                    "description": "present only when a system storage quota is set",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/internal_handlers.StorageQuota"
+                        }
+                    ]
+                },
+                "total_bytes": {
+                    "description": "capacity of the backing filesystem",
+                    "type": "integer"
+                },
+                "used_bytes": {
+                    "description": "bytes in use on that filesystem",
+                    "type": "integer"
+                },
+                "used_pct": {
+                    "description": "used / total * 100",
+                    "type": "number"
+                },
+                "volume": {
+                    "description": "drive letter on Windows (e.g. \"C:\"), empty on Unix",
+                    "type": "string"
+                }
+            }
+        },
+        "internal_handlers.StorageQuota": {
+            "type": "object",
+            "properties": {
+                "max_bytes": {
+                    "type": "integer"
+                },
+                "used_bytes": {
+                    "type": "integer"
+                },
+                "used_pct": {
+                    "type": "number"
                 }
             }
         },

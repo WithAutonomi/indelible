@@ -268,6 +268,7 @@ func NewRouter(cfg *config.Config, db *database.DB, antdInfo AntdInfoProvider) h
 
 			// System status
 			r.Get("/admin/version-check", AdminVersionCheck(cfg, antdInfo))
+			r.Get("/admin/storage", AdminStorage(cfg, db))
 		})
 	})
 
