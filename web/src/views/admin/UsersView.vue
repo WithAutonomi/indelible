@@ -37,6 +37,11 @@ function openDetail(u: User) {
   detailUser.value = u
   detailVisible.value = true
 }
+// Whole-row click opens the details drawer. The Actions cell stops propagation
+// (@click.stop on its buttons) so edit/delete never also open the drawer.
+function onRowClick(e: { data: User }) {
+  openDetail(e.data)
+}
 function editFromDetail() {
   if (!detailUser.value) return
   const u = detailUser.value
@@ -286,7 +291,8 @@ onMounted(fetchUsers)
 
     <!-- Users table -->
     <DataTable :value="users" :loading="loading" stripedRows class="rounded-lg border border-surface-200"
-      :pt="{ root: { class: 'bg-surface-0' } }">
+      :pt="{ root: { class: 'bg-surface-0' } }"
+      :rowClass="() => 'cursor-pointer hover:bg-surface-100'" @row-click="onRowClick">
       <template #empty>No users found.</template>
       <Column field="name" header="Name" sortable>
         <template #body="{ data }">
@@ -319,7 +325,7 @@ onMounted(fetchUsers)
       </Column>
       <Column header="Actions">
         <template #body="{ data }">
-          <div class="flex gap-2">
+          <div class="flex gap-2" @click.stop>
             <Button icon="pi pi-pencil" severity="info" text rounded size="small" aria-label="Edit permissions"
               v-tooltip.top="'Edit'" @click="startEdit(data)" />
             <Button icon="pi pi-trash" severity="danger" text rounded size="small" aria-label="Delete user"
