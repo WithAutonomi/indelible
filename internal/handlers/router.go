@@ -175,6 +175,7 @@ func NewRouter(cfg *config.Config, db *database.DB, antdInfo AntdInfoProvider) h
 			r.Post("/admin/users", AdminCreateUser(db))
 			r.Get("/admin/users", AdminListUsers(db))
 			r.Get("/admin/users/{id}", AdminGetUser(db))
+			r.Get("/admin/users/{id}/details", AdminUserDetails(db))
 			r.Put("/admin/users/{id}", AdminUpdateUser(db))
 			r.Delete("/admin/users/{id}", AdminDeleteUser(db))
 			r.Post("/admin/users/service-accounts", AdminCreateServiceAccount(db))

@@ -203,6 +203,26 @@ func (s *QuotaService) SystemQuota() (*Quota, error) {
 	return q, nil
 }
 
+// UserQuota returns the enabled storage quota for a specific user with current
+// usage, or nil if none is configured (or it's disabled). entity_id is stored
+// as text, so the user id is matched in string form (matches checkUserTier).
+func (s *QuotaService) UserQuota(userID int64) (*Quota, error) {
+	q := &Quota{}
+	err := s.db.QueryRow(
+		`SELECT id, entity_type, entity_id, max_bytes, is_enabled, created_at, updated_at
+		   FROM quotas WHERE entity_type = 'user' AND entity_id = ? AND is_enabled = TRUE`,
+		int64ToString(userID),
+	).Scan(&q.ID, &q.EntityType, &q.EntityID, &q.MaxBytes, &q.IsEnabled, &q.CreatedAt, &q.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	q.UsedBytes = s.calcUsage(q.EntityType, q.EntityID)
+	return q, nil
+}
+
 // Update modifies a quota.
 func (s *QuotaService) Update(id int64, maxBytes int64, isEnabled bool) (*Quota, error) {
 	_, err := s.db.Exec(
