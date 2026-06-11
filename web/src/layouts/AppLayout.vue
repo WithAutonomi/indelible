@@ -51,6 +51,7 @@ const navItems = computed(() => {
       { label: 'Users', icon: 'pi pi-users', to: '/admin/users' },
       { label: 'Groups', icon: 'pi pi-id-card', to: '/admin/groups' },
       { label: 'Wallets', icon: 'pi pi-wallet', to: '/admin/wallets' },
+      { label: 'Transactions', icon: 'pi pi-receipt', to: '/admin/transactions' },
       { label: 'Quotas', icon: 'pi pi-gauge', to: '/admin/quotas' },
       { label: 'Tag Rules', icon: 'pi pi-tags', to: '/admin/tag-rules' },
       { label: 'Webhooks', icon: 'pi pi-bell', to: '/admin/webhooks' },

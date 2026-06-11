@@ -77,6 +77,12 @@ const router = createRouter({
       meta: { auth: true, admin: true },
     },
     {
+      path: '/admin/transactions',
+      name: 'admin-transactions',
+      component: () => import('../views/admin/TransactionsView.vue'),
+      meta: { auth: true, admin: true },
+    },
+    {
       path: '/admin/quotas',
       name: 'admin-quotas',
       component: () => import('../views/admin/QuotasView.vue'),

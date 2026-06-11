@@ -249,7 +249,13 @@ onMounted(() => {
     <!-- V2-321: Transaction history drawer -->
     <Drawer v-model:visible="txDrawerVisible" position="right" class="w-full max-w-3xl"
       :header="txDrawerWallet ? `Transactions — ${txDrawerWallet.name}` : 'Transactions'">
-      <p v-if="txDrawerWallet" class="text-xs font-mono text-surface-500 mb-4 truncate">{{ txDrawerWallet.address }}</p>
+      <div v-if="txDrawerWallet" class="flex items-center justify-between gap-3 mb-4">
+        <p class="text-xs font-mono text-surface-500 truncate">{{ txDrawerWallet.address }}</p>
+        <router-link :to="`/admin/transactions?wallet=${txDrawerWallet.id}`"
+          class="text-sm text-primary font-medium hover:underline whitespace-nowrap shrink-0">
+          Open full history →
+        </router-link>
+      </div>
       <DataTable :value="transactions" :loading="txLoading" stripedRows size="small">
         <template #empty>No transactions recorded for this wallet yet.</template>
         <Column field="created_at" header="Time" sortable>

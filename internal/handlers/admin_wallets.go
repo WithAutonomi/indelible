@@ -347,3 +347,77 @@ func AdminWalletTransactions(db *database.DB) http.HandlerFunc {
 		})
 	}
 }
+
+// crossWalletTransactionResponse adds the owning wallet's name to a transaction
+// row, for the "all wallets" view where rows span wallets.
+type crossWalletTransactionResponse struct {
+	walletTransactionResponse
+	WalletName string `json:"wallet_name"`
+}
+
+// @Summary      Cross-wallet transaction history
+// @Description  List transactions across all wallets with optional filters (wallet_id, type, from/to date range), newest first. Powers the dedicated Transactions page. from/to accept RFC3339 or YYYY-MM-DD. V2-447.
+// @Tags         Admin: Wallets
+// @Produce      json
+// @Param        wallet_id query int    false "Filter to a single wallet"
+// @Param        type      query string false "Filter by tx type (e.g. upload, refund)"
+// @Param        from      query string false "Start of created_at range (RFC3339 or YYYY-MM-DD)"
+// @Param        to        query string false "End of created_at range (RFC3339 or YYYY-MM-DD)"
+// @Param        limit     query int    false "Max results (default 50, max 100)"
+// @Param        offset    query int    false "Offset for pagination"
+// @Success      200 {object} map[string]interface{}
+// @Failure      400 {object} map[string]string
+// @Failure      500 {object} map[string]string
+// @Router       /admin/transactions [get]
+// @Security     BearerAuth
+func AdminCrossWalletTransactions(db *database.DB) http.HandlerFunc {
+	txSvc := services.NewTransactionService(db)
+	walletSvc := services.NewWalletService(db, nil) // List() is a pure read — no keyring needed
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+
+		var walletID *int64
+		if v := q.Get("wallet_id"); v != "" {
+			id, err := strconv.ParseInt(v, 10, 64)
+			if err != nil {
+				jsonError(w, "invalid wallet_id", http.StatusBadRequest)
+				return
+			}
+			walletID = &id
+		}
+
+		limit, _ := strconv.Atoi(q.Get("limit"))
+		offset, _ := strconv.Atoi(q.Get("offset"))
+
+		txns, total, err := txSvc.List(walletID, q.Get("type"), parseTimeParam(q.Get("from")), parseTimeParam(q.Get("to")), limit, offset)
+		if err != nil {
+			jsonError(w, "failed to list transactions", http.StatusInternalServerError)
+			return
+		}
+
+		// Wallet id→name map for the cross-wallet view. Best effort: rows still
+		// render (with blank names) if the lookup fails.
+		nameByID := map[int64]string{}
+		if wallets, err := walletSvc.List(); err == nil {
+			for _, wl := range wallets {
+				nameByID[wl.ID] = wl.Name
+			}
+		}
+
+		resp := make([]crossWalletTransactionResponse, 0, len(txns))
+		for _, t := range txns {
+			resp = append(resp, crossWalletTransactionResponse{
+				walletTransactionResponse: toWalletTransactionResponse(t),
+				WalletName:                nameByID[t.WalletID],
+			})
+		}
+
+		jsonResponse(w, http.StatusOK, map[string]any{
+			"transactions": resp,
+			"total":        total,
+			"limit":        limit,
+			"offset":       offset,
+		})
+	}
+}
