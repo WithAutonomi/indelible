@@ -38,6 +38,31 @@ type adminListUsersResponse struct {
 	Offset int                 `json:"offset"`
 }
 
+// adminUserGroupMembership is a group the user belongs to, with the group's
+// permission level. Trimmed to what the details drawer renders.
+type adminUserGroupMembership struct {
+	ID              int64  `json:"id"`
+	Name            string `json:"name"`
+	PermissionLevel string `json:"permission_level"`
+}
+
+// adminUserQuota is the user's storage quota with current usage. Present only
+// when an enabled per-user quota exists.
+type adminUserQuota struct {
+	MaxBytes  int64   `json:"max_bytes"`
+	UsedBytes int64   `json:"used_bytes"`
+	UsedPct   float64 `json:"used_pct"`
+}
+
+// adminUserDetailsResponse aggregates the related content the user list/get
+// responses don't carry, for the admin user-details drawer.
+type adminUserDetailsResponse struct {
+	Groups     []adminUserGroupMembership `json:"groups"`
+	Tokens     []tokenResponse            `json:"tokens"`
+	Quota      *adminUserQuota            `json:"quota"`
+	Identities []oidcIdentityResponse     `json:"identities"`
+}
+
 type adminCreateUserRequest struct {
 	Email       string `json:"email"`
 	Password    string `json:"password"`
@@ -61,8 +86,8 @@ type updateUserRequest struct {
 	FirstName        *string   `json:"first_name"`
 	LastName         *string   `json:"last_name"`
 	IsActive         *bool     `json:"is_active"`
-	MaxFileSizeBytes *int64    `json:"max_file_size_bytes"`  // nullable; absent in body = leave unchanged
-	AllowedFileTypes *[]string `json:"allowed_file_types"`   // nullable; absent in body = leave unchanged; empty array = clear
+	MaxFileSizeBytes *int64    `json:"max_file_size_bytes"` // nullable; absent in body = leave unchanged
+	AllowedFileTypes *[]string `json:"allowed_file_types"`  // nullable; absent in body = leave unchanged; empty array = clear
 }
 
 func toAdminUserResponse(u *services.User, perms string) adminUserResponse {
@@ -171,6 +196,90 @@ func AdminGetUser(db *database.DB) http.HandlerFunc {
 
 		perms, _ := permSvc.GetEffective(id)
 		jsonResponse(w, http.StatusOK, toAdminUserResponse(user, perms))
+	}
+}
+
+// @Summary      Get a user's related content
+// @Description  Aggregated detail for the admin user drawer: group memberships, the user's API tokens (no secrets), per-user storage quota usage (if set), and linked SSO/OIDC identities.
+// @Tags         Admin: Users
+// @Produce      json
+// @Param        id path int true "User ID"
+// @Success      200 {object} adminUserDetailsResponse
+// @Failure      400 {object} map[string]string
+// @Failure      404 {object} map[string]string
+// @Router       /admin/users/{id}/details [get]
+// @Security     BearerAuth
+func AdminUserDetails(db *database.DB) http.HandlerFunc {
+	userSvc := services.NewUserService(db)
+	groupSvc := services.NewGroupService(db)
+	tokenSvc := services.NewTokenService(db)
+	quotaSvc := services.NewQuotaService(db)
+	providerSvc := services.NewOIDCProviderService(db, nil) // read-only listing; no keyring needed
+	loginSvc := services.NewOIDCLoginService(db, providerSvc, nil)
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+		if err != nil {
+			jsonError(w, "invalid user id", http.StatusBadRequest)
+			return
+		}
+		if _, err := userSvc.GetByID(id); err != nil {
+			if errors.Is(err, services.ErrUserNotFound) {
+				jsonError(w, "user not found", http.StatusNotFound)
+				return
+			}
+			jsonError(w, "failed to get user", http.StatusInternalServerError)
+			return
+		}
+
+		// Each section degrades independently: a failure in one read leaves an
+		// empty list/nil rather than failing the whole drawer.
+		resp := adminUserDetailsResponse{
+			Groups:     []adminUserGroupMembership{},
+			Tokens:     []tokenResponse{},
+			Identities: []oidcIdentityResponse{},
+		}
+
+		if groups, err := groupSvc.ListByUser(id); err == nil {
+			for _, g := range groups {
+				resp.Groups = append(resp.Groups, adminUserGroupMembership{
+					ID: g.ID, Name: g.Name, PermissionLevel: g.PermissionLevel,
+				})
+			}
+		}
+
+		if tokens, err := tokenSvc.ListByUser(id); err == nil {
+			for _, t := range tokens {
+				resp.Tokens = append(resp.Tokens, toTokenResponse(t))
+			}
+		}
+
+		if q, err := quotaSvc.UserQuota(id); err == nil && q != nil && q.MaxBytes > 0 {
+			resp.Quota = &adminUserQuota{
+				MaxBytes:  q.MaxBytes,
+				UsedBytes: q.UsedBytes,
+				UsedPct:   float64(q.UsedBytes) / float64(q.MaxBytes) * 100.0,
+			}
+		}
+
+		if identities, err := loginSvc.ListIdentitiesForUser(id); err == nil && len(identities) > 0 {
+			providers, _ := providerSvc.List()
+			nameByID := make(map[int64]string, len(providers))
+			for _, p := range providers {
+				nameByID[p.ID] = p.DisplayName
+			}
+			for _, idn := range identities {
+				resp.Identities = append(resp.Identities, oidcIdentityResponse{
+					ID:           idn.ID,
+					ProviderID:   idn.ProviderID,
+					ProviderName: nameByID[idn.ProviderID],
+					Subject:      idn.Subject,
+					CreatedAt:    idn.CreatedAt.Format("2006-01-02T15:04:05Z"),
+				})
+			}
+		}
+
+		jsonResponse(w, http.StatusOK, resp)
 	}
 }
 

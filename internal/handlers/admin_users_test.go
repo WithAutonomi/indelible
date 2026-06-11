@@ -3,6 +3,7 @@ package handlers_test
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -103,6 +104,65 @@ func TestAdminListUsers(t *testing.T) {
 	users := resp["users"].([]any)
 	if len(users) != 2 {
 		t.Errorf("users len = %d, want 2", len(users))
+	}
+}
+
+func TestAdminUserDetails(t *testing.T) {
+	router := setupTestRouter(t)
+	adminToken := registerAndGetToken(t, router, "admin@test.com", "password123", "Admin", "User")
+	registerAndGetToken(t, router, "user@test.com", "password123", "Normal", "User")
+
+	// Find the created user's id from the list.
+	req := httptest.NewRequest("GET", "/api/v2/admin/users", nil)
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	var list map[string]any
+	json.Unmarshal(w.Body.Bytes(), &list)
+	var userID int64
+	for _, u := range list["users"].([]any) {
+		m := u.(map[string]any)
+		if m["email"] == "user@test.com" {
+			userID = int64(m["id"].(float64))
+		}
+	}
+	if userID == 0 {
+		t.Fatal("could not find created user id")
+	}
+
+	// Details for a fresh user: empty arrays present, quota null.
+	req = httptest.NewRequest("GET", fmt.Sprintf("/api/v2/admin/users/%d/details", userID), nil)
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("user details: got %d, body: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	for _, k := range []string{"groups", "tokens", "identities"} {
+		arr, ok := resp[k].([]any)
+		if !ok {
+			t.Errorf("expected %q to be an array, got %T", k, resp[k])
+			continue
+		}
+		if len(arr) != 0 {
+			t.Errorf("expected %q empty for fresh user, got %d", k, len(arr))
+		}
+	}
+	if resp["quota"] != nil {
+		t.Errorf("expected quota null for user without a quota, got %v", resp["quota"])
+	}
+
+	// Unknown user → 404.
+	req = httptest.NewRequest("GET", "/api/v2/admin/users/999999/details", nil)
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("unknown user details: got %d, want 404", w.Code)
 	}
 }
 
