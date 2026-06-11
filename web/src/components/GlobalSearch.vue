@@ -41,8 +41,8 @@ const PAGES: Array<{ label: string; path: string; admin?: boolean }> = [
   { label: 'System', path: '/admin/system', admin: true },
 ]
 
-// Where each result type navigates. No per-record routes exist for most
-// entities, so a hit takes the user to the relevant section.
+// Fallback section per result type, for hits we don't deep-link yet (no detail
+// drawer on the target page).
 const TYPE_ROUTE: Record<string, string> = {
   file: '/uploads',
   collection: '/collections',
@@ -50,6 +50,29 @@ const TYPE_ROUTE: Record<string, string> = {
   user: '/admin/users',
   token: '/tokens',
   webhook: '/admin/webhooks',
+}
+
+// Resolve a hit to its destination. Where the target page has a detail drawer
+// (files, users) we deep-link with ?focus=<id> so the page opens that record;
+// a tag hit pre-applies the uploads tag filter. Everything else falls back to
+// the section route (V2-459 extends as more pages gain detail drawers).
+function hitTarget(hit: Hit): { path: string; query?: Record<string, string> } | null {
+  switch (hit.type) {
+    case 'file':
+      return { path: '/uploads', query: { focus: hit.id } }
+    case 'user':
+      return { path: '/admin/users', query: { focus: hit.id } }
+    case 'tag': {
+      // id is "key=value" — split on the first '=' (values may contain '=').
+      const eq = hit.id.indexOf('=')
+      if (eq > 0) return { path: '/uploads', query: { tagKey: hit.id.slice(0, eq), tagValue: hit.id.slice(eq + 1) } }
+      return { path: '/uploads' }
+    }
+    default: {
+      const p = TYPE_ROUTE[hit.type]
+      return p ? { path: p } : null
+    }
+  }
 }
 
 const GROUPS = [
@@ -130,8 +153,12 @@ async function runSearch() {
 }
 
 function activate(item: FlatItem) {
-  const path = item.kind === 'page' ? item.path : TYPE_ROUTE[item.hit.type]
-  if (path) router.push(path)
+  if (item.kind === 'page') {
+    router.push(item.path)
+  } else {
+    const target = hitTarget(item.hit)
+    if (target) router.push(target)
+  }
   close()
 }
 
