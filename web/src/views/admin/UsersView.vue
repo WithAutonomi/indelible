@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useConfirm } from 'primevue/useconfirm'
 import { useToast } from 'primevue/usetoast'
 import { api } from '../../api/client'
@@ -17,6 +18,7 @@ import Drawer from 'primevue/drawer'
 
 const confirm = useConfirm()
 const toast = useToast()
+const route = useRoute()
 
 const users = ref<User[]>([])
 const loading = ref(true)
@@ -226,7 +228,26 @@ function permissionSeverity(perms: string): string {
   return 'secondary'
 }
 
-onMounted(fetchUsers)
+// V2-459: a global-search result can deep-link here with ?focus=<id> to open
+// that user's details drawer. Fetched directly so it works regardless of which
+// page of the list the user is on.
+async function openFocused(id: string) {
+  try {
+    const u = (await api.get(`/api/v2/admin/users/${id}`)).data
+    if (u && u.id) openDetail(u)
+  } catch {
+    // user may have been deleted — leave the list as-is.
+  }
+}
+
+onMounted(async () => {
+  await fetchUsers()
+  if (route.query.focus) openFocused(route.query.focus as string)
+})
+
+watch(() => route.query.focus, (f, old) => {
+  if (f && f !== old) openFocused(f as string)
+})
 </script>
 
 <template>
