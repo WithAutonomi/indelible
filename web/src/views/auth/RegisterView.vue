@@ -57,20 +57,21 @@ async function handleRegister() {
         <div class="grid grid-cols-2 gap-4">
           <div class="flex flex-col gap-1">
             <label class="text-sm font-medium text-surface-700">First name</label>
-            <InputText v-model="firstName" type="text" placeholder="First name" class="w-full" required />
+            <InputText v-model="firstName" type="text" name="given-name" autocomplete="given-name" placeholder="First name" class="w-full" required />
           </div>
           <div class="flex flex-col gap-1">
             <label class="text-sm font-medium text-surface-700">Last name</label>
-            <InputText v-model="lastName" type="text" placeholder="Last name" class="w-full" required />
+            <InputText v-model="lastName" type="text" name="family-name" autocomplete="family-name" placeholder="Last name" class="w-full" required />
           </div>
         </div>
         <div class="flex flex-col gap-1">
           <label class="text-sm font-medium text-surface-700">Email</label>
-          <InputText v-model="email" type="email" placeholder="Email" class="w-full" required />
+          <InputText v-model="email" type="email" name="email" autocomplete="username" placeholder="Email" class="w-full" required />
         </div>
         <div class="flex flex-col gap-1">
           <label class="text-sm font-medium text-surface-700">Password</label>
-          <Password v-model="password" toggleMask placeholder="Password" class="w-full" :feedback="false" inputClass="w-full" required />
+          <Password v-model="password" toggleMask placeholder="Password" class="w-full" :feedback="false" inputClass="w-full"
+            :inputProps="{ name: 'new-password', autocomplete: 'new-password' }" required />
         </div>
         <Button label="Create account" type="submit" :loading="loading" class="w-full" />
         </form>

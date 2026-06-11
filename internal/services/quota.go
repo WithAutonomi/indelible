@@ -184,6 +184,25 @@ func (s *QuotaService) List() ([]*Quota, error) {
 	return quotas, rows.Err()
 }
 
+// SystemQuota returns the enabled system-wide quota with its current usage, or
+// nil if none is configured (or it exists but is disabled). Used by the System
+// page to show used-vs-quota alongside raw disk usage.
+func (s *QuotaService) SystemQuota() (*Quota, error) {
+	q := &Quota{}
+	err := s.db.QueryRow(
+		`SELECT id, entity_type, entity_id, max_bytes, is_enabled, created_at, updated_at
+		   FROM quotas WHERE entity_type = 'system' AND is_enabled = TRUE`,
+	).Scan(&q.ID, &q.EntityType, &q.EntityID, &q.MaxBytes, &q.IsEnabled, &q.CreatedAt, &q.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	q.UsedBytes = s.calcUsage(q.EntityType, q.EntityID)
+	return q, nil
+}
+
 // Update modifies a quota.
 func (s *QuotaService) Update(id int64, maxBytes int64, isEnabled bool) (*Quota, error) {
 	_, err := s.db.Exec(
