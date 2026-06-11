@@ -9,6 +9,7 @@ import (
 
 	"github.com/WithAutonomi/indelible/internal/config"
 	"github.com/WithAutonomi/indelible/internal/database"
+	"github.com/WithAutonomi/indelible/internal/diskusage"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
 
@@ -107,10 +108,11 @@ func (w *DiskAlertWorker) loop(ctx context.Context) {
 }
 
 func (w *DiskAlertWorker) check() {
-	usagePct := getDiskUsagePercent(w.cfg.DataDir)
-	if usagePct < 0 {
+	total, _, used, ok := diskusage.Usage(w.cfg.DataDir)
+	if !ok || total == 0 {
 		return // couldn't determine
 	}
+	usagePct := float64(used) / float64(total) * 100.0
 
 	pctStr := fmt.Sprintf("%.1f", usagePct)
 

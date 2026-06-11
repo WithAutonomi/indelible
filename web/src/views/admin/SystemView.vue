@@ -28,6 +28,62 @@ interface VersionCheck {
 const versionInfo = ref<VersionCheck | null>(null)
 const checking = ref(false)
 
+// V2-446: data-directory disk usage. The data dir is set at deploy time via
+// `data_dir` (TOML) / INDELIBLE_DATA_DIR; this surfaces its live capacity plus,
+// when a system-wide storage quota is configured, used-vs-quota.
+interface StorageQuota {
+  max_bytes: number
+  used_bytes: number
+  used_pct: number
+}
+interface StorageInfo {
+  data_dir: string
+  volume: string
+  available: boolean
+  total_bytes: number
+  used_bytes: number
+  free_bytes: number
+  used_pct: number
+  quota?: StorageQuota | null
+}
+
+const storage = ref<StorageInfo | null>(null)
+
+async function fetchStorage() {
+  try {
+    storage.value = (await api.get('/api/v2/admin/storage')).data
+  } catch {
+    storage.value = null
+  }
+}
+
+function formatBytes(n: number | null | undefined): string {
+  if (n == null) return '—'
+  if (n === 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
+  let i = 0
+  let v = n
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++ }
+  return `${v.toFixed(v >= 100 || i === 0 ? 0 : 1)} ${units[i]}`
+}
+
+// Colour the used arc by the same thresholds the disk-alert worker uses
+// (warning ≥80%, critical ≥95% → uploads pause), so the gauge reads "why".
+function usageColor(pct: number): string {
+  if (pct >= 95) return '#ef4444' // red-500
+  if (pct >= 80) return '#f59e0b' // amber-500
+  return '#10b981' // emerald-500
+}
+const usedColor = computed(() => usageColor(storage.value?.used_pct ?? 0))
+// Pie/donut via conic-gradient: the used arc is drawn over a surface-200 track
+// circle (transparent remainder lets the track show through), so it adapts to
+// dark mode without inline track colours.
+const donutStyle = computed(() => {
+  const p = Math.max(0, Math.min(100, storage.value?.used_pct ?? 0))
+  return { background: `conic-gradient(${usedColor.value} 0 ${p}%, transparent ${p}% 100%)` }
+})
+const quotaColor = computed(() => usageColor(storage.value?.quota?.used_pct ?? 0))
+
 async function checkVersions() {
   checking.value = true
   try {
@@ -85,7 +141,7 @@ function formatUptime(s?: number): string {
 async function refresh() {
   refreshing.value = true
   try {
-    await health.refresh()
+    await Promise.all([health.refresh(), fetchStorage()])
   } finally {
     refreshing.value = false
   }
@@ -224,6 +280,71 @@ onMounted(refresh)
           <dd class="text-surface-700">{{ h?.notifier || '—' }}</dd>
         </div>
       </dl>
+    </div>
+
+    <!-- Storage / data-directory capacity -->
+    <div class="bg-surface-0 border border-surface-200 rounded-lg p-5 mt-5">
+      <h2 class="text-lg font-semibold mb-4">Storage</h2>
+
+      <div v-if="storage?.available" class="flex flex-col sm:flex-row items-center gap-8">
+        <!-- Capacity pie/donut -->
+        <div class="relative w-36 h-36 shrink-0 rounded-full bg-surface-200">
+          <div class="absolute inset-0 rounded-full" :style="donutStyle"></div>
+          <div class="absolute inset-[20%] rounded-full bg-surface-0 flex flex-col items-center justify-center">
+            <span class="text-2xl font-bold leading-none">{{ storage.used_pct.toFixed(0) }}%</span>
+            <span class="text-xs text-surface-400 mt-1">used</span>
+          </div>
+        </div>
+
+        <!-- Figures + location -->
+        <div class="flex-1 w-full">
+          <dl class="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-3 text-sm">
+            <div class="flex items-center justify-between gap-4">
+              <dt class="flex items-center gap-2 text-surface-500">
+                <span class="inline-block w-3 h-3 rounded-sm" :style="{ background: usedColor }"></span>Used
+              </dt>
+              <dd class="text-surface-700">{{ formatBytes(storage.used_bytes) }}</dd>
+            </div>
+            <div class="flex items-center justify-between gap-4">
+              <dt class="flex items-center gap-2 text-surface-500">
+                <span class="inline-block w-3 h-3 rounded-sm bg-surface-300"></span>Free
+              </dt>
+              <dd class="text-surface-700">{{ formatBytes(storage.free_bytes) }}</dd>
+            </div>
+            <div class="flex justify-between gap-4">
+              <dt class="text-surface-500">Total capacity</dt>
+              <dd class="text-surface-700">{{ formatBytes(storage.total_bytes) }}</dd>
+            </div>
+            <div v-if="storage.volume" class="flex justify-between gap-4">
+              <dt class="text-surface-500">Drive</dt>
+              <dd class="font-mono text-surface-700">{{ storage.volume }}</dd>
+            </div>
+            <div class="flex justify-between gap-4 sm:col-span-2">
+              <dt class="text-surface-500 shrink-0">Data directory</dt>
+              <dd class="font-mono text-surface-700 truncate" v-tooltip.top="storage.data_dir">{{ storage.data_dir }}</dd>
+            </div>
+          </dl>
+
+          <!-- System storage quota (only when one is configured) -->
+          <div v-if="storage.quota" class="mt-4 pt-4 border-t border-surface-200">
+            <div class="flex justify-between text-sm mb-1.5">
+              <span class="text-surface-500">System quota</span>
+              <span class="text-surface-700">
+                {{ formatBytes(storage.quota.used_bytes) }} / {{ formatBytes(storage.quota.max_bytes) }}
+                ({{ storage.quota.used_pct.toFixed(0) }}%)
+              </span>
+            </div>
+            <div class="w-full h-2 rounded-full bg-surface-200 overflow-hidden">
+              <div class="h-full rounded-full transition-all"
+                :style="{ width: Math.min(100, storage.quota.used_pct) + '%', background: quotaColor }"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <p v-else class="text-sm text-surface-400">
+        Disk usage is unavailable — the data directory's filesystem stats couldn't be read on this host.
+      </p>
     </div>
   </div>
 </template>
