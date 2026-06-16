@@ -4637,6 +4637,10 @@ paths:
         name: id
         required: true
         type: string
+      - description: ETag for conditional GET; returns 304 if unchanged
+        in: header
+        name: If-None-Match
+        type: string
       produces:
       - application/octet-stream
       responses:
@@ -4644,6 +4648,10 @@ paths:
           description: OK
           schema:
             type: file
+        "304":
+          description: Not Modified — cached copy is current
+          schema:
+            type: string
         "404":
           description: Not Found
           schema:

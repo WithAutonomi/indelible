@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/WithAutonomi/indelible/internal/config"
@@ -117,6 +118,35 @@ func TestDownloadUpload_StreamsToDisk(t *testing.T) {
 			}
 			if lastPath != tc.wantEndpnt {
 				t.Errorf("antd endpoint = %q, want %q", lastPath, tc.wantEndpnt)
+			}
+
+			// V2-516: a successful download carries strong cache validators for
+			// the immutable, content-addressed bytes.
+			etag := w.Result().Header.Get("ETag")
+			if etag == "" {
+				t.Error("missing ETag on download response")
+			}
+			if cc := w.Result().Header.Get("Cache-Control"); !strings.Contains(cc, "immutable") {
+				t.Errorf("Cache-Control = %q, want an immutable directive", cc)
+			}
+
+			// Conditional re-request with that ETag → 304, and antd is NOT hit
+			// again: the bytes are immutable, so the fetch is skipped entirely.
+			// This is the reader-fleet throughput win (V2-516).
+			lastPath = ""
+			req2 := httptest.NewRequest("GET", "/api/v2/uploads/"+uuid+"/download", nil)
+			req2.Header.Set("Authorization", "Bearer "+adminToken)
+			req2.Header.Set("If-None-Match", etag)
+			w2 := httptest.NewRecorder()
+			router.ServeHTTP(w2, req2)
+			if w2.Code != http.StatusNotModified {
+				t.Fatalf("conditional download: got %d, want 304; body: %s", w2.Code, w2.Body.String())
+			}
+			if lastPath != "" {
+				t.Errorf("304 still hit antd (%s); the fetch must be skipped", lastPath)
+			}
+			if got := w2.Result().Header.Get("ETag"); got != etag {
+				t.Errorf("304 ETag = %q, want %q", got, etag)
 			}
 		})
 	}
