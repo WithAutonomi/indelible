@@ -5934,6 +5934,12 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "ETag for conditional GET; returns 304 if unchanged",
+                        "name": "If-None-Match",
+                        "in": "header"
                     }
                 ],
                 "responses": {
@@ -5941,6 +5947,12 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "type": "file"
+                        }
+                    },
+                    "304": {
+                        "description": "Not Modified — cached copy is current",
+                        "schema": {
+                            "type": "string"
                         }
                     },
                     "404": {

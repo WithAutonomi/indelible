@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -632,14 +634,62 @@ func QuoteUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	}
 }
 
+// downloadCacheControl is the Cache-Control for a successful download (V2-516).
+// Autonomi content is immutable and content-addressed, so the bytes at a given
+// upload URL never change → cache effectively forever. `private` because the
+// route is token-gated (no anonymous access): a shared cache must not reuse a
+// response across identities, but a trusted-boundary proxy or the client may.
+const downloadCacheControl = "private, max-age=31536000, immutable"
+
+// downloadETag returns a strong, content-derived ETag for an upload's bytes, or
+// "" when no content identifier is available. The identifier (local DataMap or
+// network address) is content-addressed, so a hash of it is a stable validator.
+// It is hashed — not emitted raw — so the ETag never leaks the DataMap, which
+// is itself the capability needed to retrieve the file.
+func downloadETag(u *services.Upload) string {
+	var id string
+	switch {
+	case u.DataMap.Valid && u.DataMap.String != "":
+		id = u.DataMap.String
+	case u.DatamapAddress.Valid && u.DatamapAddress.String != "":
+		id = u.DatamapAddress.String
+	default:
+		return ""
+	}
+	sum := sha256.Sum256([]byte("indelible-download-v1:" + id))
+	return `"` + hex.EncodeToString(sum[:]) + `"`
+}
+
+// etagMatches reports whether an If-None-Match header matches the given strong
+// ETag. Handles "*", comma-separated lists, and the W/ weak-validator prefix
+// (compared as weak — safe here since the content is immutable).
+func etagMatches(ifNoneMatch, etag string) bool {
+	if ifNoneMatch == "" {
+		return false
+	}
+	if strings.TrimSpace(ifNoneMatch) == "*" {
+		return true
+	}
+	for _, c := range strings.Split(ifNoneMatch, ",") {
+		c = strings.TrimSpace(c)
+		c = strings.TrimPrefix(c, "W/")
+		if c == etag {
+			return true
+		}
+	}
+	return false
+}
+
 // DownloadUpload retrieves a completed upload's data from the Autonomi network.
 //
 // @Summary      Download completed upload
 // @Description  Download a completed upload's file data from the Autonomi network
 // @Tags         Uploads
 // @Produce      octet-stream
-// @Param        id  path  string  true  "Upload UUID"
+// @Param        id              path    string  true   "Upload UUID"
+// @Param        If-None-Match   header  string  false  "ETag for conditional GET; returns 304 if unchanged"
 // @Success      200  {file}    binary
+// @Success      304  {string}  string  "Not Modified — cached copy is current"
 // @Failure      404  {object}  map[string]string
 // @Failure      409  {object}  map[string]string
 // @Failure      500  {object}  map[string]string
@@ -681,6 +731,21 @@ func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 		// "completed" — both have a usable DataMap/address on the network.
 		if upload.Status != "completed" && upload.Status != "already_stored" {
 			jsonError(w, fmt.Sprintf("upload is %s, not ready for download", upload.Status), http.StatusConflict)
+			return
+		}
+
+		// Conditional request (V2-516): the bytes at this URL are immutable —
+		// Autonomi content is content-addressed and an upload's data never changes
+		// — so if the client already holds the current ETag we can answer 304 and
+		// skip the antd fetch entirely. Computed only now, after the owner + status
+		// checks, so a 304 is never returned to an unauthorized caller. The success
+		// path sets the same ETag/Cache-Control headers just before streaming (we
+		// avoid setting them earlier so a later antd error isn't sent cacheable).
+		etag := downloadETag(upload)
+		if etag != "" && etagMatches(r.Header.Get("If-None-Match"), etag) {
+			w.Header().Set("ETag", etag)
+			w.Header().Set("Cache-Control", downloadCacheControl)
+			w.WriteHeader(http.StatusNotModified)
 			return
 		}
 
@@ -740,6 +805,15 @@ func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, upload.OriginalFilename))
 		w.Header().Set("Content-Type", upload.ContentType)
 		w.Header().Set("X-Content-Type-Options", "nosniff")
+		// Cache validators (V2-516) on the success path only — immutable,
+		// content-addressed bytes, so a long-lived strong ETag is safe and lets a
+		// trusted-boundary proxy or the client serve repeats without re-fetching
+		// from antd. `private`: downloads are token-gated (no anonymous route), so
+		// a shared cache must not reuse a response across identities.
+		if etag != "" {
+			w.Header().Set("ETag", etag)
+			w.Header().Set("Cache-Control", downloadCacheControl)
+		}
 		http.ServeFile(w, r, tempPath)
 	}
 }
