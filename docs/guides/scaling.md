@@ -36,7 +36,7 @@ Use the split when download traffic is the bottleneck and a single instance can'
 | Wallet encryption key | **required** | not required |
 | `INDELIBLE_JWT_SECRET` | required | **required** (verifies sessions/tokens) |
 | `INDELIBLE_DB_URL` | shared PostgreSQL | same shared PostgreSQL |
-| antd | required | required (can be wallet-less / read-only, co-located per pod) |
+| antd | required (with wallet, for uploads/payments) | **its own, co-located, wallet-less** — see below |
 | Runs workers + migrations | yes | no |
 
 A reader is started with `INDELIBLE_WORKERS_ENABLED=false`. In that mode it:
@@ -46,6 +46,19 @@ A reader is started with `INDELIBLE_WORKERS_ENABLED=false`. In that mode it:
 - needs **no wallet encryption key** — it never decrypts an EVM wallet or OIDC secret. Access control does not use that key: API tokens are validated by a database lookup, and session JWTs by `INDELIBLE_JWT_SECRET`.
 
 Readers still need the shared database, `INDELIBLE_JWT_SECRET`, and an antd daemon to fetch bytes from the network.
+
+## Each instance runs its own antd (co-located) — required, not optional
+
+Every instance — the writer and **each** reader — must have its **own antd daemon on the same host / in the same pod, sharing a filesystem** with the indelible process. This is a hard requirement of how downloads work, not a tuning preference:
+
+- A download is streamed via antd's `dest_path` contract. Indelible hands antd a **local temp path** (under `INDELIBLE_DATA_DIR`), antd fetches the file from the network and **writes the bytes to that path**, and indelible then serves that file from disk. So antd and indelible must see the **same filesystem**.
+- This means you **cannot point N readers at one shared remote antd** over HTTP: a remote antd would write `dest_path` on *its own* disk, and the reader's file-serve would find nothing. Co-locate antd with each indelible instance and share the temp volume (`INDELIBLE_DATA_DIR`).
+
+Practical shape of a reader pod: `indelible` (workers off, no wallet key) **+** its own `antd`, sharing a volume mounted at `INDELIBLE_DATA_DIR`.
+
+A reader's antd can be **wallet-less / read-only**: downloads (`FileGet` / `FileGetPublic`) don't pay, so the reader's antd needs no funded wallet. Each reader's antd also fetches from the network independently, so readers scale in parallel with no shared-antd bottleneck. The **writer's** antd is the one that needs the wallet (uploads pay for storage).
+
+In managed mode (`INDELIBLE_ANTD_MANAGED=true`) indelible spawns and supervises its own antd child process, which satisfies the co-location requirement automatically. In external mode, point each instance's `INDELIBLE_ANTD_URL` at its **local** antd, not a shared one.
 
 ## The one-writer rule (important)
 
