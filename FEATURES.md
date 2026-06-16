@@ -12,8 +12,9 @@
 ### 1.1 Single Binary Deployment
 - Go binary embeds Vue 3 SPA via `go:embed`
 - Single process serves API + static frontend + background workers
+- The background worker tier can be disabled per-instance (`INDELIBLE_WORKERS_ENABLED=false`) to run **stateless reader replicas** behind a load balancer alongside one writer/worker (read-heavy scaling)
 - Configuration via environment variables and/or config file (TOML/YAML)
-- **Database:** SQLite by default (zero-config, embedded), PostgreSQL for production scale
+- **Database:** SQLite by default (zero-config, embedded), PostgreSQL for production scale (required for multi-instance)
   - SQLite: `--db sqlite:///var/indelible/data.db` (or default path in data dir)
   - PostgreSQL: `--db postgres://user:pass@host/indelible`
 - Connects to `antd` daemon over REST for all network operations
@@ -200,6 +201,7 @@ Three permission levels: **read**, **write**, **admin**
 ### 5.4 Download
 - Download by datamap address
 - Respects visibility (public data freely accessible, private requires auth)
+- Cache-friendly: responses carry a strong `ETag` and a long-lived `Cache-Control: private, …, immutable` (the content is immutable and content-addressed). Conditional `If-None-Match` requests return `304 Not Modified` and skip the network fetch — the throughput lever for caching repeat reads
 
 ---
 
@@ -309,12 +311,15 @@ Three permission levels: **read**, **write**, **admin**
 
 ## 9. Logging & Audit
 
-### 9.1 Three-Tier Logging
+### 9.1 Logging Tiers
 | Type | Purpose | Storage | Retention |
 |------|---------|---------|-----------|
-| **Audit** | Security + identity events, permission changes, config changes | `audit_log` table | Never deleted (compliance) |
+| **Audit** | Security + identity events, permission changes, config changes, file uploads/deletes | `audit_log` table (hash-chained, tamper-evident) | Never deleted (compliance) |
+| **File Access** | High-volume file-read telemetry — `file_downloaded`, `file_download_denied` | `file_access_log` table (plain append-only) | Never deleted |
 | **System** | Internal operations (workers, webhooks, errors) | `system_log` table | Configurable retention (default 30 days) |
 | **User** | User-facing view over audit events filtered by `user_id` (logins, uploads, token ops) | Logical view over `audit_log` | Inherits Audit (permanent) |
+
+File **download** events live in the separate `file_access_log` rather than the tamper-evident `audit_log` hash-chain: they are high-volume read telemetry, and keeping them off the chain lets a reader fleet write them concurrently without forking the chain or serializing on its mutex. File **mutations** (upload, delete, and denied attempts) stay in the audit log so they remain tamper-evident.
 
 Logs are also written to stdout as slog JSON for container log aggregation. No file-based logging or rotation — the DB tables are the durable store.
 
@@ -384,7 +389,7 @@ All settings stored in DB, changeable at runtime without restart.
 - **Tag Rules** (`/admin/tag-rules`) — auto-tag rules for uploads (pattern + metadata based)
 - **System Settings** (`/admin/settings`) — all runtime config from section 10, per-card save/discard
 - **Analytics** (`/admin/analytics`) — combined view with cards for token usage, upload volume + success rate, and cost breakdown (per-token / per-department / system-wide)
-- **Logs** (`/admin/logs`) — tabbed view (audit/system/user), search, filter, download
+- **Logs** (`/admin/logs`) — tabbed view (audit/file access/system/user/config), search, filter, download
 
 ---
 

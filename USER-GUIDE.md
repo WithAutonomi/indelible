@@ -109,6 +109,7 @@ use_tls = true
 | `INDELIBLE_SMTP_USE_TLS` | Use STARTTLS | `false` |
 | `INDELIBLE_ANTD_MANAGED` | Spawn and manage antd as child process | `false` |
 | `INDELIBLE_ANTD_BIN` | Path to antd binary | `antd` (searches PATH) |
+| `INDELIBLE_WORKERS_ENABLED` | Run the background worker tier + DB migrations. Set `false` for stateless reader replicas (HTTP/downloads only) in a read/write role split | `true` |
 
 ### Managed antd
 
@@ -975,11 +976,17 @@ Track storage costs:
 
 *Requires admin permissions.*
 
-Three log tiers:
+Log tiers:
 
 ### Audit Logs
 
-Security events: logins, permission changes, config changes, token operations. **Never deleted** (compliance). Filterable by event type, user, and date range.
+Security events: logins, permission changes, config changes, token operations, and file uploads/deletes. Hash-chained and tamper-evident. **Never deleted** (compliance). Filterable by event type, user, and date range.
+
+### File Access Logs
+
+File-read telemetry: `file_downloaded` and `file_download_denied`. Kept in a separate plain, append-only table (not the audit hash-chain) so it can absorb high download volume across multiple instances. Filterable and exportable like the audit log. **Never deleted.**
+
+> File **downloads** are recorded here, not in the Audit log. File uploads and deletes remain in the Audit log.
 
 ### System Logs
 
@@ -987,7 +994,7 @@ Internal operations: worker events, webhook delivery, errors. Searchable by leve
 
 ### User Activity Logs
 
-User actions: uploads, downloads, tag changes. Filterable by user and date range. Subject to log retention settings.
+User actions: logins, uploads, tag changes. Filterable by user and date range. Subject to log retention settings. (File downloads appear in the File Access log above.)
 
 ### Log Retention
 
