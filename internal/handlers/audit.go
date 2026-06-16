@@ -26,3 +26,16 @@ func auditEvent(r *http.Request, logSvc *services.LogService, eventType, severit
 		r.RemoteAddr, r.UserAgent(), chimw.GetReqID(r.Context()),
 	)
 }
+
+// fileAccessEvent is the file-read counterpart to auditEvent (V2-514). It writes
+// to the plain, append-only file_access_log instead of the tamper-evident
+// audit_log hash-chain — used for high-volume download-route telemetry
+// (file_downloaded, file_download_denied) that a reader fleet emits, so reader
+// replicas never serialize on or fork the audit chain. Same fire-and-forget
+// contract as auditEvent: the write error is intentionally ignored.
+func fileAccessEvent(r *http.Request, logSvc *services.LogService, eventType, severity string, userID *int64, detail string) {
+	_ = logSvc.WriteFileAccess(
+		eventType, severity, userID, detail,
+		r.RemoteAddr, r.UserAgent(), chimw.GetReqID(r.Context()),
+	)
+}

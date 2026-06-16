@@ -114,6 +114,12 @@ async function fetchLogs() {
       endpoint = '/api/v2/admin/logs/audit'
       if (eventType.value) params.event_type = eventType.value
       if (severity.value) params.severity = severity.value
+    } else if (activeTab.value === 'file-access') {
+      // V2-514: file_access_log — download-route reads/denials, off the audit
+      // hash-chain. Same row shape + filters as the audit tab.
+      endpoint = '/api/v2/admin/logs/file-access'
+      if (eventType.value) params.event_type = eventType.value
+      if (severity.value) params.severity = severity.value
     } else if (activeTab.value === 'system') {
       endpoint = '/api/v2/admin/logs/system'
       if (level.value) params.level = level.value
@@ -184,7 +190,7 @@ const exporting = ref(false)
 async function exportCurrent() {
   const params: any = {}
   applyDateParams(params)
-  if (activeTab.value === 'audit') {
+  if (activeTab.value === 'audit' || activeTab.value === 'file-access') {
     if (eventType.value) params.event_type = eventType.value
     if (severity.value) params.severity = severity.value
   } else if (activeTab.value === 'system') {
@@ -244,6 +250,7 @@ const severityOptions = computed(() => optionsFromCounts(stats.value?.by_severit
 function statsEndpointFor(tab: string): string {
   if (tab === 'system') return '/api/v2/admin/logs/system/stats'
   if (tab === 'config') return '/api/v2/admin/logs/config/stats'
+  if (tab === 'file-access') return '/api/v2/admin/logs/file-access/stats'
   return '/api/v2/admin/logs/audit/stats' // audit + user share the audit table
 }
 
@@ -317,12 +324,13 @@ onMounted(refreshAll)
     <Tabs :value="activeTab" @update:value="switchTab">
       <TabList>
         <Tab value="audit">Audit</Tab>
+        <Tab value="file-access">File Access</Tab>
         <Tab value="system">System</Tab>
         <Tab value="user">User</Tab>
         <Tab value="config">Config</Tab>
       </TabList>
       <TabPanels>
-        <TabPanel v-for="tab in ['audit', 'system', 'user', 'config']" :key="tab" :value="tab">
+        <TabPanel v-for="tab in ['audit', 'file-access', 'system', 'user', 'config']" :key="tab" :value="tab">
           <!-- Stats header (V2-319) -->
           <div class="grid grid-cols-1 md:grid-cols-4 gap-3 mt-3 mb-4 p-4 bg-surface-50 rounded-lg border border-surface-200">
             <div>
@@ -359,11 +367,11 @@ onMounted(refreshAll)
 
           <!-- Filters -->
           <div class="flex flex-wrap gap-3 items-end mb-4 mt-2">
-            <div v-if="activeTab === 'audit'">
+            <div v-if="activeTab === 'audit' || activeTab === 'file-access'">
               <label class="block text-xs text-surface-500 mb-1">Event Type</label>
-              <InputText v-model="eventType" placeholder="e.g. login" class="w-36" size="small" />
+              <InputText v-model="eventType" :placeholder="activeTab === 'file-access' ? 'e.g. file_downloaded' : 'e.g. login'" class="w-36" size="small" />
             </div>
-            <div v-if="activeTab === 'audit' || activeTab === 'user'">
+            <div v-if="activeTab === 'audit' || activeTab === 'user' || activeTab === 'file-access'">
               <label class="block text-xs text-surface-500 mb-1">Severity</label>
               <Select v-model="severity" :options="severityOptions" optionLabel="label" optionValue="value" class="w-32" />
             </div>
@@ -405,7 +413,7 @@ onMounted(refreshAll)
                 <span class="text-xs text-surface-400 whitespace-nowrap">{{ new Date(data.created_at).toLocaleString() }}</span>
               </template>
             </Column>
-            <Column v-if="activeTab === 'audit' || activeTab === 'user'" field="event_type" header="Event" sortable>
+            <Column v-if="activeTab === 'audit' || activeTab === 'user' || activeTab === 'file-access'" field="event_type" header="Event" sortable>
               <template #body="{ data }">
                 <span class="text-sm">{{ data.event_type }}</span>
               </template>
@@ -447,12 +455,12 @@ onMounted(refreshAll)
                 <span class="text-sm text-surface-600 max-w-md truncate block">{{ activeTab === 'system' ? data.message : data.detail }}</span>
               </template>
             </Column>
-            <Column v-if="activeTab === 'audit' || activeTab === 'user'" field="severity" header="Severity" sortable>
+            <Column v-if="activeTab === 'audit' || activeTab === 'user' || activeTab === 'file-access'" field="severity" header="Severity" sortable>
               <template #body="{ data }">
                 <Tag :value="data.severity" :severity="severitySeverity(data.severity)" />
               </template>
             </Column>
-            <Column v-if="activeTab === 'audit' || activeTab === 'config'" field="ip_address" header="IP" sortable>
+            <Column v-if="activeTab === 'audit' || activeTab === 'config' || activeTab === 'file-access'" field="ip_address" header="IP" sortable>
               <template #body="{ data }">
                 <span class="text-xs text-surface-400">{{ data.ip_address || '-' }}</span>
               </template>
