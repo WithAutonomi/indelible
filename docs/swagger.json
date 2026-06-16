@@ -1591,6 +1591,15 @@
                                 "type": "string"
                             }
                         }
+                    },
+                    "503": {
+                        "description": "Unavailable on a reader replica with no wallet key",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
                     }
                 }
             }
@@ -1658,6 +1667,15 @@
                     },
                     "500": {
                         "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Unavailable on a reader replica with no wallet key",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -3392,6 +3410,15 @@
                     },
                     "500": {
                         "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Unavailable on a reader replica with no wallet key",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {

@@ -39,6 +39,37 @@ func TestLoad_WorkersEnabledFalseDisables(t *testing.T) {
 	}
 }
 
+func TestLoad_ReaderBootsWithoutWalletKey(t *testing.T) {
+	// Reader role (workers off): wallet key is not required — readers never
+	// decrypt a wallet or OIDC secret (V2-518).
+	t.Setenv("INDELIBLE_JWT_SECRET", "test-secret-at-least-32-bytes-long-xx")
+	t.Setenv("INDELIBLE_WORKERS_ENABLED", "false")
+	// Intentionally no INDELIBLE_WALLET_ENCRYPTION_KEY.
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("reader Load without wallet key should succeed, got: %v", err)
+	}
+	if cfg.WorkersEnabled {
+		t.Error("WorkersEnabled = true, want false")
+	}
+	// A (placeholder) wallet keyring is still built so consumers don't nil-deref;
+	// it's never used to protect real data on a reader.
+	if cfg.WalletKeyring() == nil {
+		t.Error("WalletKeyring() = nil, want a non-nil keyring")
+	}
+}
+
+func TestLoad_WalletKeyRequiredWhenWorkersEnabled(t *testing.T) {
+	// The writer / all-in-one role (workers on, the default) still requires it.
+	t.Setenv("INDELIBLE_JWT_SECRET", "test-secret-at-least-32-bytes-long-xx")
+	// No wallet key, workers default to enabled.
+
+	if _, err := Load(""); err == nil {
+		t.Fatal("expected Load to fail without a wallet key when workers are enabled")
+	}
+}
+
 func TestLoad_AdminSeedFromEnv(t *testing.T) {
 	setRequiredSecrets(t)
 	t.Setenv("INDELIBLE_ADMIN_EMAIL", "Boss@Example.COM")

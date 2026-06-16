@@ -79,11 +79,27 @@ type Config struct {
 	secrets       secrets.Provider
 	walletKeyring *crypto.Keyring
 	jwtKeyring    *crypto.Keyring
+
+	// walletKeyUnconfigured is set by Load only for a reader replica that booted
+	// without a real wallet key (V2-518). It gates WalletKeyConfigured(). Kept as
+	// a flag (not derived from the key value) so a directly-constructed Config —
+	// e.g. tests that use the all-zeros placeholder as a working key — still
+	// reports the key as configured.
+	walletKeyUnconfigured bool
 }
 
 // Secrets returns the configured secrets Provider (V2-450). Use it to fetch a
 // keyring by logical name (e.g. secrets.WalletEncryption).
 func (c *Config) Secrets() secrets.Provider { return c.secrets }
+
+// WalletKeyConfigured reports whether the instance has a usable wallet/OIDC
+// encryption key. It is false only on a reader replica that Load booted without
+// one (V2-518). Callers that ENCRYPT wallet or OIDC secrets must refuse when
+// this is false, rather than seal data under the placeholder key into the shared
+// database (which the writer, holding the real key, could not decrypt).
+func (c *Config) WalletKeyConfigured() bool {
+	return !c.walletKeyUnconfigured
+}
 
 // WalletKeyring returns the active wallet/OIDC encryption keyring (active key +
 // decrypt-only history). Load pre-builds it via the provider. As a fallback for
@@ -363,9 +379,24 @@ func Load(path string) (*Config, error) {
 		}
 	}
 
-	// Require wallet encryption key
-	if cfg.WalletEncryptionKey == "" || cfg.WalletEncryptionKey == "0000000000000000000000000000000000000000000000000000000000000000" {
-		return nil, fmt.Errorf("wallet_encryption_key is required (set INDELIBLE_WALLET_ENCRYPTION_KEY or wallet_encryption_key in config); generate with: openssl rand -hex 32")
+	// Require wallet encryption key — except on reader replicas (V2-518). A
+	// reader (WorkersEnabled=false) never decrypts an EVM wallet or OIDC client
+	// secret: the worker tier is off, and OIDC login / wallet admin run on the
+	// writer. So it boots without the key. An empty wallet keyring is still built
+	// below (NewKeyring tolerates ""), so the unused wallet/OIDC routes error
+	// cleanly rather than panic if reached. JWT_SECRET is still required for
+	// everyone — readers verify sessions and API tokens against the DB.
+	const placeholderWalletKey = "0000000000000000000000000000000000000000000000000000000000000000"
+	if cfg.WalletEncryptionKey == "" || cfg.WalletEncryptionKey == placeholderWalletKey {
+		if cfg.WorkersEnabled {
+			return nil, fmt.Errorf("wallet_encryption_key is required (set INDELIBLE_WALLET_ENCRYPTION_KEY or wallet_encryption_key in config); generate with: openssl rand -hex 32")
+		}
+		// Reader role: no real wallet key. Pin the all-zeros placeholder (a valid
+		// 32-byte key) so the *unused* wallet keyring still constructs and nothing
+		// nil-derefs, and flag the key as unconfigured so encrypt entry points
+		// (wallet/OIDC create) refuse rather than seal data under the placeholder.
+		cfg.WalletEncryptionKey = placeholderWalletKey
+		cfg.walletKeyUnconfigured = true
 	}
 
 	// Build the secrets provider and cache its keyrings (V2-450). This also

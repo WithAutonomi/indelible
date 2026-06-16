@@ -1874,6 +1874,12 @@ paths:
             additionalProperties:
               type: string
             type: object
+        "503":
+          description: Unavailable on a reader replica with no wallet key
+          schema:
+            additionalProperties:
+              type: string
+            type: object
       security:
       - BearerAuth: []
       summary: Create an OIDC provider
@@ -1958,6 +1964,12 @@ paths:
             type: object
         "500":
           description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Unavailable on a reader replica with no wallet key
           schema:
             additionalProperties:
               type: string
@@ -3043,6 +3055,12 @@ paths:
             type: object
         "500":
           description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Unavailable on a reader replica with no wallet key
           schema:
             additionalProperties:
               type: string
