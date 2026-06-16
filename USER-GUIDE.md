@@ -109,7 +109,7 @@ use_tls = true
 | `INDELIBLE_SMTP_USE_TLS` | Use STARTTLS | `false` |
 | `INDELIBLE_ANTD_MANAGED` | Spawn and manage antd as child process | `false` |
 | `INDELIBLE_ANTD_BIN` | Path to antd binary | `antd` (searches PATH) |
-| `INDELIBLE_WORKERS_ENABLED` | Run the background worker tier + DB migrations. Set `false` for stateless reader replicas (HTTP/downloads only) in a read/write role split | `true` |
+| `INDELIBLE_WORKERS_ENABLED` | Run the background worker tier + DB migrations. Set `false` for stateless reader replicas (HTTP/downloads only) in a read/write role split — see [Scaling](docs/guides/scaling.md) | `true` |
 
 ### Managed antd
 

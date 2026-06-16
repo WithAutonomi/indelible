@@ -12,7 +12,7 @@
 ### 1.1 Single Binary Deployment
 - Go binary embeds Vue 3 SPA via `go:embed`
 - Single process serves API + static frontend + background workers
-- The background worker tier can be disabled per-instance (`INDELIBLE_WORKERS_ENABLED=false`) to run **stateless reader replicas** behind a load balancer alongside one writer/worker (read-heavy scaling)
+- The background worker tier can be disabled per-instance (`INDELIBLE_WORKERS_ENABLED=false`) to run **stateless reader replicas** behind a load balancer alongside one writer/worker — see [Scaling: read-heavy deployments](docs/guides/scaling.md)
 - Configuration via environment variables and/or config file (TOML/YAML)
 - **Database:** SQLite by default (zero-config, embedded), PostgreSQL for production scale (required for multi-instance)
   - SQLite: `--db sqlite:///var/indelible/data.db` (or default path in data dir)
@@ -319,7 +319,7 @@ Three permission levels: **read**, **write**, **admin**
 | **System** | Internal operations (workers, webhooks, errors) | `system_log` table | Configurable retention (default 30 days) |
 | **User** | User-facing view over audit events filtered by `user_id` (logins, uploads, token ops) | Logical view over `audit_log` | Inherits Audit (permanent) |
 
-File **download** events live in the separate `file_access_log` rather than the tamper-evident `audit_log` hash-chain: they are high-volume read telemetry, and keeping them off the chain lets a reader fleet write them concurrently without forking the chain or serializing on its mutex. File **mutations** (upload, delete, and denied attempts) stay in the audit log so they remain tamper-evident.
+File **download** events live in the separate `file_access_log` rather than the tamper-evident `audit_log` hash-chain: they are high-volume read telemetry, and keeping them off the chain lets a reader fleet write them concurrently without forking the chain or serializing on its mutex (see [Scaling](docs/guides/scaling.md)). File **mutations** (upload, delete, and denied attempts) stay in the audit log so they remain tamper-evident.
 
 Logs are also written to stdout as slog JSON for container log aggregation. No file-based logging or rotation — the DB tables are the durable store.
 
