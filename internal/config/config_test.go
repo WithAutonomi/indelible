@@ -14,6 +14,31 @@ func setRequiredSecrets(t *testing.T) {
 	t.Setenv("INDELIBLE_WALLET_ENCRYPTION_KEY", "1111111111111111111111111111111111111111111111111111111111111111")
 }
 
+func TestLoad_WorkersEnabledDefaultsTrue(t *testing.T) {
+	setRequiredSecrets(t)
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.WorkersEnabled {
+		t.Error("WorkersEnabled = false, want true by default (all-in-one / writer role)")
+	}
+}
+
+func TestLoad_WorkersEnabledFalseDisables(t *testing.T) {
+	setRequiredSecrets(t)
+	t.Setenv("INDELIBLE_WORKERS_ENABLED", "false")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.WorkersEnabled {
+		t.Error("WorkersEnabled = true, want false when INDELIBLE_WORKERS_ENABLED=false (reader role)")
+	}
+}
+
 func TestLoad_AdminSeedFromEnv(t *testing.T) {
 	setRequiredSecrets(t)
 	t.Setenv("INDELIBLE_ADMIN_EMAIL", "Boss@Example.COM")
