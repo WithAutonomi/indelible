@@ -1488,6 +1488,124 @@ paths:
       summary: Config-audit statistics
       tags:
       - 'Admin: Logs'
+  /admin/logs/file-access:
+    get:
+      description: Return file-access entries (file_downloaded, file_download_denied).
+        Plain append-only telemetry — NOT part of the tamper-evident audit hash-chain
+        (V2-514).
+      parameters:
+      - description: Filter by event type
+        in: query
+        name: event_type
+        type: string
+      - description: Filter by severity (info|warn|error)
+        in: query
+        name: severity
+        type: string
+      - description: Filter by user ID
+        in: query
+        name: user_id
+        type: integer
+      - description: Start date (YYYY-MM-DD)
+        in: query
+        name: since
+        type: string
+      - description: End date (YYYY-MM-DD)
+        in: query
+        name: until
+        type: string
+      - description: Max results
+        in: query
+        name: limit
+        type: integer
+      - description: Offset for pagination
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Query file-access log
+      tags:
+      - 'Admin: Logs'
+  /admin/logs/file-access/export:
+    get:
+      description: Stream the file-access log under the GET filter as application/x-ndjson.
+        Caps at 1M rows; on exceedance a trailing {"error":...} line is appended.
+      parameters:
+      - description: Filter by event type
+        in: query
+        name: event_type
+        type: string
+      - description: Filter by severity (info|warn|error)
+        in: query
+        name: severity
+        type: string
+      - description: Filter by user ID
+        in: query
+        name: user_id
+        type: integer
+      - description: Start date (YYYY-MM-DD)
+        in: query
+        name: since
+        type: string
+      - description: End date (YYYY-MM-DD)
+        in: query
+        name: until
+        type: string
+      produces:
+      - application/x-ndjson
+      responses:
+        "200":
+          description: NDJSON stream
+          schema:
+            type: string
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Export file-access log as JSON Lines
+      tags:
+      - 'Admin: Logs'
+  /admin/logs/file-access/stats:
+    get:
+      description: Aggregate counts, date range, disk usage, and last-30-day buckets
+        for file_access_log (V2-514).
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_WithAutonomi_indelible_internal_services.LogStats'
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: File-access log statistics
+      tags:
+      - 'Admin: Logs'
   /admin/logs/system:
     get:
       description: |-

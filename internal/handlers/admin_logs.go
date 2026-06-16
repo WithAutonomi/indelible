@@ -248,6 +248,99 @@ func toConfigAuditResponse(e *services.ConfigAuditEntry) configAuditResponse {
 	return r
 }
 
+// @Summary      Query file-access log
+// @Description  Return file-access entries (file_downloaded, file_download_denied). Plain append-only telemetry — NOT part of the tamper-evident audit hash-chain (V2-514).
+// @Tags         Admin: Logs
+// @Produce      json
+// @Param        event_type query string false "Filter by event type"
+// @Param        severity   query string false "Filter by severity (info|warn|error)"
+// @Param        user_id    query int    false "Filter by user ID"
+// @Param        since      query string false "Start date (YYYY-MM-DD)"
+// @Param        until      query string false "End date (YYYY-MM-DD)"
+// @Param        limit      query int    false "Max results"
+// @Param        offset     query int    false "Offset for pagination"
+// @Success      200 {object} map[string]interface{}
+// @Failure      500 {object} map[string]string
+// @Router       /admin/logs/file-access [get]
+// @Security     BearerAuth
+// AdminFileAccessLogs returns file-access log entries (V2-514).
+func AdminFileAccessLogs(db *database.DB) http.HandlerFunc {
+	logSvc := services.NewLogService(db)
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		eventType, severity, userID, since, until, limit, offset := parseLogFilters(r)
+
+		entries, total, err := logSvc.QueryFileAccessLogs(eventType, severity, userID, since, until, limit, offset)
+		if err != nil {
+			jsonError(w, "failed to query file-access logs", http.StatusInternalServerError)
+			return
+		}
+
+		resp := make([]auditLogResponse, 0, len(entries))
+		for _, e := range entries {
+			resp = append(resp, toAuditLogResponse(e))
+		}
+
+		jsonResponse(w, http.StatusOK, map[string]any{
+			"entries": resp,
+			"total":   total,
+			"limit":   limit,
+			"offset":  offset,
+		})
+	}
+}
+
+// @Summary      Export file-access log as JSON Lines
+// @Description  Stream the file-access log under the GET filter as application/x-ndjson. Caps at 1M rows; on exceedance a trailing {"error":...} line is appended.
+// @Tags         Admin: Logs
+// @Produce      application/x-ndjson
+// @Param        event_type query string false "Filter by event type"
+// @Param        severity   query string false "Filter by severity (info|warn|error)"
+// @Param        user_id    query int    false "Filter by user ID"
+// @Param        since      query string false "Start date (YYYY-MM-DD)"
+// @Param        until      query string false "End date (YYYY-MM-DD)"
+// @Success      200 {string} string "NDJSON stream"
+// @Failure      500 {object} map[string]string
+// @Router       /admin/logs/file-access/export [get]
+// @Security     BearerAuth
+// AdminExportFileAccessLogs streams file-access entries as JSON Lines (V2-514).
+func AdminExportFileAccessLogs(db *database.DB) http.HandlerFunc {
+	logSvc := services.NewLogService(db)
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		eventType, severity, userID, since, until, _, _ := parseLogFilters(r)
+		writeExportHeaders(w, "file-access")
+		enc := json.NewEncoder(w)
+		_, err := logSvc.StreamFileAccessLogs(eventType, severity, userID, since, until, func(e *services.AuditLogEntry) error {
+			return enc.Encode(toAuditLogResponse(e))
+		})
+		if err != nil {
+			writeExportError(w, err)
+		}
+	}
+}
+
+// @Summary      File-access log statistics
+// @Description  Aggregate counts, date range, disk usage, and last-30-day buckets for file_access_log (V2-514).
+// @Tags         Admin: Logs
+// @Produce      json
+// @Success      200 {object} services.LogStats
+// @Failure      500 {object} map[string]string
+// @Router       /admin/logs/file-access/stats [get]
+// @Security     BearerAuth
+// AdminFileAccessStats returns aggregate file_access_log statistics (V2-514).
+func AdminFileAccessStats(db *database.DB) http.HandlerFunc {
+	logSvc := services.NewLogService(db)
+	return func(w http.ResponseWriter, r *http.Request) {
+		st, err := logSvc.QueryFileAccessStats()
+		if err != nil {
+			jsonError(w, "failed to compute file-access stats", http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, http.StatusOK, st)
+	}
+}
+
 // @Summary      Query config-audit log
 // @Description  Return setting-change entries (who changed what, when, from where). Permanent — never deleted.
 // @Tags         Admin: Logs

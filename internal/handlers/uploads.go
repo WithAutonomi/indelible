@@ -667,9 +667,11 @@ func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 
 		// Users can only download their own uploads (unless public — future: allow public access)
 		if upload.UserID != userID {
-			// Audit the denied cross-user access attempt (returns 404 to the client
+			// Log the denied cross-user access attempt (returns 404 to the client
 			// to avoid leaking existence, but the attempt is security-relevant).
-			auditEvent(r, logSvc, "file_download_denied", "warn", &userID,
+			// Download-route events go to the plain file_access_log, not the audit
+			// hash-chain (V2-514), so reader replicas stay chain-free.
+			fileAccessEvent(r, logSvc, "file_download_denied", "warn", &userID,
 				fmt.Sprintf("uuid=%s reason=not_owner", uploadUUID))
 			jsonError(w, "upload not found", http.StatusNotFound)
 			return
@@ -724,8 +726,11 @@ func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		// Audit the successful access decision before streaming the bytes.
-		auditEvent(r, logSvc, "file_downloaded", "info", &userID,
+		// Record the successful access decision before streaming the bytes. This
+		// high-volume read telemetry goes to the plain file_access_log rather than
+		// the audit hash-chain (V2-514) so concurrent downloads across a reader
+		// fleet neither fork the chain nor serialize on its mutex.
+		fileAccessEvent(r, logSvc, "file_downloaded", "info", &userID,
 			fmt.Sprintf("uuid=%s filename=%s visibility=%s", upload.UUID, upload.OriginalFilename, upload.Visibility))
 
 		// Stream the file back. Content-Disposition: attachment already forces a
