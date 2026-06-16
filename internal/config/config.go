@@ -41,6 +41,15 @@ type Config struct {
 	// (Vault, cloud KMS) plug in behind the secrets.Provider seam (V2-450).
 	SecretsBackend string `toml:"secrets_backend"`
 
+	// WorkersEnabled gates the background worker tier (upload processing, log
+	// retention, disk alerts, audit anchoring, system monitor, idempotency
+	// cleanup) and DB migrations. Default true = a normal all-in-one instance
+	// or the single "writer" in a read/write role split (V2-515). Set false for
+	// stateless "reader" replicas that only serve HTTP (downloads): they run no
+	// workers, need no wallet, and skip migrations (the writer owns schema). See
+	// the reader-fleet design in V2-513.
+	WorkersEnabled bool `toml:"workers_enabled"`
+
 	// Managed antd — spawn and monitor antd as a child process
 	AntdManaged bool   `toml:"antd_managed"` // Spawn and manage antd (default: false)
 	AntdBin     string `toml:"antd_bin"`     // Path to antd binary (default: "antd" — searches PATH)
@@ -183,10 +192,11 @@ func (c *Config) DBDriver() string {
 // environment variables. Defaults are applied for any unset values.
 func Load(path string) (*Config, error) {
 	cfg := &Config{
-		Port:    8080,
-		DBURL:   "sqlite:///var/lib/indelible/data.db",
-		AntdURL: "http://localhost:8082",
-		DataDir: "/var/lib/indelible",
+		Port:           8080,
+		DBURL:          "sqlite:///var/lib/indelible/data.db",
+		AntdURL:        "http://localhost:8082",
+		DataDir:        "/var/lib/indelible",
+		WorkersEnabled: true, // default = run workers (all-in-one / writer role)
 	}
 
 	// Load from TOML file if provided
@@ -300,6 +310,12 @@ func Load(path string) (*Config, error) {
 			return nil, fmt.Errorf("reading INDELIBLE_ADMIN_PASSWORD_FILE: %w", err)
 		}
 		cfg.AdminPassword = strings.TrimSpace(string(b))
+	}
+	// Default-true flag: only an explicit false/0 disables the worker tier, so a
+	// reader replica opts out with INDELIBLE_WORKERS_ENABLED=false; any unset or
+	// truthy value keeps the default (workers on).
+	if v := os.Getenv("INDELIBLE_WORKERS_ENABLED"); v != "" {
+		cfg.WorkersEnabled = v == "true" || v == "1"
 	}
 	if v := os.Getenv("INDELIBLE_ANTD_MANAGED"); v != "" {
 		cfg.AntdManaged = v == "true" || v == "1"

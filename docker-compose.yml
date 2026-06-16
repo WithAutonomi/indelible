@@ -58,6 +58,12 @@ services:
       # --- optional ---
       # INDELIBLE_CORS_ORIGINS: https://files.acme.com
       # INDELIBLE_TRUSTED_PROXIES: 10.0.0.0/8,172.16.0.0/12
+      # Role split (read-heavy scaling): leave unset/true for an all-in-one
+      # instance or the single "writer" that owns the wallet + workers. Set
+      # "false" on stateless "reader" replicas that only serve HTTP/downloads —
+      # they run no workers, need no wallet, and skip migrations (the writer
+      # owns schema). Point all instances at the same Postgres.
+      # INDELIBLE_WORKERS_ENABLED: "false"
       # INDELIBLE_SMTP_HOST: smtp.acme.com
       # INDELIBLE_SMTP_FROM: no-reply@acme.com
     depends_on:

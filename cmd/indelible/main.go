@@ -114,13 +114,21 @@ func main() {
 	}
 	defer db.Close()
 
-	// Run migrations
-	if err := database.Migrate(db, cfg.DBDriver()); err != nil {
-		slog.Error("failed to run migrations", "error", err)
-		if antdMgr != nil {
-			_ = antdMgr.Stop()
+	// Run migrations — the worker-enabled "writer" instance owns the schema. A
+	// reader replica (INDELIBLE_WORKERS_ENABLED=false) skips DDL and relies on
+	// the writer having applied migrations; this keeps schema ownership on one
+	// node and sidesteps concurrent-boot migration races across the fleet
+	// (V2-515). Deploy ordering: the writer must be current before readers serve.
+	if cfg.WorkersEnabled {
+		if err := database.Migrate(db, cfg.DBDriver()); err != nil {
+			slog.Error("failed to run migrations", "error", err)
+			if antdMgr != nil {
+				_ = antdMgr.Stop()
+			}
+			os.Exit(1)
 		}
-		os.Exit(1)
+	} else {
+		slog.Info("workers disabled (reader role): skipping migrations — the writer instance owns schema; ensure it has applied them")
 	}
 
 	// Seed the bootstrap admin if configured and none exists yet. Self-
@@ -160,37 +168,46 @@ func main() {
 	// can't slip past production triage.
 	services.LogStartupNotifierStatus(services.NewNotifier(cfg, db))
 
-	// Start background workers
-	uploadWorker := worker.NewUploadWorker(db, cfg)
-	uploadWorker.Start()
-	defer uploadWorker.Stop()
+	// Start background workers — writer role only (V2-515). A reader replica
+	// (INDELIBLE_WORKERS_ENABLED=false) serves HTTP/downloads with no workers,
+	// so it needs no wallet and triggers none of the singleton side effects that
+	// are unsafe to run on more than one node (EVM nonce use, audit-anchor pay,
+	// upload-queue dequeue, hash-chain writes). Defers here are function-scoped,
+	// so they still fire on shutdown.
+	if cfg.WorkersEnabled {
+		uploadWorker := worker.NewUploadWorker(db, cfg)
+		uploadWorker.Start()
+		defer uploadWorker.Stop()
 
-	logRetentionWorker := worker.NewLogRetentionWorker(db)
-	logRetentionWorker.Start()
-	defer logRetentionWorker.Stop()
+		logRetentionWorker := worker.NewLogRetentionWorker(db)
+		logRetentionWorker.Start()
+		defer logRetentionWorker.Stop()
 
-	diskAlertWorker := worker.NewDiskAlertWorker(db, cfg)
-	diskAlertWorker.Start()
-	defer diskAlertWorker.Stop()
+		diskAlertWorker := worker.NewDiskAlertWorker(db, cfg)
+		diskAlertWorker.Start()
+		defer diskAlertWorker.Stop()
 
-	// Audit-chain anchoring: periodically commit the audit-log hash-chain head
-	// to Autonomi (opt-in; cost-gated). See audit_anchor_enabled setting.
-	auditAnchorWorker := worker.NewAuditAnchorWorker(db, cfg)
-	auditAnchorWorker.Start()
-	defer auditAnchorWorker.Stop()
+		// Audit-chain anchoring: periodically commit the audit-log hash-chain head
+		// to Autonomi (opt-in; cost-gated). See audit_anchor_enabled setting.
+		auditAnchorWorker := worker.NewAuditAnchorWorker(db, cfg)
+		auditAnchorWorker.Start()
+		defer auditAnchorWorker.Stop()
 
-	// System monitor: antd health, wallet balance, queue backlog, failure rate, etc.
-	sysMonitor := worker.NewSystemMonitor(db, cfg)
-	sysMonitor.Start()
-	defer sysMonitor.Stop()
+		// System monitor: antd health, wallet balance, queue backlog, failure rate, etc.
+		sysMonitor := worker.NewSystemMonitor(db, cfg)
+		sysMonitor.Start()
+		defer sysMonitor.Stop()
 
-	// S15: Idempotency key cleanup (every 5 minutes instead of hourly)
-	go func() {
-		for {
-			time.Sleep(5 * time.Minute)
-			middleware.CleanupIdempotencyKeys(db)
-		}
-	}()
+		// S15: Idempotency key cleanup (every 5 minutes instead of hourly)
+		go func() {
+			for {
+				time.Sleep(5 * time.Minute)
+				middleware.CleanupIdempotencyKeys(db)
+			}
+		}()
+	} else {
+		slog.Info("workers disabled (reader role): serving HTTP only — no upload/log-retention/disk-alert/audit-anchor/system-monitor workers")
+	}
 
 	// Start server
 	srv := &http.Server{
