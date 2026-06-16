@@ -114,6 +114,7 @@ func AdminListOIDCProviders(db *database.DB, cfg *config.Config) http.HandlerFun
 // @Success      201 {object} oidcProviderResponse
 // @Failure      400 {object} map[string]string
 // @Failure      500 {object} map[string]string
+// @Failure      503 {object} map[string]string "Unavailable on a reader replica with no wallet key"
 // @Router       /admin/oidc/providers [post]
 // @Security     BearerAuth
 func AdminCreateOIDCProvider(db *database.DB, cfg *config.Config) http.HandlerFunc {
@@ -121,6 +122,9 @@ func AdminCreateOIDCProvider(db *database.DB, cfg *config.Config) http.HandlerFu
 	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !requireWalletKey(w, cfg) {
+			return
+		}
 		var req createOIDCRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			jsonError(w, "invalid request body", http.StatusBadRequest)
@@ -162,6 +166,7 @@ func AdminCreateOIDCProvider(db *database.DB, cfg *config.Config) http.HandlerFu
 // @Failure      400 {object} map[string]string
 // @Failure      404 {object} map[string]string
 // @Failure      500 {object} map[string]string
+// @Failure      503 {object} map[string]string "Unavailable on a reader replica with no wallet key"
 // @Router       /admin/oidc/providers/{id} [put]
 // @Security     BearerAuth
 func AdminUpdateOIDCProvider(db *database.DB, cfg *config.Config) http.HandlerFunc {
@@ -169,6 +174,9 @@ func AdminUpdateOIDCProvider(db *database.DB, cfg *config.Config) http.HandlerFu
 	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !requireWalletKey(w, cfg) {
+			return
+		}
 		id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 		if err != nil {
 			jsonError(w, "invalid provider id", http.StatusBadRequest)

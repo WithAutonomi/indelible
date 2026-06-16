@@ -85,14 +85,30 @@ func AdminListWallets(db *database.DB, cfg *config.Config) http.HandlerFunc {
 // @Success      201 {object} map[string]interface{}
 // @Failure      400 {object} map[string]string
 // @Failure      500 {object} map[string]string
+// @Failure      503 {object} map[string]string "Unavailable on a reader replica with no wallet key"
 // @Router       /admin/wallets [post]
 // @Security     BearerAuth
+// requireWalletKey guards endpoints that ENCRYPT wallet or OIDC secrets. On a
+// reader replica that booted without a wallet encryption key (V2-518) it writes
+// a 503 and returns false, so privileged write data is never sealed under the
+// placeholder key into the shared DB — these operations belong on the writer.
+func requireWalletKey(w http.ResponseWriter, cfg *config.Config) bool {
+	if !cfg.WalletKeyConfigured() {
+		jsonError(w, "wallet/OIDC management is unavailable on this instance (no wallet encryption key configured); perform it on the writer instance", http.StatusServiceUnavailable)
+		return false
+	}
+	return true
+}
+
 // AdminCreateWallet adds a new wallet with encrypted key storage.
 func AdminCreateWallet(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	walletSvc := services.NewWalletService(db, cfg.WalletKeyring())
 	logSvc := services.NewLogService(db)
 
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !requireWalletKey(w, cfg) {
+			return
+		}
 		var req createWalletRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			jsonError(w, "invalid request body", http.StatusBadRequest)
