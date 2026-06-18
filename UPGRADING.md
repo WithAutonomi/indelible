@@ -4,7 +4,46 @@ Operator-facing notes for upgrades that need an action. Most upgrades are a
 plain `docker compose pull && docker compose up -d` (data volumes persist) and
 need nothing from this file — only the entries below call for a manual step.
 
-## Unreleased
+## v0.11.0 — 2026-06-18
+
+### Bundled antd updated to v0.10.0
+
+The bundled antd daemon (and the `antd-go` client module) move to **v0.10.0**. Container
+deployments get the new daemon automatically on `docker compose pull`. **If you run antd
+yourself (external-signer mode)**, update your antd daemon to v0.10.0 so it stays in lockstep
+with the binary Indelible was built against.
+
+### Webhook signatures are now replay-resistant (action for webhook consumers)
+
+The `X-Signature-256` HMAC is now computed over `X-Webhook-Timestamp + "." + body` (Stripe-style)
+instead of over `body` alone. Header names are unchanged. **If any system verifies webhook
+signatures**, update verification to:
+
+    expected = "sha256=" + hex(HMAC_SHA256(secret, X-Webhook-Timestamp + "." + raw_body))
+
+(and reject stale timestamps for replay protection). Verifying against the body alone will now
+reject every delivery.
+
+### Webhook and OIDC egress is SSRF-guarded
+
+Outbound webhook deliveries — and OIDC issuer discovery — now refuse to connect to loopback,
+private (RFC1918/ULA), link-local, and cloud-metadata addresses. **If a configured webhook
+target or your OIDC issuer resolves to a private/internal IP** (including a public hostname that
+resolves internally via split-horizon DNS), those calls will now fail. Point them at a
+publicly-resolvable address, or keep the integration off this instance.
+
+### /health no longer exposes diagnostics anonymously
+
+Liveness is unchanged — `/health` still returns `200`/`503` with `status`/`database`/`antd` to
+any caller, so uptime probes keep working. The detailed fields (version, build commit, EVM
+network, payment-contract addresses, antd URL, queue depth) are now returned **only to an
+authenticated admin**. Repoint any monitoring that scraped those detail fields anonymously.
+
+### Registration no longer logs the user in
+
+Only relevant if you have enabled self-registration: a successful `POST /auth/register` now
+returns `202` with a neutral body and **no token or session** — the client must follow with an
+explicit login. See the self-registration note below.
 
 ### File download events moved to a separate File Access log
 
