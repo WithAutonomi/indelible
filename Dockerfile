@@ -7,7 +7,7 @@
 # platform); keep ANTD_IMAGE in lockstep with .antd-version. release.yml
 # passes the pinned tag explicitly; this default keeps `docker compose
 # up --build` and bare `docker build` working out of the box.
-ARG ANTD_IMAGE=ghcr.io/withautonomi/antd:v0.9.0
+ARG ANTD_IMAGE=ghcr.io/withautonomi/antd:v0.10.0
 FROM ${ANTD_IMAGE} AS antd
 
 # Build frontend on the native arch — JS output is arch-independent.

@@ -12,8 +12,8 @@ github.com/StackExchange/wmi v1.2.1 h1:VIkavFPXSjcnS+O8yTq7NI32k0R5Aj+v39y29VYDO
 github.com/StackExchange/wmi v1.2.1/go.mod h1:rcmrprowKIVzvc+NUiLncP2uuArMWLCbu9SBzvHz7e8=
 github.com/VictoriaMetrics/fastcache v1.13.0 h1:AW4mheMR5Vd9FkAPUv+NH6Nhw+fmbTMGMsNAoA/+4G0=
 github.com/VictoriaMetrics/fastcache v1.13.0/go.mod h1:hHXhl4DA2fTL2HTZDJFXWgW0LNjo6B+4aj2Wmng3TjU=
-github.com/WithAutonomi/ant-sdk/antd-go v0.8.0 h1:dLrV1Cx9+T4RdGiTaPJirVBJIVthwiga3r7OktMZci4=
-github.com/WithAutonomi/ant-sdk/antd-go v0.8.0/go.mod h1:ZSOY0f3zD3ypyM5wSRD62QK4CaIbxUgPkHe3b5ABNkw=
+github.com/WithAutonomi/ant-sdk/antd-go v0.10.0 h1:YOjCoBByqZHXWCndVWBS7F3hWAoSHIlXocFrIiJz0bc=
+github.com/WithAutonomi/ant-sdk/antd-go v0.10.0/go.mod h1:ZSOY0f3zD3ypyM5wSRD62QK4CaIbxUgPkHe3b5ABNkw=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
 github.com/beorn7/perks v1.0.1/go.mod h1:G2ZrVWU2WbWT9wwq4/hrbKbnv/1ERSJQ0ibhJ6rlkpw=
 github.com/bits-and-blooms/bitset v1.20.0 h1:2F+rfL86jE2d/bmw7OhqUg2Sj/1rURkBn3MdfoPyRVU=
