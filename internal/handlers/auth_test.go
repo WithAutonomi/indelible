@@ -3,6 +3,7 @@ package handlers_test
 import (
 	"bytes"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -27,11 +28,27 @@ const (
 	seedAdminPassword = "password123"
 )
 
+// closedAntdURL returns a loopback URL whose port is guaranteed closed: we bind
+// an ephemeral port and release it immediately, so an antd health probe against
+// it fails fast (connection refused). This keeps tests that assert "antd is
+// unreachable" hermetic even on a box running a real antd on the usual port —
+// otherwise the /health handler's live probe (stubs.go) would reach it and
+// populate the antd_* fields such tests expect to be unset.
+func closedAntdURL(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve closed port: %v", err)
+	}
+	defer l.Close()
+	return "http://" + l.Addr().String()
+}
+
 func setupTestRouter(t *testing.T) http.Handler {
 	t.Helper()
 	cfg := &config.Config{
 		Port:                8080,
-		AntdURL:             "http://localhost:8082",
+		AntdURL:             closedAntdURL(t),
 		JWTSecret:           "test-secret-for-jwt-signing-1234567890",
 		WalletEncryptionKey: "0000000000000000000000000000000000000000000000000000000000000000",
 		AdminEmail:          seedAdminEmail,
