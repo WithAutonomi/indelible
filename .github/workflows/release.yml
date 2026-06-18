@@ -168,6 +168,12 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
+          # Only the per-platform binary artifacts — not the `*.dockerbuild`
+          # build-metadata blob the docker job auto-uploads. The release doesn't
+          # use it, and once it failed to download from GitHub's artifact storage
+          # ("download failed after 5 retries") it sank this whole job, blocking
+          # the release even though every binary build + the image push succeeded.
+          pattern: indelible-*
           path: artifacts
           merge-multiple: true
 
