@@ -18,9 +18,51 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Classify the diff so the heavy jobs can skip documentation-only changes
+  # (README/USER-GUIDE/CHANGELOG/docs/guides/LICENSE edits add no signal to a
+  # full build). This is an in-workflow filter rather than trigger-level
+  # `paths:` (the ant-sdk pattern) because master's required checks (Lint,
+  # Test, Frontend, Smoke) would sit "Expected" forever on a docs-only PR if
+  # the workflow never triggered; a job skipped via `if:` reports
+  # skipped-success and satisfies branch protection.
+  #
+  # `code` is true when at least one changed file is NOT pure documentation
+  # (predicate-quantifier: every = a file counts only if it matches ALL
+  # rules, i.e. dodges every exclusion). Deliberately still running CI:
+  # docs/swagger* + docs/docs.go (generated from Go annotations; docs.go is
+  # compiled into the binary), web/public/** (shipped assets), and
+  # .github/workflows/** (CI changes must exercise CI).
+  # indelible.toml.example is skippable only while nothing in code or tests
+  # reads it — remove its exclusion if an example-parses test is ever added.
+  changes:
+    name: Classify changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          # On master pushes, diff against the previous push (base == current
+          # branch). Ignored on pull_request events, which diff the PR itself.
+          base: ${{ github.ref }}
+          predicate-quantifier: 'every'
+          filters: |
+            code:
+              - '!**/*.md'
+              - '!LICENSE-*'
+              - '!indelible.toml.example'
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v4
 
@@ -55,6 +97,8 @@ jobs:
   test:
     name: Test (${{ matrix.db }})
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -92,7 +136,8 @@ jobs:
   race:
     name: Race detection (${{ matrix.db }})
     runs-on: ubuntu-latest
-    if: github.event_name == 'push'
+    needs: changes
+    if: github.event_name == 'push' && needs.changes.outputs.code == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -133,7 +178,8 @@ jobs:
   security:
     name: Security Scanning
     runs-on: ubuntu-latest
-    if: github.event_name == 'push'
+    needs: changes
+    if: github.event_name == 'push' && needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -173,6 +219,8 @@ jobs:
   frontend:
     name: Frontend
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v4
 
@@ -205,6 +253,8 @@ jobs:
   docker:
     name: Docker (build + smoke test)
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v4
 
@@ -289,7 +339,8 @@ jobs:
   smoke:
     name: Smoke
     runs-on: ubuntu-latest
-    needs: [test, frontend]
+    needs: [changes, test, frontend]
+    if: needs.changes.outputs.code == 'true'
     steps:
       - uses: actions/checkout@v4
 
