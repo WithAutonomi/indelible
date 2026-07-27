@@ -27,7 +27,13 @@ func NewRouter(cfg *config.Config, db *database.DB, antdInfo AntdInfoProvider) h
 	// Global middleware
 	r.Use(chimw.RequestID)
 	r.Use(propagateRequestID)
-	r.Use(chimw.RealIP)
+	// No chimw.RealIP here (GO-2026-5777 / GHSA-3fxj-6jh8-hvhx): it rewrote
+	// r.RemoteAddr from the forgeable X-Forwarded-For for every request,
+	// letting any direct client spoof its IP to the rate limiter, audit log,
+	// and request log. X-Forwarded-For handling belongs exclusively to
+	// middleware.ClientIP, which trusts the header only when the socket peer
+	// is in trusted_proxies. Downstream consumers of r.RemoteAddr now see the
+	// real socket address.
 	r.Use(chimw.Logger)
 	r.Use(chimw.Recoverer)
 	r.Use(chimw.Compress(5))
