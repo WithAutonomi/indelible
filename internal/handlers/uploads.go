@@ -694,9 +694,11 @@ func etagMatches(ifNoneMatch, etag string) bool {
 // @Failure      409  {object}  map[string]string
 // @Failure      500  {object}  map[string]string
 // @Failure      502  {object}  map[string]string
+// @Failure      503  {object}  map[string]string  "Concurrent download limit reached — retry after the Retry-After interval"
 // @Security     BearerAuth
 // @Router       /uploads/{id}/download [get]
 func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
+	gate := newDownloadGate()
 	uploadSvc := services.NewUploadService(db)
 	logSvc := services.NewLogService(db)
 	settingsSvc := services.NewCachedSettingsService(services.NewSettingsService(db))
@@ -748,6 +750,34 @@ func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 			w.WriteHeader(http.StatusNotModified)
 			return
 		}
+
+		// Admission control (V2-809): bound concurrent downloads. antd accepts
+		// unlimited concurrent fetches and they all split one client-wide
+		// adaptive chunk-fetch budget, so unbounded admission divides
+		// throughput until every download crawls toward the per-file timeout,
+		// while each holds a full temp copy on the volume the disk-critical
+		// pause watches. The slot is held for the whole request — fetch AND
+		// serve — so temp disk stays bounded at max_concurrent_downloads ×
+		// file size; the serve phase is itself bounded by the server's 1h
+		// WriteTimeout. The 304 path above stays outside the gate (no antd
+		// fetch, no temp file).
+		maxConcurrent := settingsSvc.GetIntWithBounds("max_concurrent_downloads", 8, 1, 1000)
+		queueWait := time.Duration(settingsSvc.GetIntWithBounds(
+			"download_queue_wait_secs", 30, 0, 600,
+		)) * time.Second
+		if !gate.acquire(r.Context(), maxConcurrent, queueWait) {
+			slog.Warn("download gate saturated",
+				"user_id", userID, "uuid", uploadUUID,
+				"max_concurrent_downloads", maxConcurrent,
+				"queue_wait_secs", int(queueWait.Seconds()))
+			// Advisory pacing hint — the slot picture can change well inside
+			// this window, but it stops well-behaved clients from hammering.
+			w.Header().Set("Retry-After", "30")
+			jsonErrorWithCode(w, "concurrent download limit reached, retry shortly",
+				"downloads_saturated", http.StatusServiceUnavailable)
+			return
+		}
+		defer gate.release()
 
 		// Download from antd to temp file, then stream to client. All branches
 		// use the streaming FileGet*/ primitives so the daemon writes straight to
