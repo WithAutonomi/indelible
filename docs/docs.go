@@ -6017,6 +6017,15 @@ const docTemplate = `{
                                 "type": "string"
                             }
                         }
+                    },
+                    "503": {
+                        "description": "Concurrent download limit reached — retry after the Retry-After interval",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
                     }
                 }
             }
