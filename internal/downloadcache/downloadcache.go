@@ -57,6 +57,7 @@ type Store struct {
 
 	mu      sync.Mutex
 	entries map[string]*entry
+	bytes   int64 // running total of indexed entry sizes
 }
 
 // New returns a Store rooted at dir (conventionally DataDir/cache/objects).
@@ -105,31 +106,35 @@ func (s *Store) Get(key string) (string, bool) {
 }
 
 // Promote moves srcPath (a fully-written temp file on the same filesystem)
-// into the cache under key. The rename is atomic, so a partially-written file
-// is never visible; on success srcPath no longer exists. Promoting a key that
-// is already cached atomically replaces it (same content — keys are
-// content-addressed). On error the source file is left in place for the
-// caller's own cleanup.
-func (s *Store) Promote(key, srcPath string) error {
+// into the cache under key and returns the entry's path. The rename is
+// atomic, so a partially-written file is never visible; on success srcPath no
+// longer exists. Promoting a key that is already cached atomically replaces
+// it (same content — keys are content-addressed). On error the source file is
+// left in place for the caller's own cleanup.
+func (s *Store) Promote(key, srcPath string) (string, error) {
 	if !keyValid(key) {
-		return fs.ErrInvalid
+		return "", fs.ErrInvalid
 	}
 	fi, err := os.Stat(srcPath)
 	if err != nil {
-		return err
+		return "", err
 	}
 	dst := s.path(key)
 	if err := os.MkdirAll(filepath.Dir(dst), 0700); err != nil {
-		return err
+		return "", err
 	}
 	if err := os.Rename(srcPath, dst); err != nil {
-		return err
+		return "", err
 	}
 
 	s.mu.Lock()
+	if old, ok := s.entries[key]; ok {
+		s.bytes -= old.size
+	}
 	s.entries[key] = &entry{size: fi.Size(), lastAccess: time.Now()}
+	s.bytes += fi.Size()
 	s.mu.Unlock()
-	return nil
+	return dst, nil
 }
 
 // Drop forgets key and unlinks its file. Delete-only, and safe under a
@@ -139,7 +144,10 @@ func (s *Store) Promote(key, srcPath string) error {
 // will remove entries, and both may race lookups' self-healing.
 func (s *Store) Drop(key string) {
 	s.mu.Lock()
-	_, ok := s.entries[key]
+	e, ok := s.entries[key]
+	if ok {
+		s.bytes -= e.size
+	}
 	delete(s.entries, key)
 	s.mu.Unlock()
 	if ok && keyValid(key) {
@@ -182,6 +190,7 @@ func (s *Store) Scan(ctx context.Context) error {
 		s.mu.Lock()
 		if _, exists := s.entries[key]; !exists {
 			s.entries[key] = &entry{size: fi.Size(), lastAccess: time.Now()}
+			s.bytes += fi.Size()
 		}
 		s.mu.Unlock()
 		return nil
@@ -193,8 +202,5 @@ func (s *Store) Scan(ctx context.Context) error {
 func (s *Store) Stats() (count int, bytes int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, e := range s.entries {
-		bytes += e.size
-	}
-	return len(s.entries), bytes
+	return len(s.entries), s.bytes
 }

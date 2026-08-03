@@ -27,7 +27,7 @@ func TestPromoteGetRoundTrip(t *testing.T) {
 	s := New(filepath.Join(dir, "objects"))
 	src := writeTemp(t, dir, "cached bytes")
 
-	if err := s.Promote(testKey, src); err != nil {
+	if _, err := s.Promote(testKey, src); err != nil {
 		t.Fatalf("promote: %v", err)
 	}
 	if _, err := os.Stat(src); !os.IsNotExist(err) {
@@ -67,7 +67,7 @@ func TestPromoteRejectsInvalidKeys(t *testing.T) {
 		strings.Repeat("a", 200),           // too long
 	} {
 		src := writeTemp(t, dir, "x")
-		if err := s.Promote(key, src); err == nil {
+		if _, err := s.Promote(key, src); err == nil {
 			t.Errorf("key %q accepted, want rejection", key)
 		}
 		if _, err := os.Stat(src); err != nil {
@@ -87,7 +87,7 @@ func TestGetMissesUnknownKey(t *testing.T) {
 func TestGetSelfHealsExternalDeletion(t *testing.T) {
 	dir := t.TempDir()
 	s := New(filepath.Join(dir, "objects"))
-	if err := s.Promote(testKey, writeTemp(t, dir, "bytes")); err != nil {
+	if _, err := s.Promote(testKey, writeTemp(t, dir, "bytes")); err != nil {
 		t.Fatalf("promote: %v", err)
 	}
 
@@ -107,7 +107,7 @@ func TestGetSelfHealsExternalDeletion(t *testing.T) {
 func TestGetSelfHealsSizeMismatch(t *testing.T) {
 	dir := t.TempDir()
 	s := New(filepath.Join(dir, "objects"))
-	if err := s.Promote(testKey, writeTemp(t, dir, "full content")); err != nil {
+	if _, err := s.Promote(testKey, writeTemp(t, dir, "full content")); err != nil {
 		t.Fatalf("promote: %v", err)
 	}
 
@@ -127,7 +127,7 @@ func TestGetSelfHealsSizeMismatch(t *testing.T) {
 func TestDropRemovesEntryAndFile(t *testing.T) {
 	dir := t.TempDir()
 	s := New(filepath.Join(dir, "objects"))
-	if err := s.Promote(testKey, writeTemp(t, dir, "bytes")); err != nil {
+	if _, err := s.Promote(testKey, writeTemp(t, dir, "bytes")); err != nil {
 		t.Fatalf("promote: %v", err)
 	}
 	p, _ := s.Get(testKey)
@@ -146,7 +146,7 @@ func TestScanAdoptsPreviousRun(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "objects")
 	prev := New(root)
-	if err := prev.Promote(testKey, writeTemp(t, dir, "persisted")); err != nil {
+	if _, err := prev.Promote(testKey, writeTemp(t, dir, "persisted")); err != nil {
 		t.Fatalf("promote: %v", err)
 	}
 
@@ -218,7 +218,7 @@ func TestConcurrentAccess(t *testing.T) {
 				t.Errorf("write temp: %v", err)
 				return
 			}
-			if err := s.Promote(key, src); err != nil {
+			if _, err := s.Promote(key, src); err != nil {
 				t.Errorf("promote %s: %v", key[:8], err)
 				return
 			}

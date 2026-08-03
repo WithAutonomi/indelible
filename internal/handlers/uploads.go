@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/WithAutonomi/indelible/internal/config"
 	"github.com/WithAutonomi/indelible/internal/database"
+	"github.com/WithAutonomi/indelible/internal/downloadcache"
 	"github.com/WithAutonomi/indelible/internal/middleware"
 	"github.com/WithAutonomi/indelible/internal/services"
 	"github.com/WithAutonomi/indelible/internal/worker"
@@ -708,6 +710,17 @@ func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	gate := newDownloadGate(func() int {
 		return settingsSvc.GetIntWithBounds("max_concurrent_downloads", 8, 1, 1000)
 	})
+	// Reader download cache (V2-820/821): per-instance content-addressed store
+	// of public download bytes under DataDir — same volume as the temp files,
+	// so promotion is an atomic rename. Off until the operator sets a byte
+	// budget (download_cache_max_bytes). The scan adopts a previous run's
+	// entries in the background; lookups racing it just miss and refetch.
+	cache := downloadcache.New(filepath.Join(cfg.DataDir, "cache", "objects"))
+	go func() {
+		if err := cache.Scan(context.Background()); err != nil {
+			slog.Warn("download cache scan failed", "error", err)
+		}
+	}()
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID := middleware.GetUserID(r.Context())
@@ -755,6 +768,52 @@ func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 			w.Header().Set("Cache-Control", downloadCacheControl)
 			w.WriteHeader(http.StatusNotModified)
 			return
+		}
+
+		// serveHeaders is shared by the cache-hit and fetch paths below.
+		// Content-Disposition: attachment already forces a download (no inline
+		// render); X-Content-Type-Options: nosniff stops the browser from
+		// MIME-sniffing the bytes into an executable type, closing the
+		// stored-XSS-on-open vector if a stored Content-Type is risky (V2-433
+		// A3.6). Cache validators (V2-516) go on success paths only —
+		// immutable, content-addressed bytes, so a long-lived strong ETag is
+		// safe and lets a trusted-boundary proxy or the client serve repeats
+		// without re-fetching from antd. `private`: downloads are token-gated
+		// (no anonymous route), so a shared cache must not reuse a response
+		// across identities.
+		serveHeaders := func() {
+			w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, upload.OriginalFilename))
+			w.Header().Set("Content-Type", upload.ContentType)
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			if etag != "" {
+				w.Header().Set("ETag", etag)
+				w.Header().Set("Cache-Control", downloadCacheControl)
+			}
+		}
+
+		// Reader cache eligibility (V2-820/821), decided per request: the
+		// operator has set a byte budget (the master switch), the row has a
+		// content identity, and the upload is public — a plaintext cache copy
+		// of private content must never outlive its shred, so private caching
+		// waits for the V2-824 opt-in. The key is the unquoted ETag hex: the
+		// same content identity the 304 path validates against, known before
+		// any fetch, and it never exposes the DataMap capability.
+		cacheBudget := int64(settingsSvc.GetIntWithBounds("download_cache_max_bytes", 0, 0, 1<<50))
+		var cacheKey string
+		if cacheBudget > 0 && etag != "" && upload.Visibility == "public" {
+			cacheKey = strings.Trim(etag, `"`)
+		}
+		if cacheKey != "" {
+			if cachePath, ok := cache.Get(cacheKey); ok {
+				// Hit: local bytes via http.ServeFile (Range/resume preserved),
+				// outside the V2-809 gate — a hit consumes neither antd chunk
+				// budget nor temp disk, the two resources the gate protects.
+				fileAccessEvent(r, logSvc, "file_downloaded", "info", &userID,
+					fmt.Sprintf("uuid=%s filename=%s visibility=%s cache=hit", upload.UUID, upload.OriginalFilename, upload.Visibility))
+				serveHeaders()
+				http.ServeFile(w, r, cachePath)
+				return
+			}
 		}
 
 		// Admission control (V2-809): bound concurrent downloads. antd accepts
@@ -833,6 +892,28 @@ func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
+		// Promote the fetched bytes into the cache where the temp file was
+		// previously just discarded (the deferred os.Remove degrades to a
+		// no-op after the rename). Per-object ceiling keeps large files in
+		// the temp/streaming regime; until the V2-823 sweeper lands, the
+		// byte budget is enforced at admission only — the cache stops
+		// growing at the budget instead of evicting. Promotion failure is
+		// never a download failure: worst case we serve from the temp file
+		// exactly as before the cache existed.
+		servePath := tempPath
+		if cacheKey != "" {
+			maxObject := int64(settingsSvc.GetIntWithBounds("download_cache_max_object_bytes", 64<<20, 1, 1<<40))
+			if fi, err := os.Stat(tempPath); err == nil && fi.Size() <= maxObject {
+				if _, used := cache.Stats(); used+fi.Size() <= cacheBudget {
+					if cachePath, err := cache.Promote(cacheKey, tempPath); err != nil {
+						slog.Warn("download cache promotion failed", "uuid", upload.UUID, "error", err)
+					} else {
+						servePath = cachePath
+					}
+				}
+			}
+		}
+
 		// Record the successful access decision before streaming the bytes. This
 		// high-volume read telemetry goes to the plain file_access_log rather than
 		// the audit hash-chain (V2-514) so concurrent downloads across a reader
@@ -840,23 +921,8 @@ func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 		fileAccessEvent(r, logSvc, "file_downloaded", "info", &userID,
 			fmt.Sprintf("uuid=%s filename=%s visibility=%s", upload.UUID, upload.OriginalFilename, upload.Visibility))
 
-		// Stream the file back. Content-Disposition: attachment already forces a
-		// download (no inline render); X-Content-Type-Options: nosniff stops the
-		// browser from MIME-sniffing the bytes into an executable type, closing
-		// the stored-XSS-on-open vector if a stored Content-Type is risky (V2-433 A3.6).
-		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, upload.OriginalFilename))
-		w.Header().Set("Content-Type", upload.ContentType)
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		// Cache validators (V2-516) on the success path only — immutable,
-		// content-addressed bytes, so a long-lived strong ETag is safe and lets a
-		// trusted-boundary proxy or the client serve repeats without re-fetching
-		// from antd. `private`: downloads are token-gated (no anonymous route), so
-		// a shared cache must not reuse a response across identities.
-		if etag != "" {
-			w.Header().Set("ETag", etag)
-			w.Header().Set("Cache-Control", downloadCacheControl)
-		}
-		http.ServeFile(w, r, tempPath)
+		serveHeaders()
+		http.ServeFile(w, r, servePath)
 	}
 }
 
