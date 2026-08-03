@@ -2,6 +2,7 @@ package downloadcache
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,21 @@ import (
 )
 
 const testKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+// testBudget is a byte budget far above anything these tests promote, for
+// tests that aren't about budget enforcement.
+const testBudget = int64(1) << 40
+
+// newReadyStore builds a Store over root and completes the boot scan, the
+// same sequence production runs — promotion is refused until Scan finishes.
+func newReadyStore(t *testing.T, root string) *Store {
+	t.Helper()
+	s := New(root)
+	if err := s.Scan(context.Background()); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	return s
+}
 
 // writeTemp creates a fully-written temp file on the same filesystem as the
 // store root, mirroring how the download/upload paths stage bytes.
@@ -24,10 +40,10 @@ func writeTemp(t *testing.T, dir, content string) string {
 
 func TestPromoteGetRoundTrip(t *testing.T) {
 	dir := t.TempDir()
-	s := New(filepath.Join(dir, "objects"))
+	s := newReadyStore(t, filepath.Join(dir, "objects"))
 	src := writeTemp(t, dir, "cached bytes")
 
-	if _, err := s.Promote(testKey, src); err != nil {
+	if _, err := s.PromoteIfFits(testKey, src, testBudget); err != nil {
 		t.Fatalf("promote: %v", err)
 	}
 	if _, err := os.Stat(src); !os.IsNotExist(err) {
@@ -47,6 +63,9 @@ func TestPromoteGetRoundTrip(t *testing.T) {
 	if err != nil || string(b) != "cached bytes" {
 		t.Fatalf("cached content = %q (err=%v), want %q", b, err, "cached bytes")
 	}
+	if fi, err := os.Stat(p); err != nil || fi.Mode().Perm() != 0600 {
+		t.Fatalf("cached file mode = %v (err=%v), want 0600", fi.Mode().Perm(), err)
+	}
 
 	count, bytes := s.Stats()
 	if count != 1 || bytes != int64(len("cached bytes")) {
@@ -56,7 +75,7 @@ func TestPromoteGetRoundTrip(t *testing.T) {
 
 func TestPromoteRejectsInvalidKeys(t *testing.T) {
 	dir := t.TempDir()
-	s := New(filepath.Join(dir, "objects"))
+	s := newReadyStore(t, filepath.Join(dir, "objects"))
 
 	for _, key := range []string{
 		"",
@@ -67,7 +86,7 @@ func TestPromoteRejectsInvalidKeys(t *testing.T) {
 		strings.Repeat("a", 200),           // too long
 	} {
 		src := writeTemp(t, dir, "x")
-		if _, err := s.Promote(key, src); err == nil {
+		if _, err := s.PromoteIfFits(key, src, testBudget); err == nil {
 			t.Errorf("key %q accepted, want rejection", key)
 		}
 		if _, err := os.Stat(src); err != nil {
@@ -77,8 +96,105 @@ func TestPromoteRejectsInvalidKeys(t *testing.T) {
 	}
 }
 
+// Promotion must be refused until the boot scan has made the index
+// authoritative — before that the byte accounting undercounts whatever a
+// previous run left on disk, and a budget admitted against it is fiction.
+func TestPromoteRefusedBeforeScan(t *testing.T) {
+	dir := t.TempDir()
+	s := New(filepath.Join(dir, "objects")) // deliberately no Scan
+	src := writeTemp(t, dir, "too early")
+
+	if _, err := s.PromoteIfFits(testKey, src, testBudget); !errors.Is(err, ErrNotReady) {
+		t.Fatalf("promote before scan: err = %v, want ErrNotReady", err)
+	}
+	if _, err := os.Stat(src); err != nil {
+		t.Fatal("source must be left in place on refusal")
+	}
+}
+
+// A previous run's on-disk bytes count against the budget as soon as the
+// scan adopts them: a new promotion that would exceed the budget on top of
+// the pre-existing usage is refused.
+func TestPromoteAccountsPreexistingFiles(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "objects")
+	prev := newReadyStore(t, root)
+	if _, err := prev.PromoteIfFits(testKey, writeTemp(t, dir, strings.Repeat("x", 20)), testBudget); err != nil {
+		t.Fatalf("seed promote: %v", err)
+	}
+
+	s := newReadyStore(t, root) // fresh process: adopts the 20 bytes
+	if _, bytes := s.Stats(); bytes != 20 {
+		t.Fatalf("adopted bytes = %d, want 20", bytes)
+	}
+	otherKey := strings.Repeat("f", 64)
+	src := writeTemp(t, dir, strings.Repeat("y", 15))
+	// 20 on disk + 15 new > 30 budget.
+	if _, err := s.PromoteIfFits(otherKey, src, 30); !errors.Is(err, ErrOverBudget) {
+		t.Fatalf("promote over pre-existing usage: err = %v, want ErrOverBudget", err)
+	}
+	// A budget that fits admits it.
+	if _, err := s.PromoteIfFits(otherKey, src, 40); err != nil {
+		t.Fatalf("promote within budget: %v", err)
+	}
+}
+
+// Regression for the concurrency blocker on PR #146: the budget check and
+// the promotion must be one atomic step. N concurrent promotions of distinct
+// keys, each fitting alone but not together, must never leave the indexed
+// total above budget — only the fitting subset lands.
+func TestConcurrentPromotionsRespectBudget(t *testing.T) {
+	dir := t.TempDir()
+	s := newReadyStore(t, filepath.Join(dir, "objects"))
+	const budget = int64(25) // fits two 10-byte objects, never three
+
+	var wg sync.WaitGroup
+	results := make([]error, 8)
+	for i := 0; i < 8; i++ {
+		key := strings.Repeat("0123456789abcdef"[i:i+1], 64)
+		src := filepath.Join(dir, "tmp-"+key[:8])
+		if err := os.WriteFile(src, []byte(strings.Repeat("x", 10)), 0600); err != nil {
+			t.Fatalf("write temp: %v", err)
+		}
+		wg.Add(1)
+		go func(i int, key, src string) {
+			defer wg.Done()
+			_, results[i] = s.PromoteIfFits(key, src, budget)
+		}(i, key, src)
+	}
+	wg.Wait()
+
+	promoted := 0
+	for i, err := range results {
+		switch {
+		case err == nil:
+			promoted++
+		case errors.Is(err, ErrOverBudget):
+		default:
+			t.Errorf("promotion %d: unexpected error %v", i, err)
+		}
+	}
+	if promoted != 2 {
+		t.Errorf("promoted = %d, want exactly 2 (budget 25 / size 10)", promoted)
+	}
+	if _, bytes := s.Stats(); bytes > budget {
+		t.Fatalf("indexed bytes = %d, exceeds budget %d", bytes, budget)
+	}
+	// The index and the disk agree.
+	files := 0
+	_ = filepath.WalkDir(filepath.Join(dir, "objects"), func(p string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			files++
+		}
+		return nil
+	})
+	if files != promoted {
+		t.Fatalf("files on disk = %d, promoted = %d", files, promoted)
+	}
+}
+
 func TestGetMissesUnknownKey(t *testing.T) {
-	s := New(filepath.Join(t.TempDir(), "objects"))
+	s := newReadyStore(t, filepath.Join(t.TempDir(), "objects"))
 	if _, ok := s.Get(testKey); ok {
 		t.Fatal("unknown key reported a hit")
 	}
@@ -86,8 +202,8 @@ func TestGetMissesUnknownKey(t *testing.T) {
 
 func TestGetSelfHealsExternalDeletion(t *testing.T) {
 	dir := t.TempDir()
-	s := New(filepath.Join(dir, "objects"))
-	if _, err := s.Promote(testKey, writeTemp(t, dir, "bytes")); err != nil {
+	s := newReadyStore(t, filepath.Join(dir, "objects"))
+	if _, err := s.PromoteIfFits(testKey, writeTemp(t, dir, "bytes"), testBudget); err != nil {
 		t.Fatalf("promote: %v", err)
 	}
 
@@ -106,8 +222,8 @@ func TestGetSelfHealsExternalDeletion(t *testing.T) {
 
 func TestGetSelfHealsSizeMismatch(t *testing.T) {
 	dir := t.TempDir()
-	s := New(filepath.Join(dir, "objects"))
-	if _, err := s.Promote(testKey, writeTemp(t, dir, "full content")); err != nil {
+	s := newReadyStore(t, filepath.Join(dir, "objects"))
+	if _, err := s.PromoteIfFits(testKey, writeTemp(t, dir, "full content"), testBudget); err != nil {
 		t.Fatalf("promote: %v", err)
 	}
 
@@ -124,10 +240,32 @@ func TestGetSelfHealsSizeMismatch(t *testing.T) {
 	}
 }
 
+// An entry swapped for a symlink on disk must never be followed and served.
+func TestGetRejectsSymlinkSwap(t *testing.T) {
+	dir := t.TempDir()
+	s := newReadyStore(t, filepath.Join(dir, "objects"))
+	if _, err := s.PromoteIfFits(testKey, writeTemp(t, dir, "real"), testBudget); err != nil {
+		t.Fatalf("promote: %v", err)
+	}
+	p, _ := s.Get(testKey)
+
+	target := writeTemp(t, dir, "real") // same size as the entry
+	if err := os.Remove(p); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	if err := os.Symlink(target, p); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	if _, ok := s.Get(testKey); ok {
+		t.Fatal("hit on a symlinked entry")
+	}
+}
+
 func TestDropRemovesEntryAndFile(t *testing.T) {
 	dir := t.TempDir()
-	s := New(filepath.Join(dir, "objects"))
-	if _, err := s.Promote(testKey, writeTemp(t, dir, "bytes")); err != nil {
+	s := newReadyStore(t, filepath.Join(dir, "objects"))
+	if _, err := s.PromoteIfFits(testKey, writeTemp(t, dir, "bytes"), testBudget); err != nil {
 		t.Fatalf("promote: %v", err)
 	}
 	p, _ := s.Get(testKey)
@@ -145,13 +283,13 @@ func TestDropRemovesEntryAndFile(t *testing.T) {
 func TestScanAdoptsPreviousRun(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "objects")
-	prev := New(root)
-	if _, err := prev.Promote(testKey, writeTemp(t, dir, "persisted")); err != nil {
+	prev := newReadyStore(t, root)
+	if _, err := prev.PromoteIfFits(testKey, writeTemp(t, dir, "persisted"), testBudget); err != nil {
 		t.Fatalf("promote: %v", err)
 	}
 
-	// A junk file inside the tree (crashed process leftover) and a valid key
-	// at the wrong fanout position must both be cleaned up, not adopted.
+	// Junk (crashed-process leftover), a valid key at the wrong fanout
+	// position, and a symlink must all be cleaned up, not adopted.
 	junk := filepath.Join(root, testKey[0:2], "leftover.tmp")
 	if err := os.WriteFile(junk, []byte("junk"), 0600); err != nil {
 		t.Fatalf("write junk: %v", err)
@@ -163,6 +301,14 @@ func TestScanAdoptsPreviousRun(t *testing.T) {
 	}
 	if err := os.WriteFile(misplaced, []byte("misplaced"), 0600); err != nil {
 		t.Fatalf("write misplaced: %v", err)
+	}
+	linkKey := strings.Repeat("e", 64)
+	link := filepath.Join(root, "ee", "ee", linkKey)
+	if err := os.MkdirAll(filepath.Dir(link), 0700); err != nil {
+		t.Fatalf("mkdir link: %v", err)
+	}
+	if err := os.Symlink(junk, link); err != nil {
+		t.Fatalf("symlink: %v", err)
 	}
 
 	s := New(root)
@@ -176,11 +322,13 @@ func TestScanAdoptsPreviousRun(t *testing.T) {
 	if _, ok := s.Get(testKey); !ok {
 		t.Fatal("scan did not adopt the previous run's entry")
 	}
-	if _, ok := s.Get(misplacedKey); ok {
-		t.Fatal("scan adopted a misplaced entry")
+	for name, k := range map[string]string{"misplaced": misplacedKey, "symlinked": linkKey} {
+		if _, ok := s.Get(k); ok {
+			t.Fatalf("scan adopted a %s entry", name)
+		}
 	}
-	for _, p := range []string{junk, misplaced} {
-		if _, err := os.Stat(p); !os.IsNotExist(err) {
+	for _, p := range []string{junk, misplaced, link} {
+		if _, err := os.Lstat(p); !os.IsNotExist(err) {
 			t.Errorf("scan left %s on disk", p)
 		}
 	}
@@ -190,10 +338,7 @@ func TestScanAdoptsPreviousRun(t *testing.T) {
 }
 
 func TestScanOnMissingRootIsEmptyCache(t *testing.T) {
-	s := New(filepath.Join(t.TempDir(), "objects"))
-	if err := s.Scan(context.Background()); err != nil {
-		t.Fatalf("scan on missing root: %v", err)
-	}
+	s := newReadyStore(t, filepath.Join(t.TempDir(), "objects"))
 	if count, _ := s.Stats(); count != 0 {
 		t.Fatal("phantom entries from a missing root")
 	}
@@ -201,7 +346,7 @@ func TestScanOnMissingRootIsEmptyCache(t *testing.T) {
 
 func TestConcurrentAccess(t *testing.T) {
 	dir := t.TempDir()
-	s := New(filepath.Join(dir, "objects"))
+	s := newReadyStore(t, filepath.Join(dir, "objects"))
 
 	keys := make([]string, 8)
 	for i := range keys {
@@ -218,7 +363,7 @@ func TestConcurrentAccess(t *testing.T) {
 				t.Errorf("write temp: %v", err)
 				return
 			}
-			if _, err := s.Promote(key, src); err != nil {
+			if _, err := s.PromoteIfFits(key, src, testBudget); err != nil {
 				t.Errorf("promote %s: %v", key[:8], err)
 				return
 			}

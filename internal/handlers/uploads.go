@@ -713,14 +713,18 @@ func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	// Reader download cache (V2-820/821): per-instance content-addressed store
 	// of public download bytes under DataDir — same volume as the temp files,
 	// so promotion is an atomic rename. Off until the operator sets a byte
-	// budget (download_cache_max_bytes). The scan adopts a previous run's
-	// entries in the background; lookups racing it just miss and refetch.
+	// budget (download_cache_max_bytes); like all runtime settings, changes
+	// propagate within the settings cache TTL (~30s), not per request. The
+	// boot scan adopting a previous run's entries runs synchronously so the
+	// index is authoritative before the first request — the store refuses
+	// promotion until then, else the byte budget would be admitted against
+	// an undercount of what is already on disk.
 	cache := downloadcache.New(filepath.Join(cfg.DataDir, "cache", "objects"))
-	go func() {
-		if err := cache.Scan(context.Background()); err != nil {
-			slog.Warn("download cache scan failed", "error", err)
-		}
-	}()
+	if err := cache.Scan(context.Background()); err != nil {
+		// Not fatal: the cache stays not-ready (hits impossible, promotion
+		// refused), and downloads flow through the plain gated path.
+		slog.Warn("download cache scan failed; cache disabled", "error", err)
+	}
 	// Fill coalescing and min-uses admission state for the cache (V2-821).
 	// Both are per-instance and in-memory, like all cache recency state.
 	flights := downloadcache.NewFlight()
@@ -814,47 +818,59 @@ func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 			// Hit: local bytes via http.ServeFile (Range/resume preserved),
 			// outside the V2-809 gate — a hit consumes neither antd chunk
 			// budget nor temp disk, the two resources the gate protects.
+			// ServeFile would answer If-Modified-Since against the file's
+			// promotion-time mtime, which differs per replica; the immutable
+			// contract here is ETag/If-None-Match (already handled above), so
+			// drop IMS rather than serve per-replica Last-Modified semantics.
+			r.Header.Del("If-Modified-Since")
 			fileAccessEvent(r, logSvc, "file_downloaded", "info", &userID,
 				fmt.Sprintf("uuid=%s filename=%s visibility=%s cache=hit", upload.UUID, upload.OriginalFilename, upload.Visibility))
 			serveHeaders()
 			http.ServeFile(w, r, cachePath)
 		}
 		if cacheKey != "" {
-			if cachePath, ok := cache.Get(cacheKey); ok {
-				serveCacheHit(cachePath)
-				return
-			}
 			// Coalesce concurrent fills: when several requests miss on the
-			// same object at once, only the leader takes a gate slot and an
-			// antd fetch; followers wait for the fill and serve the promoted
-			// bytes from disk.
-			leader, done := flights.Begin(cacheKey)
-			if leader {
-				defer flights.Finish(cacheKey)
-			} else {
-				waitTimer := time.NewTimer(queueWait)
-				select {
-				case <-done:
-					waitTimer.Stop()
-					if cachePath, ok := cache.Get(cacheKey); ok {
-						serveCacheHit(cachePath)
-						return
-					}
-					// The fill produced no entry (fetch failed, or the object
-					// is ineligible on size/budget/min-uses grounds): fall
-					// through to a gated fetch of our own. Worst case a
-					// request waits the queue window here and again at the
-					// gate — bounded, and only on the failure path.
-				case <-waitTimer.C:
-					// Waited the whole queue window with no fill completing:
-					// proceed with our own gated fetch, but never promote its
-					// result — a timed-out waiter caching its response
-					// reintroduces the stampede (nginx 1.7.8 lesson).
-					cacheKey = ""
-				case <-r.Context().Done():
-					waitTimer.Stop()
+			// same object at once, only the elected leader takes a gate slot
+			// and an antd fetch; followers wait for the fill and serve the
+			// promoted bytes from disk. When a fill ends WITHOUT an entry
+			// (fetch failed, or skipped on min-uses/size/budget grounds),
+			// woken followers re-elect a single new leader rather than all
+			// fanning out into duplicate fetches. One timer bounds the whole
+			// wait at the queue window — with queue_wait_secs=0 followers
+			// give up immediately, i.e. fail-fast mode deliberately disables
+			// coalescing along with queueing. A follower that exhausts the
+			// window (or the round bound, under repeatedly failing fills)
+			// proceeds with its own gated fetch but never promotes the
+			// result — a timed-out waiter caching its response reintroduces
+			// the stampede (nginx 1.7.8 lesson).
+			fillTimer := time.NewTimer(queueWait)
+			defer fillTimer.Stop()
+			const maxFillRounds = 4
+			for round := 0; ; round++ {
+				if cachePath, ok := cache.Get(cacheKey); ok {
+					serveCacheHit(cachePath)
 					return
 				}
+				leader, done := flights.Begin(cacheKey)
+				if leader {
+					defer flights.Finish(cacheKey)
+					break
+				}
+				if round >= maxFillRounds {
+					cacheKey = ""
+					break
+				}
+				select {
+				case <-done:
+					// Fill finished — loop: serve the entry, or help elect
+					// the next leader if the fill produced none.
+					continue
+				case <-fillTimer.C:
+					cacheKey = ""
+				case <-r.Context().Done():
+					return
+				}
+				break
 			}
 		}
 
@@ -886,6 +902,16 @@ func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 			jsonErrorWithCode(w, "concurrent download limit reached, retry shortly",
 				"downloads_saturated", http.StatusServiceUnavailable)
 			return
+		}
+		// Re-check the cache before fetching: another request may have
+		// promoted this object while we waited for a slot. Release the slot
+		// first — a hit consumes neither antd budget nor temp disk.
+		if cacheKey != "" {
+			if cachePath, ok := cache.Get(cacheKey); ok {
+				gate.release()
+				serveCacheHit(cachePath)
+				return
+			}
 		}
 		defer gate.release()
 
@@ -949,12 +975,19 @@ func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 				// raised the bar, an object must miss minUses times on this
 				// instance before its bytes are worth keeping.
 			} else if fi, err := os.Stat(tempPath); err == nil && fi.Size() <= maxObject {
-				if _, used := cache.Stats(); used+fi.Size() <= cacheBudget {
-					if cachePath, err := cache.Promote(cacheKey, tempPath); err != nil {
-						slog.Warn("download cache promotion failed", "uuid", upload.UUID, "error", err)
-					} else {
-						servePath = cachePath
-					}
+				// Budget admission is atomic inside the store: the check,
+				// rename, and accounting share one critical section, so
+				// concurrent promotions of distinct keys can't all spend the
+				// same remaining bytes. Over-budget and not-ready refusals
+				// are normal operation, not errors.
+				switch cachePath, err := cache.PromoteIfFits(cacheKey, tempPath, cacheBudget); {
+				case err == nil:
+					servePath = cachePath
+				case errors.Is(err, downloadcache.ErrOverBudget) || errors.Is(err, downloadcache.ErrNotReady):
+					// Cache full (no sweeper yet — V2-823) or scan failed at
+					// boot: serve from the temp file as before the cache.
+				default:
+					slog.Warn("download cache promotion failed", "uuid", upload.UUID, "error", err)
 				}
 			}
 		}

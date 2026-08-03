@@ -31,6 +31,11 @@ type cacheFakeAntd struct {
 	blockPublic    atomic.Bool
 	publicEntered  chan struct{}
 	releasePublic  chan struct{}
+	// blockFirstPublic / failFirstPublic act on the FIRST public fetch only:
+	// park it until releasePublic closes, and/or answer it 500 — so tests can
+	// pin one fill leader while later fetches proceed normally.
+	blockFirstPublic atomic.Bool
+	failFirstPublic  atomic.Bool
 }
 
 func newCacheFakeAntd(t *testing.T, content string) *cacheFakeAntd {
@@ -44,10 +49,14 @@ func newCacheFakeAntd(t *testing.T, content string) *cacheFakeAntd {
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/files/public/get":
-			f.publicHits.Add(1)
-			if f.blockPublic.Load() {
+			n := f.publicHits.Add(1)
+			if f.blockPublic.Load() || (n == 1 && f.blockFirstPublic.Load()) {
 				f.publicEntered <- struct{}{}
 				<-f.releasePublic
+			}
+			if n == 1 && f.failFirstPublic.Load() {
+				http.Error(w, "{}", http.StatusInternalServerError)
+				return
 			}
 		case "/v1/files/get":
 			f.privateHits.Add(1)
@@ -334,6 +343,171 @@ func TestDownloadUpload_CacheCoalescesConcurrentFills(t *testing.T) {
 	}
 	if got := fake.publicHits.Load(); got != 1 {
 		t.Fatalf("antd public fetches = %d, want 1 (concurrent misses must coalesce)", got)
+	}
+}
+
+// Panel regression (blocker 3, min_uses case): with min_uses=2 and one
+// leader plus two concurrent followers, a fill that ends without promoting
+// must re-elect ONE new leader — not fan every follower out into its own
+// fetch. Total fetches: the initial leader plus exactly one serialized
+// retry; the remaining follower serves the promoted entry.
+func TestDownloadUpload_CacheMinUsesCoalesces(t *testing.T) {
+	const content = "second fetch promotes"
+	fake := newCacheFakeAntd(t, content)
+	router, token, cfg, db := newCacheTestEnv(t, fake.srv.URL, map[string]string{
+		"download_cache_max_bytes": "1048576",
+		"download_cache_min_uses":  "2",
+		"download_queue_wait_secs": "10",
+	})
+	uuid := makeUpload(t, router, db, token, "warm-crowd.txt", "public", "addr-warm-crowd")
+
+	// Leader parks inside its antd fetch, holding the fill open.
+	fake.blockFirstPublic.Store(true)
+	responses := make(chan *httptest.ResponseRecorder, 3)
+	go func() { responses <- doDownload(router, token, uuid, "") }()
+	select {
+	case <-fake.publicEntered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("leader never reached antd")
+	}
+	// Two followers join the fill while it is in flight.
+	for i := 0; i < 2; i++ {
+		go func() { responses <- doDownload(router, token, uuid, "") }()
+	}
+	select {
+	case w := <-responses:
+		t.Fatalf("request returned %d before the fill completed", w.Code)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	// Leader completes: bump 1 < 2, no promotion. Followers must re-elect a
+	// single new leader whose fetch bumps to 2 and promotes; the last
+	// follower serves the entry.
+	close(fake.releasePublic)
+	for i := 0; i < 3; i++ {
+		select {
+		case w := <-responses:
+			if w.Code != http.StatusOK || w.Body.String() != content {
+				t.Fatalf("response %d: %d %q", i, w.Code, w.Body.String())
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("request never completed")
+		}
+	}
+	if got := fake.publicHits.Load(); got != 2 {
+		t.Fatalf("antd public fetches = %d, want 2 (leader + one serialized retry)", got)
+	}
+	if entries, _ := os.ReadDir(filepath.Join(cfg.DataDir, "cache", "objects")); len(entries) == 0 {
+		t.Fatal("object not promoted after reaching min_uses")
+	}
+}
+
+// Panel regression (blocker 3, failure case): when the leader's fetch fails,
+// waiting followers re-elect one new leader instead of all fetching.
+func TestDownloadUpload_CacheLeaderFailureSerializesRetry(t *testing.T) {
+	const content = "retry succeeds"
+	fake := newCacheFakeAntd(t, content)
+	router, token, cfg, db := newCacheTestEnv(t, fake.srv.URL, map[string]string{
+		"download_cache_max_bytes": "1048576",
+		"download_queue_wait_secs": "10",
+	})
+	uuid := makeUpload(t, router, db, token, "flaky.txt", "public", "addr-flaky")
+
+	// Leader parks, then its fetch fails on release.
+	fake.blockFirstPublic.Store(true)
+	fake.failFirstPublic.Store(true)
+	leader := make(chan *httptest.ResponseRecorder, 1)
+	go func() { leader <- doDownload(router, token, uuid, "") }()
+	select {
+	case <-fake.publicEntered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("leader never reached antd")
+	}
+	followers := make(chan *httptest.ResponseRecorder, 2)
+	for i := 0; i < 2; i++ {
+		go func() { followers <- doDownload(router, token, uuid, "") }()
+	}
+	select {
+	case w := <-followers:
+		t.Fatalf("follower returned %d before the fill completed", w.Code)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	close(fake.releasePublic)
+	select {
+	case w := <-leader:
+		if w.Code != http.StatusBadGateway {
+			t.Fatalf("leader: got %d, want 502 from the failed fetch; body: %s", w.Code, w.Body.String())
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("leader never completed")
+	}
+	for i := 0; i < 2; i++ {
+		select {
+		case w := <-followers:
+			if w.Code != http.StatusOK || w.Body.String() != content {
+				t.Fatalf("follower %d: %d %q", i, w.Code, w.Body.String())
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("follower never completed")
+		}
+	}
+	if got := fake.publicHits.Load(); got != 2 {
+		t.Fatalf("antd public fetches = %d, want 2 (failed leader + one retry)", got)
+	}
+	if entries, _ := os.ReadDir(filepath.Join(cfg.DataDir, "cache", "objects")); len(entries) == 0 {
+		t.Fatal("retry leader did not promote")
+	}
+}
+
+// Panel regression (blocker 3, timeout case): a follower that exhausts the
+// queue window performs its own gated fetch but never promotes the result.
+func TestDownloadUpload_CacheFollowerTimeoutNeverPromotes(t *testing.T) {
+	const content = "timeout means no promote"
+	fake := newCacheFakeAntd(t, content)
+	router, token, cfg, db := newCacheTestEnv(t, fake.srv.URL, map[string]string{
+		"download_cache_max_bytes": "1048576",
+		"max_concurrent_downloads": "2",
+		"download_queue_wait_secs": "1",
+	})
+	uuid := makeUpload(t, router, db, token, "impatient.txt", "public", "addr-impatient")
+	cacheDir := filepath.Join(cfg.DataDir, "cache", "objects")
+
+	// Leader parks inside antd, holding the fill (and one of two slots).
+	fake.blockFirstPublic.Store(true)
+	leader := make(chan *httptest.ResponseRecorder, 1)
+	go func() { leader <- doDownload(router, token, uuid, "") }()
+	select {
+	case <-fake.publicEntered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("leader never reached antd")
+	}
+
+	// The follower gives up on the fill after the 1s window, takes the free
+	// slot, fetches on its own — and must NOT promote.
+	w := doDownload(router, token, uuid, "")
+	if w.Code != http.StatusOK || w.Body.String() != content {
+		t.Fatalf("timed-out follower: %d %q", w.Code, w.Body.String())
+	}
+	if got := fake.publicHits.Load(); got != 2 {
+		t.Fatalf("antd public fetches = %d, want 2 (leader parked + follower's own)", got)
+	}
+	if entries, _ := os.ReadDir(cacheDir); len(entries) != 0 {
+		t.Fatalf("timed-out follower promoted: %v", entries)
+	}
+
+	// The leader still promotes its own successful fill.
+	close(fake.releasePublic)
+	select {
+	case lw := <-leader:
+		if lw.Code != http.StatusOK {
+			t.Fatalf("leader: got %d; body: %s", lw.Code, lw.Body.String())
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("leader never completed")
+	}
+	if entries, _ := os.ReadDir(cacheDir); len(entries) == 0 {
+		t.Fatal("leader's fill was not promoted")
 	}
 }
 
