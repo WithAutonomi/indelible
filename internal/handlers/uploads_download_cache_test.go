@@ -28,6 +28,9 @@ type cacheFakeAntd struct {
 	blockPrivate   atomic.Bool
 	privateEntered chan struct{}
 	releasePrivate chan struct{}
+	blockPublic    atomic.Bool
+	publicEntered  chan struct{}
+	releasePublic  chan struct{}
 }
 
 func newCacheFakeAntd(t *testing.T, content string) *cacheFakeAntd {
@@ -35,11 +38,17 @@ func newCacheFakeAntd(t *testing.T, content string) *cacheFakeAntd {
 	f := &cacheFakeAntd{
 		privateEntered: make(chan struct{}, 1),
 		releasePrivate: make(chan struct{}),
+		publicEntered:  make(chan struct{}, 1),
+		releasePublic:  make(chan struct{}),
 	}
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/files/public/get":
 			f.publicHits.Add(1)
+			if f.blockPublic.Load() {
+				f.publicEntered <- struct{}{}
+				<-f.releasePublic
+			}
 		case "/v1/files/get":
 			f.privateHits.Add(1)
 			if f.blockPrivate.Load() {
@@ -244,6 +253,87 @@ func TestDownloadUpload_CacheSkipsOversizeObject(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(filepath.Join(cfg.DataDir, "cache", "objects")); len(entries) != 0 {
 		t.Fatalf("cache directory not empty after oversize skip: %v", entries)
+	}
+}
+
+// With download_cache_min_uses raised, an object must miss that many times
+// before it is promoted — the admission filter against one-hit wonders.
+func TestDownloadUpload_CacheMinUses(t *testing.T) {
+	const content = "hot enough on the second ask"
+	fake := newCacheFakeAntd(t, content)
+	router, token, _, db := newCacheTestEnv(t, fake.srv.URL, map[string]string{
+		"download_cache_max_bytes": "1048576",
+		"download_cache_min_uses":  "2",
+	})
+	uuid := makeUpload(t, router, db, token, "warming.txt", "public", "addr-warm")
+
+	// First two requests fetch (miss 1 = not hot enough, miss 2 = promoted).
+	for i := 0; i < 2; i++ {
+		if w := doDownload(router, token, uuid, ""); w.Code != http.StatusOK {
+			t.Fatalf("download %d: got %d", i+1, w.Code)
+		}
+	}
+	if got := fake.publicHits.Load(); got != 2 {
+		t.Fatalf("antd public fetches after warm-up = %d, want 2", got)
+	}
+	// Third request is served from the cache.
+	if w := doDownload(router, token, uuid, ""); w.Code != http.StatusOK || w.Body.String() != content {
+		t.Fatalf("cached download: %d %q", w.Code, w.Body.String())
+	}
+	if got := fake.publicHits.Load(); got != 2 {
+		t.Fatalf("antd public fetches after promotion = %d, want 2 (third request must hit)", got)
+	}
+}
+
+// Concurrent misses on one object are coalesced: only the leader fetches;
+// the follower waits for the fill and serves the promoted bytes — one antd
+// fetch total, not two.
+func TestDownloadUpload_CacheCoalescesConcurrentFills(t *testing.T) {
+	const content = "fetched once, served to two"
+	fake := newCacheFakeAntd(t, content)
+	router, token, _, db := newCacheTestEnv(t, fake.srv.URL, map[string]string{
+		"download_cache_max_bytes": "1048576",
+		"max_concurrent_downloads": "1",
+		"download_queue_wait_secs": "10",
+	})
+	uuid := makeUpload(t, router, db, token, "stampede.txt", "public", "addr-stampede")
+
+	// Leader parks inside the antd fetch, holding the fill (and the only
+	// gate slot).
+	fake.blockPublic.Store(true)
+	leader := make(chan *httptest.ResponseRecorder, 1)
+	go func() { leader <- doDownload(router, token, uuid, "") }()
+	select {
+	case <-fake.publicEntered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("leader download never reached antd")
+	}
+
+	// Follower arrives on the same object: it must join the fill, not fetch.
+	follower := make(chan *httptest.ResponseRecorder, 1)
+	go func() { follower <- doDownload(router, token, uuid, "") }()
+
+	// Give the follower a moment to park, then let the leader finish.
+	select {
+	case fw := <-follower:
+		t.Fatalf("follower returned %d before the fill completed", fw.Code)
+	case <-time.After(200 * time.Millisecond):
+	}
+	fake.blockPublic.Store(false)
+	close(fake.releasePublic)
+
+	for name, ch := range map[string]chan *httptest.ResponseRecorder{"leader": leader, "follower": follower} {
+		select {
+		case w := <-ch:
+			if w.Code != http.StatusOK || w.Body.String() != content {
+				t.Fatalf("%s: %d %q", name, w.Code, w.Body.String())
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("%s never completed", name)
+		}
+	}
+	if got := fake.publicHits.Load(); got != 1 {
+		t.Fatalf("antd public fetches = %d, want 1 (concurrent misses must coalesce)", got)
 	}
 }
 

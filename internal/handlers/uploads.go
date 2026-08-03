@@ -721,6 +721,10 @@ func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 			slog.Warn("download cache scan failed", "error", err)
 		}
 	}()
+	// Fill coalescing and min-uses admission state for the cache (V2-821).
+	// Both are per-instance and in-memory, like all cache recency state.
+	flights := downloadcache.NewFlight()
+	missCounter := downloadcache.NewCounter(65536)
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID := middleware.GetUserID(r.Context())
@@ -799,20 +803,58 @@ func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 		// same content identity the 304 path validates against, known before
 		// any fetch, and it never exposes the DataMap capability.
 		cacheBudget := int64(settingsSvc.GetIntWithBounds("download_cache_max_bytes", 0, 0, 1<<50))
+		queueWait := time.Duration(settingsSvc.GetIntWithBounds(
+			"download_queue_wait_secs", 30, 0, 600,
+		)) * time.Second
 		var cacheKey string
 		if cacheBudget > 0 && etag != "" && upload.Visibility == "public" {
 			cacheKey = strings.Trim(etag, `"`)
 		}
+		serveCacheHit := func(cachePath string) {
+			// Hit: local bytes via http.ServeFile (Range/resume preserved),
+			// outside the V2-809 gate — a hit consumes neither antd chunk
+			// budget nor temp disk, the two resources the gate protects.
+			fileAccessEvent(r, logSvc, "file_downloaded", "info", &userID,
+				fmt.Sprintf("uuid=%s filename=%s visibility=%s cache=hit", upload.UUID, upload.OriginalFilename, upload.Visibility))
+			serveHeaders()
+			http.ServeFile(w, r, cachePath)
+		}
 		if cacheKey != "" {
 			if cachePath, ok := cache.Get(cacheKey); ok {
-				// Hit: local bytes via http.ServeFile (Range/resume preserved),
-				// outside the V2-809 gate — a hit consumes neither antd chunk
-				// budget nor temp disk, the two resources the gate protects.
-				fileAccessEvent(r, logSvc, "file_downloaded", "info", &userID,
-					fmt.Sprintf("uuid=%s filename=%s visibility=%s cache=hit", upload.UUID, upload.OriginalFilename, upload.Visibility))
-				serveHeaders()
-				http.ServeFile(w, r, cachePath)
+				serveCacheHit(cachePath)
 				return
+			}
+			// Coalesce concurrent fills: when several requests miss on the
+			// same object at once, only the leader takes a gate slot and an
+			// antd fetch; followers wait for the fill and serve the promoted
+			// bytes from disk.
+			leader, done := flights.Begin(cacheKey)
+			if leader {
+				defer flights.Finish(cacheKey)
+			} else {
+				waitTimer := time.NewTimer(queueWait)
+				select {
+				case <-done:
+					waitTimer.Stop()
+					if cachePath, ok := cache.Get(cacheKey); ok {
+						serveCacheHit(cachePath)
+						return
+					}
+					// The fill produced no entry (fetch failed, or the object
+					// is ineligible on size/budget/min-uses grounds): fall
+					// through to a gated fetch of our own. Worst case a
+					// request waits the queue window here and again at the
+					// gate — bounded, and only on the failure path.
+				case <-waitTimer.C:
+					// Waited the whole queue window with no fill completing:
+					// proceed with our own gated fetch, but never promote its
+					// result — a timed-out waiter caching its response
+					// reintroduces the stampede (nginx 1.7.8 lesson).
+					cacheKey = ""
+				case <-r.Context().Done():
+					waitTimer.Stop()
+					return
+				}
 			}
 		}
 
@@ -826,9 +868,6 @@ func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 		// file size; the serve phase is itself bounded by the server's 1h
 		// WriteTimeout. The 304 path above stays outside the gate (no antd
 		// fetch, no temp file).
-		queueWait := time.Duration(settingsSvc.GetIntWithBounds(
-			"download_queue_wait_secs", 30, 0, 600,
-		)) * time.Second
 		if !gate.acquire(r.Context(), queueWait) {
 			slog.Warn("download gate saturated",
 				"user_id", userID, "uuid", uploadUUID,
@@ -903,7 +942,13 @@ func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 		servePath := tempPath
 		if cacheKey != "" {
 			maxObject := int64(settingsSvc.GetIntWithBounds("download_cache_max_object_bytes", 64<<20, 1, 1<<40))
-			if fi, err := os.Stat(tempPath); err == nil && fi.Size() <= maxObject {
+			minUses := settingsSvc.GetIntWithBounds("download_cache_min_uses", 1, 1, 100)
+			if minUses > 1 && missCounter.Bump(cacheKey) < minUses {
+				// Admission filter (nginx min_uses pattern): most first-touch
+				// objects are never re-referenced, so when the operator has
+				// raised the bar, an object must miss minUses times on this
+				// instance before its bytes are worth keeping.
+			} else if fi, err := os.Stat(tempPath); err == nil && fi.Size() <= maxObject {
 				if _, used := cache.Stats(); used+fi.Size() <= cacheBudget {
 					if cachePath, err := cache.Promote(cacheKey, tempPath); err != nil {
 						slog.Warn("download cache promotion failed", "uuid", upload.UUID, "error", err)
