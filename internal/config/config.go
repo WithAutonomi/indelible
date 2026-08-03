@@ -47,8 +47,22 @@ type Config struct {
 	// or the single "writer" in a read/write role split (V2-515). Set false for
 	// stateless "reader" replicas that only serve HTTP (downloads): they run no
 	// workers, need no wallet, and skip migrations (the writer owns schema). See
-	// the reader-fleet design in V2-513.
+	// the reader-fleet design in V2-513. (The download-cache sweeper is NOT
+	// gated by this — it maintains per-instance cache state, so it runs on
+	// readers too; see cmd/indelible/main.go.)
 	WorkersEnabled bool `toml:"workers_enabled"`
+
+	// DownloadCacheMaxBytes is this instance's download-cache byte budget,
+	// overriding the fleet-global `download_cache_max_bytes` runtime setting
+	// (V2-823). The DB-backed settings table is shared by every instance —
+	// readers use the writer's database — so a fleet with heterogeneous disks
+	// cannot express per-reader budgets through it; this boot-config value
+	// (INDELIBLE_DOWNLOAD_CACHE_MAX_BYTES / download_cache_max_bytes in the
+	// config file) is the per-instance escape hatch. A pointer because unset
+	// and zero mean different things: nil (the zero value, so struct-literal
+	// configs behave) = no override, follow the DB setting; explicit 0 =
+	// cache disabled on this instance regardless of the fleet default.
+	DownloadCacheMaxBytes *int64 `toml:"download_cache_max_bytes"`
 
 	// Managed antd — spawn and monitor antd as a child process
 	AntdManaged bool   `toml:"antd_managed"` // Spawn and manage antd (default: false)
@@ -196,6 +210,18 @@ func (c *Config) ApplyNetworkPreset() error {
 	return nil
 }
 
+// DownloadCacheBudget resolves the effective download-cache byte budget for
+// this instance: the per-instance boot-config override when set, else the
+// fleet-global DB setting the caller read. Both the serve path's admission
+// check and the sweeper resolve the budget through here so the two can never
+// disagree about what "over budget" means.
+func (c *Config) DownloadCacheBudget(dbBudget int64) int64 {
+	if c.DownloadCacheMaxBytes != nil {
+		return *c.DownloadCacheMaxBytes
+	}
+	return dbBudget
+}
+
 // DBDriver returns "sqlite" or "postgres" based on the DB URL.
 func (c *Config) DBDriver() string {
 	if strings.HasPrefix(c.DBURL, "postgres") {
@@ -332,6 +358,13 @@ func Load(path string) (*Config, error) {
 	// truthy value keeps the default (workers on).
 	if v := os.Getenv("INDELIBLE_WORKERS_ENABLED"); v != "" {
 		cfg.WorkersEnabled = v == "true" || v == "1"
+	}
+	if v := os.Getenv("INDELIBLE_DOWNLOAD_CACHE_MAX_BYTES"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n < 0 {
+			return nil, fmt.Errorf("invalid INDELIBLE_DOWNLOAD_CACHE_MAX_BYTES %q: must be a non-negative byte count", v)
+		}
+		cfg.DownloadCacheMaxBytes = &n
 	}
 	if v := os.Getenv("INDELIBLE_ANTD_MANAGED"); v != "" {
 		cfg.AntdManaged = v == "true" || v == "1"

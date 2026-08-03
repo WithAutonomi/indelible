@@ -39,7 +39,7 @@ func setupRouterWithDB(t *testing.T) (http.Handler, *database.DB) {
 	if _, err := db.Exec(`INSERT INTO settings (key, value) VALUES ('registration_enabled', 'true')`); err != nil {
 		t.Fatalf("enable registration: %v", err)
 	}
-	return handlers.NewRouter(cfg, db, nil), db
+	return handlers.NewRouter(cfg, db, nil, nil), db
 }
 
 // adminTokenCleanAudit returns the bootstrap-admin token and clears the

@@ -94,6 +94,16 @@ Downloaded content is **immutable and content-addressed**, so download responses
 
 Responses are marked `private` because downloads are token-gated (there is no anonymous route), so a shared public cache must not reuse a response across identities.
 
+### The built-in download cache
+
+Independent of any front cache, each instance can keep a **local disk cache of public download bytes** (`download_cache_max_bytes`, off by default — see the settings table in the USER-GUIDE). A cache hit is served straight from the instance's disk: no antd fetch, no temp copy, no admission-gate slot.
+
+Fleet notes:
+
+- The cache is **per instance** — every reader warms and evicts its own copy from its own traffic. With no load-balancer affinity, popular objects end up replicated on every reader; at typical working-set sizes (small hot objects) that is the right trade, and it is what sizing the budget per instance assumes.
+- The `download_cache_*` settings are **fleet-global values applied per instance** (readers share the writer's database). For a fleet with **different disk sizes per reader**, set the env override `INDELIBLE_DOWNLOAD_CACHE_MAX_BYTES` on the instances that differ — env beats the DB setting on that instance only, and `0` disables its cache outright.
+- The cache can never be the reason uploads pause: a background sweeper evicts it — aggressively, toward empty if necessary — as soon as the data volume approaches the disk-alert worker's critical threshold, and otherwise keeps it under budget by LRU with an optional inactivity window (`download_cache_inactive_secs`).
+
 ## Load balancer notes
 
 - Use `/health` for readiness/liveness probes.

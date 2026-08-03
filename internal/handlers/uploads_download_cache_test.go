@@ -109,7 +109,7 @@ func newCacheTestEnv(t *testing.T, antdURL string, settings map[string]string) (
 			t.Fatalf("set %s: %v", k, err)
 		}
 	}
-	router := handlers.NewRouter(cfg, db, nil)
+	router := handlers.NewRouter(cfg, db, nil, nil)
 	adminToken := registerAndGetToken(t, router, seedAdminEmail, seedAdminPassword, "Admin", "User")
 	createTestWallet(t, router, adminToken)
 	return router, adminToken, cfg, db
