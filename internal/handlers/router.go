@@ -33,7 +33,10 @@ func NewRouter(cfg *config.Config, db *database.DB, antdInfo AntdInfoProvider) h
 	// and request log. X-Forwarded-For handling belongs exclusively to
 	// middleware.ClientIP, which trusts the header only when the socket peer
 	// is in trusted_proxies. Downstream consumers of r.RemoteAddr now see the
-	// real socket address.
+	// real socket address; consumers that want the client identity (audit and
+	// file-access logs, settings audit) read the per-request resolved value
+	// stashed by ResolveClientIP below (V2-774).
+	r.Use(middleware.ResolveClientIP(cfg.TrustedProxies))
 	r.Use(chimw.Logger)
 	r.Use(chimw.Recoverer)
 	r.Use(chimw.Compress(5))

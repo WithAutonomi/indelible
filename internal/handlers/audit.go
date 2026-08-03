@@ -5,6 +5,7 @@ import (
 
 	chimw "github.com/go-chi/chi/v5/middleware"
 
+	"github.com/WithAutonomi/indelible/internal/middleware"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
 
@@ -23,7 +24,7 @@ import (
 func auditEvent(r *http.Request, logSvc *services.LogService, eventType, severity string, userID *int64, detail string) {
 	_ = logSvc.WriteAudit(
 		eventType, severity, userID, detail,
-		r.RemoteAddr, r.UserAgent(), chimw.GetReqID(r.Context()),
+		middleware.RequestClientIP(r), r.UserAgent(), chimw.GetReqID(r.Context()),
 	)
 }
 
@@ -36,6 +37,6 @@ func auditEvent(r *http.Request, logSvc *services.LogService, eventType, severit
 func fileAccessEvent(r *http.Request, logSvc *services.LogService, eventType, severity string, userID *int64, detail string) {
 	_ = logSvc.WriteFileAccess(
 		eventType, severity, userID, detail,
-		r.RemoteAddr, r.UserAgent(), chimw.GetReqID(r.Context()),
+		middleware.RequestClientIP(r), r.UserAgent(), chimw.GetReqID(r.Context()),
 	)
 }

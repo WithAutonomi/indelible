@@ -61,7 +61,7 @@ func AdminUpdateSettings(db *database.DB) http.HandlerFunc {
 			return
 		}
 
-		ipAddress := middleware.ClientIP(r, nil)
+		ipAddress := middleware.RequestClientIP(r)
 		userAgent := r.Header.Get("User-Agent")
 
 		if err := settingsSvc.Update(changes, userID, ipAddress, userAgent); err != nil {
@@ -125,7 +125,7 @@ func AdminImportSettings(db *database.DB) http.HandlerFunc {
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID := middleware.GetUserID(r.Context())
-		ipAddress := middleware.ClientIP(r, nil)
+		ipAddress := middleware.RequestClientIP(r)
 		userAgent := r.Header.Get("User-Agent")
 
 		// Try structured format first (has "settings" key)
