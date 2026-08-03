@@ -29,6 +29,8 @@ var typedValidators = map[string]func(string) error{
 	"notifier_method":                      oneOf("auto", "smtp", "webhook", "noop"),
 	"registration_enabled":                 oneOf("true", "false"),
 	"payment_confirmation_timeout_seconds": optionalIntInRange(30, 3600),
+	"max_concurrent_downloads":             optionalIntInRange(1, 1000),
+	"download_queue_wait_secs":             optionalIntInRange(0, 600),
 }
 
 // oneOf builds a validator that requires the value to be in the allowed set.

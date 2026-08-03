@@ -538,6 +538,8 @@ Runtime settings are stored in the database and take effect immediately without 
 | `log_retention_days` | `30` | Days to keep non-audit logs |
 | `antd_quote_timeout_secs` | `300` | Per-request timeout (seconds) for `POST /uploads/quote` calling antd. Bounds: **1–3600**. |
 | `antd_health_probe_timeout_secs` | `15` | Per-call timeout (seconds) for the antd-connectivity probe used by `GET /health` and the system-monitor alert loop. Bounds: **1–120**. |
+| `max_concurrent_downloads` | `8` | Downloads served concurrently per instance; further requests queue, then get `503` `downloads_saturated` with a `Retry-After` hint. Bounds concurrent temp-disk copies and antd fetch load. The change applies to already-queued requests too. Bounds: **1–1000**. |
+| `download_queue_wait_secs` | `30` | How long a download may wait for a free slot before the `503`. `0` rejects immediately. The `Retry-After` hint is this value, floored at 30s. Bounds: **0–600**. |
 
 ### Tuning antd timeouts
 

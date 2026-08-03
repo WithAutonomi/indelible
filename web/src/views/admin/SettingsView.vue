@@ -40,9 +40,9 @@ watch(general, () => {
     general.default_visibility !== generalSaved.value.default_visibility
 }, { deep: true })
 
-// Upload Limits card
-const uploadsSaved = ref({ max_upload_gb: '0', max_concurrent_uploads: '', max_gas_fee: '', payment_confirmation_timeout_seconds: '' })
-const uploads = reactive({ max_upload_gb: '0', max_concurrent_uploads: '', max_gas_fee: '', payment_confirmation_timeout_seconds: '' })
+// Transfer Limits card
+const uploadsSaved = ref({ max_upload_gb: '0', max_concurrent_uploads: '', max_gas_fee: '', payment_confirmation_timeout_seconds: '', max_concurrent_downloads: '', download_queue_wait_secs: '' })
+const uploads = reactive({ max_upload_gb: '0', max_concurrent_uploads: '', max_gas_fee: '', payment_confirmation_timeout_seconds: '', max_concurrent_downloads: '', download_queue_wait_secs: '' })
 const uploadsDirty = ref(false)
 const uploadsSaving = ref(false)
 
@@ -51,7 +51,9 @@ watch(uploads, () => {
     uploads.max_upload_gb !== uploadsSaved.value.max_upload_gb ||
     uploads.max_concurrent_uploads !== uploadsSaved.value.max_concurrent_uploads ||
     uploads.max_gas_fee !== uploadsSaved.value.max_gas_fee ||
-    uploads.payment_confirmation_timeout_seconds !== uploadsSaved.value.payment_confirmation_timeout_seconds
+    uploads.payment_confirmation_timeout_seconds !== uploadsSaved.value.payment_confirmation_timeout_seconds ||
+    uploads.max_concurrent_downloads !== uploadsSaved.value.max_concurrent_downloads ||
+    uploads.download_queue_wait_secs !== uploadsSaved.value.download_queue_wait_secs
 }, { deep: true })
 
 // Operations card
@@ -116,6 +118,8 @@ async function fetchSettings() {
     uploads.max_concurrent_uploads = s.max_concurrent_uploads || ''
     uploads.max_gas_fee = s.max_gas_fee || ''
     uploads.payment_confirmation_timeout_seconds = s.payment_confirmation_timeout_seconds || ''
+    uploads.max_concurrent_downloads = s.max_concurrent_downloads || ''
+    uploads.download_queue_wait_secs = s.download_queue_wait_secs || ''
     uploadsSaved.value = { ...uploads }
 
     // Operations
@@ -152,6 +156,8 @@ async function saveCard(card: string) {
       max_concurrent_uploads: uploads.max_concurrent_uploads,
       max_gas_fee: uploads.max_gas_fee,
       payment_confirmation_timeout_seconds: uploads.payment_confirmation_timeout_seconds,
+      max_concurrent_downloads: uploads.max_concurrent_downloads,
+      download_queue_wait_secs: uploads.download_queue_wait_secs,
     }
   } else if (card === 'ops') {
     opsSaving.value = true
@@ -271,7 +277,7 @@ onMounted(async () => {
     <Tabs v-else value="0">
       <TabList>
         <Tab value="0">General</Tab>
-        <Tab value="1">Upload Limits</Tab>
+        <Tab value="1">Transfer Limits</Tab>
         <Tab value="2">Operations</Tab>
       </TabList>
       <TabPanels>
@@ -315,7 +321,7 @@ onMounted(async () => {
           </div>
         </TabPanel>
 
-        <!-- Upload Limits -->
+        <!-- Transfer Limits -->
         <TabPanel value="1">
           <div class="divide-y divide-surface-100">
             <div class="grid grid-cols-3 gap-6 py-5">
@@ -359,6 +365,27 @@ onMounted(async () => {
               <div class="col-span-2">
                 <div class="flex items-center gap-2">
                   <InputText v-model="uploads.payment_confirmation_timeout_seconds" type="number" placeholder="300" class="w-40" />
+                  <span class="text-sm text-surface-400">seconds</span>
+                </div>
+              </div>
+            </div>
+            <div class="grid grid-cols-3 gap-6 py-5">
+              <div>
+                <label class="text-sm font-medium">Max Concurrent Downloads</label>
+                <p class="text-xs text-surface-400 mt-1">Simultaneous downloads served per instance; further requests queue, then get 503. Bounds temp disk and network fetch load. Empty for the default (8).</p>
+              </div>
+              <div class="col-span-2">
+                <InputText v-model="uploads.max_concurrent_downloads" type="number" placeholder="8" class="w-32" />
+              </div>
+            </div>
+            <div class="grid grid-cols-3 gap-6 py-5">
+              <div>
+                <label class="text-sm font-medium">Download Queue Wait</label>
+                <p class="text-xs text-surface-400 mt-1">How long a download may wait for a free slot before it is rejected with 503. 0 rejects immediately. Empty for the default (30s).</p>
+              </div>
+              <div class="col-span-2">
+                <div class="flex items-center gap-2">
+                  <InputText v-model="uploads.download_queue_wait_secs" type="number" placeholder="30" class="w-40" />
                   <span class="text-sm text-surface-400">seconds</span>
                 </div>
               </div>
