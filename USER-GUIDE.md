@@ -522,24 +522,58 @@ Runtime settings are stored in the database and take effect immediately without 
 
 ### Available Settings
 
+**Instance & access**
+
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `environment_name` | `production` | Environment label shown in UI |
-| `timezone` | `UTC` | System timezone (IANA format) |
-| `max_upload_size_bytes` | `10737418240` (10 GB) | Maximum file size for uploads |
-| `default_visibility` | `private` | Default upload visibility |
-| `retention_days` | `30` | Log retention period |
-| `maintenance_mode` | `false` | Enable maintenance mode |
+| `environment_name` | `production` | Environment label shown in the web UI |
+| `timezone` | `UTC` | Display timezone for the web UI (IANA format) |
+| `registration_enabled` | `false` | Allow self-registration at `/register`; self-registered users get read-only permissions |
+| `scim_enabled` | `false` | Enable the SCIM 2.0 provisioning endpoint (see [Admin: SCIM Provisioning](#admin-scim-provisioning)) |
+| `maintenance_mode` | `false` | Enable maintenance mode (admins pass through) |
 | `maintenance_message` | — | Custom maintenance message |
 | `jwt_expiry_hours` | `24` | JWT session lifetime |
 | `default_token_expiry_days` | `90` | Default API token expiry |
-| `max_concurrent_uploads` | `1` | Background upload concurrency |
-| `log_retention_enabled` | `false` | Enable automatic log cleanup |
-| `log_retention_days` | `30` | Days to keep non-audit logs |
-| `antd_quote_timeout_secs` | `300` | Per-request timeout (seconds) for `POST /uploads/quote` calling antd. Bounds: **1–3600**. |
-| `antd_health_probe_timeout_secs` | `15` | Per-call timeout (seconds) for the antd-connectivity probe used by `GET /health` and the system-monitor alert loop. Bounds: **1–120**. |
-| `max_concurrent_downloads` | `8` | Downloads served concurrently per instance; further requests queue, then get `503` `downloads_saturated` with a `Retry-After` hint. Bounds concurrent temp-disk copies and antd fetch load. The change applies to already-queued requests too. Bounds: **1–1000**. |
-| `download_queue_wait_secs` | `30` | How long a download may wait for a free slot before the `503`. `0` rejects immediately. The `Retry-After` hint is this value, floored at 30s. Bounds: **0–600**. |
+
+**Uploads**
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `max_upload_size_bytes` | `10737418240` (10 GB) | Maximum file size for uploads (per-user/per-token overrides can only lower it) |
+| `default_visibility` | `private` | Visibility preselected in the web UI upload form |
+| `allowed_upload_content_types` | built-in allowlist | Comma-separated accepted Content-Types (wildcards like `image/*` allowed). Built-in default: `image/*`, `application/pdf`, `text/*`, `application/json`, `application/zip`, `application/gzip`, `application/x-tar`, `video/*`, `audio/*`, `application/octet-stream` |
+| `max_concurrent_uploads` | `1` | Background upload-worker concurrency (network stores) |
+| `max_queued_uploads` | unset | Cap on queued+processing uploads; beyond it new uploads get `429 queue_full`. Unset/0 = no intake cap (the system monitor's backlog alert then assumes 500) |
+| `max_gas_fee` | `0` | Max gas per upload in nanotokens; uploads back off while exceeded. `0` = no limit |
+| `payment_confirmation_timeout_seconds` | `300` | How long the worker waits for a payment transaction to confirm before freeing itself. Bounds: **30–3600** |
+
+**Downloads**
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `max_concurrent_downloads` | `8` | Downloads served concurrently per instance; further requests queue, then get `503` `downloads_saturated` with a `Retry-After` hint. Bounds concurrent temp-disk copies and antd fetch load. The change applies to already-queued requests too. Bounds: **1–1000** |
+| `download_queue_wait_secs` | `30` | How long a download may wait for a free slot before the `503`. `0` rejects immediately. The `Retry-After` hint is this value, floored at 30s. Bounds: **0–600** |
+
+**antd timeouts**
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `antd_quote_timeout_secs` | `300` | Per-request timeout (seconds) for `POST /uploads/quote` calling antd. Bounds: **1–3600** |
+| `antd_download_timeout_secs` | `1800` | Per-request timeout (seconds) for a whole download fetch from antd — bounds how long a slow transfer can hold its temp file and handler. Bounds: **1–86400** |
+| `antd_health_probe_timeout_secs` | `15` | Per-call timeout (seconds) for the antd-connectivity probe used by `GET /health` and the system-monitor alert loop. Bounds: **1–120** |
+
+**Logs, alerts & anchoring**
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `log_retention_enabled` | `false` | Enable automatic cleanup of non-audit logs |
+| `log_retention_days` | `30` | Days to keep non-audit logs (and webhook delivery/dead-letter rows) |
+| `notifier_method` | `auto` | Transactional-notification channel: `auto`, `smtp`, `webhook`, or `noop` (see [Email Delivery](#email-delivery)) |
+| `wallet_balance_alert_threshold` | unset | Fire a low-balance alert when the default wallet's payment balance drops below this value (atto-token integer). Unset/`0` = off |
+| `audit_anchor_enabled` | `false` | Periodically anchor the audit-log hash chain on-chain (needs a default wallet + EVM RPC) |
+| `audit_anchor_interval_hours` | `24` | Interval between audit anchors |
+
+**Internal status flags** — these appear in the settings store but are written by the background workers; don't set them by hand (they clear automatically when the condition ends): `uploads_paused` (disk-alert worker pauses upload intake near disk exhaustion), `antd_unavailable` (system monitor fast-fails uploads while antd is unreachable).
 
 ### Tuning antd timeouts
 
