@@ -92,8 +92,10 @@ func TestDownloadGate_LoweredLimitDrains(t *testing.T) {
 	g := newDownloadGate()
 	ctx := context.Background()
 
-	if !g.acquire(ctx, 2, 0) || !g.acquire(ctx, 2, 0) {
-		t.Fatal("setup acquires rejected")
+	for i := 0; i < 2; i++ {
+		if !g.acquire(ctx, 2, 0) {
+			t.Fatalf("setup acquire %d rejected", i+1)
+		}
 	}
 
 	// Operator lowers the cap to 1: 2 in flight, no admission.
