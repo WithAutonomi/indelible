@@ -109,6 +109,7 @@ Readers **can** run in different datacentres — the content they serve comes fr
 Some state is per-instance and will drift mildly across the fleet (none of it corrupts data):
 
 - **Rate limiting** is in-memory per instance — the effective limit is roughly `per-instance-limit × instance-count`. Use a shared limiter at the load balancer if you need a precise global cap.
+- The **download admission gate** (`max_concurrent_downloads`) is likewise in-memory per instance — effective fleet download concurrency is roughly `max_concurrent_downloads × instance-count`, not one global cap. That is usually what you want (the resources it protects — temp disk and the antd fetch budget — are per-instance too); size the setting for one instance's disk and bandwidth, not for the fleet.
 - The **runtime settings cache** has a short per-instance TTL, so a settings change (e.g. `maintenance_mode`, `registration_enabled`) can take effect on different instances a few seconds apart.
 - **System-monitor alerts** dedupe per instance — only the writer runs the monitor, so this is not a concern in the standard split.
 

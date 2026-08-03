@@ -698,10 +698,16 @@ func etagMatches(ifNoneMatch, etag string) bool {
 // @Security     BearerAuth
 // @Router       /uploads/{id}/download [get]
 func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
-	gate := newDownloadGate()
 	uploadSvc := services.NewUploadService(db)
 	logSvc := services.NewLogService(db)
 	settingsSvc := services.NewCachedSettingsService(services.NewSettingsService(db))
+	// The gate reads the cap per admission attempt (not per request), so a
+	// request queued before an operator lowered max_concurrent_downloads
+	// re-checks against the new value when it wakes rather than admitting on
+	// the one it arrived with.
+	gate := newDownloadGate(func() int {
+		return settingsSvc.GetIntWithBounds("max_concurrent_downloads", 8, 1, 1000)
+	})
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		userID := middleware.GetUserID(r.Context())
@@ -761,18 +767,24 @@ func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 		// file size; the serve phase is itself bounded by the server's 1h
 		// WriteTimeout. The 304 path above stays outside the gate (no antd
 		// fetch, no temp file).
-		maxConcurrent := settingsSvc.GetIntWithBounds("max_concurrent_downloads", 8, 1, 1000)
 		queueWait := time.Duration(settingsSvc.GetIntWithBounds(
 			"download_queue_wait_secs", 30, 0, 600,
 		)) * time.Second
-		if !gate.acquire(r.Context(), maxConcurrent, queueWait) {
+		if !gate.acquire(r.Context(), queueWait) {
 			slog.Warn("download gate saturated",
 				"user_id", userID, "uuid", uploadUUID,
-				"max_concurrent_downloads", maxConcurrent,
+				"max_concurrent_downloads", settingsSvc.GetIntWithBounds("max_concurrent_downloads", 8, 1, 1000),
 				"queue_wait_secs", int(queueWait.Seconds()))
-			// Advisory pacing hint — the slot picture can change well inside
-			// this window, but it stops well-behaved clients from hammering.
-			w.Header().Set("Retry-After", "30")
+			// Advisory pacing hint. Floor of 30s so fail-fast configurations
+			// (queue_wait 0) don't invite tight retry loops; when the operator
+			// configured a longer queue window, a rejection means saturation
+			// outlasted that much patience already, so don't suggest retrying
+			// on a shorter horizon than the window the request just exhausted.
+			retryAfter := 30
+			if secs := int(queueWait.Seconds()); secs > retryAfter {
+				retryAfter = secs
+			}
+			w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
 			jsonErrorWithCode(w, "concurrent download limit reached, retry shortly",
 				"downloads_saturated", http.StatusServiceUnavailable)
 			return

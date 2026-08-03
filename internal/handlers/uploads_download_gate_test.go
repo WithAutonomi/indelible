@@ -163,3 +163,115 @@ func TestDownloadUpload_AdmissionGate(t *testing.T) {
 		t.Fatalf("download after drain: got %d, want 200; body: %s", w.Code, w.Body.String())
 	}
 }
+
+// TestDownloadUpload_QueuedDownloadCompletes covers the queued-then-served
+// path end to end: with a non-zero download_queue_wait_secs, a request that
+// arrives while the only slot is held parks in the gate's queue (no 503) and
+// completes normally once the slot frees. The saturation test above only
+// exercises fail-fast rejection (queue_wait_secs=0).
+func TestDownloadUpload_QueuedDownloadCompletes(t *testing.T) {
+	const fileContent = "bytes served after queueing for a slot"
+
+	var blockDownloads atomic.Bool
+	antdEntered := make(chan struct{}, 1)
+	releaseAntd := make(chan struct{})
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/files/get" {
+			http.Error(w, "{}", http.StatusNotFound)
+			return
+		}
+		if blockDownloads.Load() {
+			antdEntered <- struct{}{}
+			<-releaseAntd
+		}
+		var body struct {
+			DestPath string `json:"dest_path"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.DestPath == "" {
+			t.Errorf("antd request missing dest_path (err=%v)", err)
+			http.Error(w, "{}", http.StatusBadRequest)
+			return
+		}
+		if err := os.WriteFile(body.DestPath, []byte(fileContent), 0600); err != nil {
+			t.Errorf("fake antd write dest_path: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer fake.Close()
+
+	cfg := &config.Config{
+		Port:                8080,
+		AntdURL:             fake.URL,
+		DataDir:             t.TempDir(),
+		JWTSecret:           "test-secret-for-jwt-signing-1234567890",
+		WalletEncryptionKey: "0000000000000000000000000000000000000000000000000000000000000000",
+		AdminEmail:          seedAdminEmail,
+		AdminPassword:       seedAdminPassword,
+	}
+	db := dbtest.OpenDB(t)
+	if _, err := services.SeedAdmin(db, cfg); err != nil {
+		t.Fatalf("seed admin: %v", err)
+	}
+	// One slot, generous queue window: the second download must wait for the
+	// slot rather than being rejected.
+	settingsSvc := services.NewSettingsService(db)
+	if err := settingsSvc.SetInternal("max_concurrent_downloads", "1"); err != nil {
+		t.Fatalf("set max_concurrent_downloads: %v", err)
+	}
+	if err := settingsSvc.SetInternal("download_queue_wait_secs", "10"); err != nil {
+		t.Fatalf("set download_queue_wait_secs: %v", err)
+	}
+	router := handlers.NewRouter(cfg, db, nil)
+	adminToken := registerAndGetToken(t, router, seedAdminEmail, seedAdminPassword, "Admin", "User")
+	createTestWallet(t, router, adminToken)
+
+	uuid := uploadAndGetUUID(t, router, adminToken, "queued.txt")
+	if _, err := db.Exec("UPDATE uploads SET status='completed', visibility='private', data_map='deadbeef', datamap_address=NULL WHERE uuid = ?", uuid); err != nil {
+		t.Fatalf("promote upload: %v", err)
+	}
+
+	download := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest("GET", "/api/v2/uploads/"+uuid+"/download", nil)
+		req.Header.Set("Authorization", "Bearer "+adminToken)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		return w
+	}
+
+	// Hold the only slot: a download parked inside the fake antd.
+	blockDownloads.Store(true)
+	holder := make(chan *httptest.ResponseRecorder, 1)
+	go func() { holder <- download() }()
+	select {
+	case <-antdEntered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("slot-holding download never reached antd")
+	}
+
+	// The second download queues in the gate instead of failing.
+	queued := make(chan *httptest.ResponseRecorder, 1)
+	go func() { queued <- download() }()
+	select {
+	case qw := <-queued:
+		t.Fatalf("queued download returned %d before the slot freed; body: %s", qw.Code, qw.Body.String())
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	// Free the slot; both downloads complete with the file bytes.
+	blockDownloads.Store(false)
+	close(releaseAntd)
+	for name, ch := range map[string]chan *httptest.ResponseRecorder{"holder": holder, "queued": queued} {
+		select {
+		case w := <-ch:
+			if w.Code != http.StatusOK {
+				t.Fatalf("%s download: got %d, want 200; body: %s", name, w.Code, w.Body.String())
+			}
+			if w.Body.String() != fileContent {
+				t.Errorf("%s download body = %q, want %q", name, w.Body.String(), fileContent)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("%s download never completed after release", name)
+		}
+	}
+}
