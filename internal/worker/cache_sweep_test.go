@@ -284,3 +284,45 @@ func TestCacheSweep_StatsEmissionOnlyOnChange(t *testing.T) {
 		t.Fatalf("stats emitted %d times after one change, want exactly 1", n)
 	}
 }
+
+// A cache directory the process cannot unlink from must not wedge or spin the
+// sweeper, and must not corrupt accounting: the failed drops make no progress,
+// the pass breaks, and the next tick retries.
+func TestCacheSweep_UnlinkFailureMakesNoFalseProgress(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	w, store, _ := newSweepEnv(t, 3, "immovable", nil) // budget 0 = drain everything
+	locked := make([]string, 0, 3)
+	for i := 0; i < 3; i++ {
+		p, ok := store.Get(sweepKey(i))
+		if !ok {
+			t.Fatalf("entry %d missing", i)
+		}
+		dir := filepath.Dir(p)
+		if err := os.Chmod(dir, 0500); err != nil {
+			t.Fatalf("chmod: %v", err)
+		}
+		locked = append(locked, dir)
+	}
+	t.Cleanup(func() {
+		for _, d := range locked {
+			_ = os.Chmod(d, 0700)
+		}
+	})
+
+	done := make(chan struct{})
+	go func() {
+		w.sweep(context.Background())
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("sweep hung on unremovable cache files")
+	}
+
+	if count, bytes := store.Stats(); count != 3 || bytes != int64(3*len("immovable")) {
+		t.Fatalf("accounting changed despite zero files unlinked: (%d, %d)", count, bytes)
+	}
+}

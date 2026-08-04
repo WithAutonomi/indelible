@@ -565,3 +565,73 @@ func TestMetricsOpenAndSelfHeal(t *testing.T) {
 		t.Fatalf("self-heal drops = %d, want 1", m.SelfHealDrops)
 	}
 }
+
+// Regression for the #150 panel finding: a failed unlink must not be reported
+// as a successful eviction — the index/accounting mutation commits only after
+// the file is gone, so bytes still on disk stay accounted and retryable.
+func TestDropGenKeepsEntryWhenUnlinkFails(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	dir := t.TempDir()
+	s := newReadyStore(t, filepath.Join(dir, "objects"))
+	if _, err := s.PromoteIfFits(testKey, writeTemp(t, dir, "sticky bytes"), testBudget); err != nil {
+		t.Fatalf("promote: %v", err)
+	}
+	p, _ := s.Get(testKey)
+	parent := filepath.Dir(p)
+	if err := os.Chmod(parent, 0500); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(parent, 0700) })
+
+	v := s.Oldest(1)[0]
+	if s.DropGen(v.Key, v.Gen) {
+		t.Fatal("DropGen claimed success while the unlink failed")
+	}
+	if count, bytes := s.Stats(); count != 1 || bytes != int64(len("sticky bytes")) {
+		t.Fatalf("accounting forgot bytes still on disk: (%d, %d)", count, bytes)
+	}
+	if _, err := os.Lstat(p); err != nil {
+		t.Fatalf("cache file should still exist: %v", err)
+	}
+
+	// Once the obstruction clears, the same (key, gen) evicts cleanly.
+	if err := os.Chmod(parent, 0700); err != nil {
+		t.Fatalf("chmod restore: %v", err)
+	}
+	if !s.DropGen(v.Key, v.Gen) {
+		t.Fatal("retry after the obstruction cleared must succeed")
+	}
+	if count, bytes := s.Stats(); count != 0 || bytes != 0 {
+		t.Fatalf("stats after successful retry = (%d, %d), want (0, 0)", count, bytes)
+	}
+	if _, err := os.Lstat(p); !os.IsNotExist(err) {
+		t.Fatalf("file still present after successful DropGen: %v", err)
+	}
+}
+
+func TestDropKeepsEntryWhenUnlinkFails(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	dir := t.TempDir()
+	s := newReadyStore(t, filepath.Join(dir, "objects"))
+	if _, err := s.PromoteIfFits(testKey, writeTemp(t, dir, "held fast"), testBudget); err != nil {
+		t.Fatalf("promote: %v", err)
+	}
+	p, _ := s.Get(testKey)
+	parent := filepath.Dir(p)
+	if err := os.Chmod(parent, 0500); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(parent, 0700) })
+
+	s.Drop(testKey)
+	if count, bytes := s.Stats(); count != 1 || bytes != int64(len("held fast")) {
+		t.Fatalf("Drop forgot bytes it could not unlink: (%d, %d)", count, bytes)
+	}
+	if _, err := os.Lstat(p); err != nil {
+		t.Fatalf("cache file should still exist: %v", err)
+	}
+}
