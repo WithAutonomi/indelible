@@ -25,6 +25,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -245,7 +246,9 @@ func (s *Store) PromoteIfFits(key, srcPath string, budget int64) (string, error)
 // The unlink happens inside the same critical section as the index update —
 // the same lock promotion's rename runs under — so a Drop that decided to
 // remove one promotion of the key can never end up unlinking a fresher file
-// a concurrent re-promotion renamed into place after the decision.
+// a concurrent re-promotion renamed into place after the decision. And the
+// unlink comes FIRST: if it fails, the entry stays indexed (bytes still on
+// disk must stay accounted) and a later Drop retries.
 func (s *Store) Drop(key string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -253,11 +256,11 @@ func (s *Store) Drop(key string) {
 	if !ok {
 		return
 	}
+	if !s.unlinkLocked(key) {
+		return
+	}
 	s.bytes -= e.size
 	delete(s.entries, key)
-	if keyValid(key) {
-		_ = os.Remove(s.path(key))
-	}
 }
 
 // DropGen is Drop conditioned on the entry still being the exact promotion
@@ -267,6 +270,11 @@ func (s *Store) Drop(key string) {
 // from an Oldest snapshot stays safe to act on no matter how stale it gets,
 // because a re-promotion in the meantime bumps the generation and the drop
 // degrades to a no-op instead of unlinking the fresh file.
+//
+// True means the entry is gone AND its file is absent from disk — the unlink
+// runs before the index/accounting mutation, so a failed unlink leaves the
+// entry indexed (returning false) rather than stranding unaccounted bytes the
+// sweeper would never revisit.
 func (s *Store) DropGen(key string, gen uint64) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -274,12 +282,32 @@ func (s *Store) DropGen(key string, gen uint64) bool {
 	if !ok || e.gen != gen {
 		return false
 	}
+	if !s.unlinkLocked(key) {
+		return false
+	}
 	s.bytes -= e.size
 	delete(s.entries, key)
-	if keyValid(key) {
-		_ = os.Remove(s.path(key))
-	}
 	return true
+}
+
+// unlinkLocked removes key's file, reporting whether the file is now absent.
+// An already-missing file counts as success (the goal state holds); any other
+// failure is logged and reported false so callers keep the entry indexed —
+// eviction must never report bytes as freed while they still occupy the disk.
+// Caller holds s.mu.
+func (s *Store) unlinkLocked(key string) bool {
+	if !keyValid(key) {
+		// Unreachable for indexed entries (Scan and PromoteIfFits enforce
+		// keyValid), kept as a path-traversal backstop: no file to unlink.
+		return true
+	}
+	err := os.Remove(s.path(key))
+	if err == nil || os.IsNotExist(err) {
+		return true
+	}
+	slog.Warn("download cache unlink failed; keeping entry indexed for retry",
+		"key", key, "error", err)
+	return false
 }
 
 // Victim is one entry of an Oldest snapshot: everything the sweeper needs to
