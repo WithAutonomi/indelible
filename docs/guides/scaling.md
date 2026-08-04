@@ -96,7 +96,7 @@ Responses are marked `private` because downloads are token-gated (there is no an
 
 ### The built-in download cache
 
-Independent of any front cache, each instance can keep a **local disk cache of public download bytes** (`download_cache_max_bytes`, off by default — see the settings table in the USER-GUIDE). A cache hit is served straight from the instance's disk: no antd fetch, no temp copy, no admission-gate slot.
+Independent of any front cache, each instance can keep a **local disk cache of public download bytes** (`download_cache_max_bytes`, off by default). A cache hit is served straight from the instance's disk: no antd fetch, no temp copy, no admission-gate slot. Full sizing, telemetry, and privacy guidance lives in the [download-cache deployment guide](download-cache.md).
 
 Fleet notes:
 

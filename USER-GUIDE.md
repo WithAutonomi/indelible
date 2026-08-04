@@ -546,6 +546,8 @@ Runtime settings are stored in the database and take effect immediately without 
 | `download_cache_inactive_secs` | `0` (off) | Inactivity expiry for cached objects: entries not **accessed** within this window are deleted regardless of the size budget. Independent pruning axis — also bounds how long cached plaintext can linger on an instance's disk. Example: `604800` = 7 days. Bounds: **0–315360000**. |
 | `download_cache_seed_on_upload` | `true` | Seed the download cache from a **public** upload's staged bytes the moment its network store succeeds, so publish-then-read is served from local disk with no network fetch (a rename — zero extra I/O). Applies where uploads are processed — the writer (or the whole instance in an all-in-one deployment); on a reader fleet each reader still warms by read-through. Seeds respect the size ceiling and byte budget but deliberately skip `download_cache_min_uses`; the sweeper evicts wrong bets. Disable for archive-shaped workloads (upload-heavy, rarely re-read). |
 
+For the `download_cache_*` family, the [download-cache deployment guide](docs/guides/download-cache.md) covers sizing, the stats telemetry, per-setting fleet scope, and the privacy posture.
+
 ### Tuning antd timeouts
 
 The two `antd_*_timeout_secs` settings bound how long indelible waits on the antd daemon before giving up. They take effect within the 30s settings cache TTL — no restart required.

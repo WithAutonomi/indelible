@@ -639,6 +639,7 @@ func (w *UploadWorker) seedDownloadCache(upload *services.Upload, contentID stri
 	}
 	switch _, err := w.dlCache.PromoteIfFits(downloadcache.KeyForIdentifier(contentID), upload.TempPath.String, budget); {
 	case err == nil:
+		w.dlCache.Metrics().PromotedSeeded.Add(1)
 		slog.Info("download cache seeded from upload", "uuid", upload.UUID, "bytes", fi.Size())
 	case errors.Is(err, downloadcache.ErrOverBudget) || errors.Is(err, downloadcache.ErrNotReady):
 		// Normal refusals — the temp file just gets cleaned up as before.

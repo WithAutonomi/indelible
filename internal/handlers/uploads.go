@@ -821,6 +821,11 @@ func DownloadUpload(db *database.DB, cfg *config.Config, cache *downloadcache.St
 		if cacheBudget > 0 && etag != "" && upload.Visibility == "public" {
 			cacheKey = strings.Trim(etag, `"`)
 		}
+		// The coalesce loop clears cacheKey on wait-timeout; remember the
+		// original eligibility so the hit/miss accounting (V2-825) still
+		// counts those requests as cache misses.
+		cacheEligible := cacheKey != ""
+		metrics := cache.Metrics()
 		serveCacheHit := func(f *os.File) {
 			// Hit: local bytes via http.ServeContent (Range/resume preserved),
 			// outside the V2-809 gate — a hit consumes neither antd chunk
@@ -855,6 +860,7 @@ func DownloadUpload(db *database.DB, cfg *config.Config, cache *downloadcache.St
 			fillTimer := time.NewTimer(queueWait)
 			defer fillTimer.Stop()
 			const maxFillRounds = 4
+			waited := false
 			for round := 0; ; round++ {
 				if f, ok := cache.Open(cacheKey); ok {
 					serveCacheHit(f)
@@ -866,8 +872,13 @@ func DownloadUpload(db *database.DB, cfg *config.Config, cache *downloadcache.St
 					break
 				}
 				if round >= maxFillRounds {
+					metrics.CoalesceTimeouts.Add(1)
 					cacheKey = ""
 					break
+				}
+				if !waited {
+					waited = true
+					metrics.CoalescedWaits.Add(1)
 				}
 				select {
 				case <-done:
@@ -875,6 +886,7 @@ func DownloadUpload(db *database.DB, cfg *config.Config, cache *downloadcache.St
 					// the next leader if the fill produced none.
 					continue
 				case <-fillTimer.C:
+					metrics.CoalesceTimeouts.Add(1)
 					cacheKey = ""
 				case <-r.Context().Done():
 					return
@@ -978,6 +990,17 @@ func DownloadUpload(db *database.DB, cfg *config.Config, cache *downloadcache.St
 		}
 		defer f.Close()
 
+		// Fetch accounting (V2-825): every download-path antd fetch counts,
+		// cache-eligible or not — BytesFetch is the baseline BytesServed is
+		// compared against. Misses count only cache-eligible requests, so
+		// hits/(hits+misses) is a true cache hit ratio.
+		if fi, err := f.Stat(); err == nil {
+			metrics.BytesFetch.Add(fi.Size())
+		}
+		if cacheEligible {
+			metrics.Misses.Add(1)
+		}
+
 		// Promote the fetched bytes into the cache where the temp file was
 		// previously just discarded (the deferred os.Remove degrades to a
 		// no-op after the rename). Per-object ceiling keeps large files in
@@ -994,6 +1017,7 @@ func DownloadUpload(db *database.DB, cfg *config.Config, cache *downloadcache.St
 				// objects are never re-referenced, so when the operator has
 				// raised the bar, an object must miss minUses times on this
 				// instance before its bytes are worth keeping.
+				metrics.MinUsesRejects.Add(1)
 			} else if fi, err := os.Stat(tempPath); err == nil && fi.Size() <= maxObject {
 				// Budget admission is atomic inside the store: the check,
 				// rename, and accounting share one critical section, so
@@ -1002,6 +1026,7 @@ func DownloadUpload(db *database.DB, cfg *config.Config, cache *downloadcache.St
 				// are normal operation, not errors.
 				switch _, err := cache.PromoteIfFits(cacheKey, tempPath, cacheBudget); {
 				case err == nil:
+					metrics.PromotedReadThrough.Add(1)
 				case errors.Is(err, downloadcache.ErrOverBudget) || errors.Is(err, downloadcache.ErrNotReady):
 					// Cache full (sweeper hasn't freed headroom yet) or scan
 					// failed at boot: serve from the temp file as before the
