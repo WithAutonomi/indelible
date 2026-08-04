@@ -188,7 +188,7 @@ func main() {
 	// upload-queue dequeue, hash-chain writes). Defers here are function-scoped,
 	// so they still fire on shutdown.
 	if cfg.WorkersEnabled {
-		uploadWorker := worker.NewUploadWorker(db, cfg)
+		uploadWorker := worker.NewUploadWorker(db, cfg, dlCache)
 		uploadWorker.Start()
 		defer uploadWorker.Stop()
 

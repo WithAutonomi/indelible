@@ -41,8 +41,8 @@ watch(general, () => {
 }, { deep: true })
 
 // Transfer Limits card
-const uploadsSaved = ref({ max_upload_gb: '0', max_concurrent_uploads: '', max_gas_fee: '', payment_confirmation_timeout_seconds: '', max_concurrent_downloads: '', download_queue_wait_secs: '', download_cache_gb: '0', download_cache_max_object_mb: '', download_cache_min_uses: '', download_cache_inactive_secs: '' })
-const uploads = reactive({ max_upload_gb: '0', max_concurrent_uploads: '', max_gas_fee: '', payment_confirmation_timeout_seconds: '', max_concurrent_downloads: '', download_queue_wait_secs: '', download_cache_gb: '0', download_cache_max_object_mb: '', download_cache_min_uses: '', download_cache_inactive_secs: '' })
+const uploadsSaved = ref({ max_upload_gb: '0', max_concurrent_uploads: '', max_gas_fee: '', payment_confirmation_timeout_seconds: '', max_concurrent_downloads: '', download_queue_wait_secs: '', download_cache_gb: '0', download_cache_max_object_mb: '', download_cache_min_uses: '', download_cache_inactive_secs: '', download_cache_seed_on_upload: 'true' })
+const uploads = reactive({ max_upload_gb: '0', max_concurrent_uploads: '', max_gas_fee: '', payment_confirmation_timeout_seconds: '', max_concurrent_downloads: '', download_queue_wait_secs: '', download_cache_gb: '0', download_cache_max_object_mb: '', download_cache_min_uses: '', download_cache_inactive_secs: '', download_cache_seed_on_upload: 'true' })
 const uploadsDirty = ref(false)
 const uploadsSaving = ref(false)
 
@@ -57,7 +57,8 @@ watch(uploads, () => {
     uploads.download_cache_gb !== uploadsSaved.value.download_cache_gb ||
     uploads.download_cache_max_object_mb !== uploadsSaved.value.download_cache_max_object_mb ||
     uploads.download_cache_min_uses !== uploadsSaved.value.download_cache_min_uses ||
-    uploads.download_cache_inactive_secs !== uploadsSaved.value.download_cache_inactive_secs
+    uploads.download_cache_inactive_secs !== uploadsSaved.value.download_cache_inactive_secs ||
+    uploads.download_cache_seed_on_upload !== uploadsSaved.value.download_cache_seed_on_upload
 }, { deep: true })
 
 // Operations card
@@ -142,6 +143,7 @@ async function fetchSettings() {
     uploads.download_cache_max_object_mb = bytesToMB(s.download_cache_max_object_bytes || '')
     uploads.download_cache_min_uses = s.download_cache_min_uses || ''
     uploads.download_cache_inactive_secs = s.download_cache_inactive_secs || ''
+    uploads.download_cache_seed_on_upload = s.download_cache_seed_on_upload || 'true'
     uploadsSaved.value = { ...uploads }
 
     // Operations
@@ -184,6 +186,7 @@ async function saveCard(card: string) {
       download_cache_max_object_bytes: mbToBytes(uploads.download_cache_max_object_mb),
       download_cache_min_uses: uploads.download_cache_min_uses,
       download_cache_inactive_secs: uploads.download_cache_inactive_secs,
+      download_cache_seed_on_upload: uploads.download_cache_seed_on_upload,
     }
   } else if (card === 'ops') {
     opsSaving.value = true
@@ -459,6 +462,17 @@ onMounted(async () => {
                   <InputText v-model="uploads.download_cache_inactive_secs" type="number" placeholder="0" class="w-40" />
                   <span class="text-sm text-surface-400">seconds</span>
                 </div>
+              </div>
+            </div>
+            <div class="grid grid-cols-3 gap-6 py-5">
+              <div>
+                <label class="text-sm font-medium">Seed Cache From Uploads</label>
+                <p class="text-xs text-surface-400 mt-1">When a public upload finishes storing, keep its bytes in the download cache so the first reads skip the network. Applies where uploads are processed — the writer (or the whole instance in an all-in-one deployment); readers warm on first download. Disable for archive workloads that are rarely re-read.</p>
+              </div>
+              <div class="col-span-2 flex items-center gap-3">
+                <ToggleSwitch :modelValue="uploads.download_cache_seed_on_upload === 'true'"
+                  @update:modelValue="uploads.download_cache_seed_on_upload = $event ? 'true' : 'false'" />
+                <span class="text-sm text-surface-500">{{ uploads.download_cache_seed_on_upload === 'true' ? 'Enabled' : 'Disabled' }}</span>
               </div>
             </div>
           </div>

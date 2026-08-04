@@ -23,6 +23,8 @@ package downloadcache
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io/fs"
 	"os"
@@ -40,6 +42,21 @@ var ErrNotReady = errors.New("downloadcache: index not ready (scan incomplete)")
 // ErrOverBudget is returned by PromoteIfFits when admitting the object would
 // push the indexed total over the caller's byte budget.
 var ErrOverBudget = errors.New("downloadcache: promotion exceeds byte budget")
+
+// KeyForIdentifier returns the cache key for an upload's content identifier
+// (local DataMap or published network address): the hex sha256 of the
+// domain-separated identifier — the same digest the download ETag quotes.
+// One derivation shared by the serve path and upload-side seeding (V2-822),
+// so both sides always agree on an object's identity, and neither ever
+// exposes the raw identifier (the DataMap is the retrieval capability).
+// Returns "" for an empty identifier.
+func KeyForIdentifier(id string) string {
+	if id == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte("indelible-download-v1:" + id))
+	return hex.EncodeToString(sum[:])
+}
 
 // keyValid reports whether key is safe as a cache filename: lowercase hex,
 // long enough to be a real digest, so a hostile key can never traverse paths.
