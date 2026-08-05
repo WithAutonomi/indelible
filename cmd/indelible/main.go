@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/WithAutonomi/indelible/internal/buildinfo"
 	"github.com/WithAutonomi/indelible/internal/config"
 	"github.com/WithAutonomi/indelible/internal/database"
+	"github.com/WithAutonomi/indelible/internal/downloadcache"
 	"github.com/WithAutonomi/indelible/internal/handlers"
 	"github.com/WithAutonomi/indelible/internal/middleware"
 	"github.com/WithAutonomi/indelible/internal/services"
@@ -155,13 +157,24 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Download cache store (V2-820/821): built here rather than inside the
+	// download handler because two consumers must share one index — the serve
+	// path (admission + hits) and the V2-823 sweep worker (eviction). The boot
+	// scan runs synchronously so the index is authoritative before the first
+	// request; on scan failure the store simply stays not-ready (no hits, no
+	// promotions, no eviction) and downloads flow through the plain gated path.
+	dlCache := downloadcache.New(filepath.Join(cfg.DataDir, "cache", "objects"))
+	if err := dlCache.Scan(context.Background()); err != nil {
+		slog.Warn("download cache scan failed; cache disabled", "error", err)
+	}
+
 	// Build router. The manager doubles as the AntdInfoProvider; pass nil
 	// when antd is unmanaged so /health reports the basic fields only.
 	var antdInfo handlers.AntdInfoProvider
 	if antdMgr != nil {
 		antdInfo = antdMgr
 	}
-	router := handlers.NewRouter(cfg, db, antdInfo)
+	router := handlers.NewRouter(cfg, db, antdInfo, dlCache)
 
 	// Surface notifier status. NoopNotifier means password reset and email
 	// verification silently drop on the floor — ERROR-log it at boot so it
@@ -175,7 +188,7 @@ func main() {
 	// upload-queue dequeue, hash-chain writes). Defers here are function-scoped,
 	// so they still fire on shutdown.
 	if cfg.WorkersEnabled {
-		uploadWorker := worker.NewUploadWorker(db, cfg)
+		uploadWorker := worker.NewUploadWorker(db, cfg, dlCache)
 		uploadWorker.Start()
 		defer uploadWorker.Stop()
 
@@ -208,6 +221,15 @@ func main() {
 	} else {
 		slog.Info("workers disabled (reader role): serving HTTP only — no upload/log-retention/disk-alert/audit-anchor/system-monitor workers")
 	}
+
+	// Download cache sweeper (V2-823): NOT gated by WorkersEnabled — the
+	// writer-only gate exists for singleton side effects that must not run
+	// twice across a fleet, whereas the sweeper manages this instance's own
+	// cache directory, which is exactly the state a reader replica has. It is
+	// DB-write-free (slog only) per reader discipline (V2-514).
+	cacheSweeper := worker.NewCacheSweepWorker(db, cfg, dlCache)
+	cacheSweeper.Start()
+	defer cacheSweeper.Stop()
 
 	// Start server
 	srv := &http.Server{

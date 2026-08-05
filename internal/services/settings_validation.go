@@ -31,6 +31,11 @@ var typedValidators = map[string]func(string) error{
 	"payment_confirmation_timeout_seconds": optionalIntInRange(30, 3600),
 	"max_concurrent_downloads":             optionalIntInRange(1, 1000),
 	"download_queue_wait_secs":             optionalIntInRange(0, 600),
+	"download_cache_max_bytes":             optionalIntInRange(0, 1<<50),
+	"download_cache_max_object_bytes":      optionalIntInRange(1, 1<<40),
+	"download_cache_min_uses":              optionalIntInRange(1, 100),
+	"download_cache_inactive_secs":         optionalIntInRange(0, 315360000), // 0 = off; max 10 years
+	"download_cache_seed_on_upload":        oneOf("true", "false"),
 }
 
 // oneOf builds a validator that requires the value to be in the allowed set.

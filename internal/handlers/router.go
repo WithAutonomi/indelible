@@ -12,6 +12,7 @@ import (
 
 	"github.com/WithAutonomi/indelible/internal/config"
 	"github.com/WithAutonomi/indelible/internal/database"
+	"github.com/WithAutonomi/indelible/internal/downloadcache"
 	"github.com/WithAutonomi/indelible/internal/middleware"
 	"github.com/WithAutonomi/indelible/web"
 )
@@ -21,7 +22,12 @@ import (
 // antdInfo carries the last-known antd /health snapshot so /health can surface
 // daemon version, EVM network, and payment contract addresses. Pass nil when
 // antd is unmanaged or in tests that don't need the diagnostic fields.
-func NewRouter(cfg *config.Config, db *database.DB, antdInfo AntdInfoProvider) http.Handler {
+//
+// dlCache is the download cache store, shared with the V2-823 sweep worker so
+// eviction and admission agree on one index; pass nil (tests, tools) to let
+// the download handler own a private store — everything works, there is just
+// no background eviction.
+func NewRouter(cfg *config.Config, db *database.DB, antdInfo AntdInfoProvider, dlCache *downloadcache.Store) http.Handler {
 	r := chi.NewRouter()
 
 	// Global middleware
@@ -33,7 +39,10 @@ func NewRouter(cfg *config.Config, db *database.DB, antdInfo AntdInfoProvider) h
 	// and request log. X-Forwarded-For handling belongs exclusively to
 	// middleware.ClientIP, which trusts the header only when the socket peer
 	// is in trusted_proxies. Downstream consumers of r.RemoteAddr now see the
-	// real socket address.
+	// real socket address; consumers that want the client identity (audit and
+	// file-access logs, settings audit) read the per-request resolved value
+	// stashed by ResolveClientIP below (V2-774).
+	r.Use(middleware.ResolveClientIP(cfg.TrustedProxies))
 	r.Use(chimw.Logger)
 	r.Use(chimw.Recoverer)
 	r.Use(chimw.Compress(5))
@@ -118,7 +127,7 @@ func NewRouter(cfg *config.Config, db *database.DB, antdInfo AntdInfoProvider) h
 			r.Get("/uploads", ListUploads(db))
 			r.Get("/uploads/{id}", GetUpload(db))
 			r.Post("/uploads/quote", QuoteUpload(db, cfg))
-			r.Get("/uploads/{id}/download", DownloadUpload(db, cfg))
+			r.Get("/uploads/{id}/download", DownloadUpload(db, cfg, dlCache))
 			r.Post("/uploads/{id}/cancel", CancelUpload(db))
 			r.Post("/uploads/{id}/retry", RetryUpload(db))
 			r.Post("/uploads/{id}/force-retry", ForceRetryUpload(db))

@@ -553,6 +553,13 @@ Runtime settings are stored in the database and take effect immediately without 
 |---------|---------|-------------|
 | `max_concurrent_downloads` | `8` | Downloads served concurrently per instance; further requests queue, then get `503` `downloads_saturated` with a `Retry-After` hint. Bounds concurrent temp-disk copies and antd fetch load. The change applies to already-queued requests too. Bounds: **1–1000** |
 | `download_queue_wait_secs` | `30` | How long a download may wait for a free slot before the `503`. `0` rejects immediately. The `Retry-After` hint is this value, floored at 30s. Bounds: **0–600** |
+| `download_cache_max_bytes` | `0` (off) | Disk budget per instance for the download cache: **public** download bytes kept under `INDELIBLE_DATA_DIR/cache/objects` so repeat reads are served from local disk without a network fetch. `0` disables caching (and the sweeper then drains any leftover cached files). Per-instance override for heterogeneous fleets: the `INDELIBLE_DOWNLOAD_CACHE_MAX_BYTES` environment variable (`0` there disables caching on that instance only). A background sweeper evicts least-recently-used entries to keep the cache under budget with admission headroom; when the data volume passes **90% usage** the sweeper evicts aggressively — toward empty if needed — so the cache is always sacrificed before disk pressure can pause uploads. Bounds: **0–2^50** |
+| `download_cache_max_object_bytes` | `67108864` (64 MiB) | Per-object ceiling for the download cache: larger files are never cached and always stream through the temp path. Bounds: **1–2^40** |
+| `download_cache_min_uses` | `1` | How many times an object must be requested (per instance) before its bytes are cached. `1` caches on first download; raising it keeps one-hit-wonders from displacing hot content. Bounds: **1–100** |
+| `download_cache_inactive_secs` | `0` (off) | Inactivity expiry for cached objects: entries not **accessed** within this window are deleted regardless of the size budget. Independent pruning axis — also bounds how long cached plaintext can linger on an instance's disk. Example: `604800` = 7 days. Bounds: **0–315360000** |
+| `download_cache_seed_on_upload` | `true` | Seed the download cache from a **public** upload's staged bytes the moment its network store succeeds, so publish-then-read is served from local disk with no network fetch (a rename — zero extra I/O). Applies where uploads are processed — the writer (or the whole instance in an all-in-one deployment); on a reader fleet each reader still warms by read-through. Seeds respect the size ceiling and byte budget but deliberately skip `download_cache_min_uses`; the sweeper evicts wrong bets. Disable for archive-shaped workloads (upload-heavy, rarely re-read) |
+
+For the `download_cache_*` family, the [download-cache deployment guide](docs/guides/download-cache.md) covers sizing, the stats telemetry, per-setting fleet scope, and the privacy posture.
 
 **antd timeouts**
 
@@ -1246,7 +1253,7 @@ docker compose up --build
 
 ### Trusted Proxies
 
-When behind a reverse proxy, configure trusted proxy ranges so Indelible correctly reads client IPs from `X-Forwarded-For`. Without this, `X-Forwarded-For` is ignored and the direct connection IP is used (safe default). This affects rate limiting and audit log IP addresses.
+When behind a reverse proxy, configure trusted proxy ranges so Indelible correctly reads client IPs from `X-Forwarded-For`. Without this, `X-Forwarded-For` is ignored and the direct connection IP is used (safe default). This affects rate limiting and the IPs recorded in the audit, file-access, and settings-change logs — behind a proxy with no `trusted_proxies` configured, those logs record the proxy's address, not the client's.
 
 ```toml
 trusted_proxies = ["127.0.0.1/32", "10.0.0.0/8"]
