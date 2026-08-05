@@ -1219,7 +1219,7 @@ docker compose up --build
 
 ### Trusted Proxies
 
-When behind a reverse proxy, configure trusted proxy ranges so Indelible correctly reads client IPs from `X-Forwarded-For`. Without this, `X-Forwarded-For` is ignored and the direct connection IP is used (safe default). This affects rate limiting and audit log IP addresses.
+When behind a reverse proxy, configure trusted proxy ranges so Indelible correctly reads client IPs from `X-Forwarded-For`. Without this, `X-Forwarded-For` is ignored and the direct connection IP is used (safe default). This affects rate limiting and the IPs recorded in the audit, file-access, and settings-change logs — behind a proxy with no `trusted_proxies` configured, those logs record the proxy's address, not the client's.
 
 ```toml
 trusted_proxies = ["127.0.0.1/32", "10.0.0.0/8"]
