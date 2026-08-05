@@ -272,14 +272,50 @@ func TestDropRemovesEntryAndFile(t *testing.T) {
 	}
 	p, _ := s.Get(testKey)
 
-	s.Drop(testKey)
+	if err := s.Drop(testKey); err != nil {
+		t.Fatalf("drop: %v", err)
+	}
 	if _, ok := s.Get(testKey); ok {
 		t.Fatal("dropped key still hits")
 	}
 	if _, err := os.Stat(p); !os.IsNotExist(err) {
 		t.Fatal("dropped file still on disk")
 	}
-	s.Drop(testKey) // absent key: no-op, no panic
+	if got := s.Metrics().Purged.Load(); got != 1 {
+		t.Fatalf("Purged = %d after drop, want 1", got)
+	}
+	if err := s.Drop(testKey); err != nil { // absent key: success, nothing to purge
+		t.Fatalf("drop of absent key: %v", err)
+	}
+	if got := s.Metrics().Purged.Load(); got != 1 {
+		t.Fatalf("Purged = %d after no-op drop, want 1", got)
+	}
+}
+
+// Regression for the V2-824 purge contract: Drop must remove on-disk bytes
+// even when the key is not indexed — a failed boot scan leaves files present
+// but unindexed, and the delete path must still be able to purge them.
+func TestDropUnlinksUnindexedFile(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "objects")
+	s := New(root) // no Scan: not ready, index empty
+
+	p := filepath.Join(root, testKey[0:2], testKey[2:4], testKey)
+	if err := os.MkdirAll(filepath.Dir(p), 0700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(p, []byte("leftover plaintext"), 0600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	if err := s.Drop(testKey); err != nil {
+		t.Fatalf("drop: %v", err)
+	}
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		t.Fatal("unindexed file survived the purge")
+	}
+	if got := s.Metrics().Purged.Load(); got != 1 {
+		t.Fatalf("Purged = %d, want 1", got)
+	}
 }
 
 func TestScanAdoptsPreviousRun(t *testing.T) {
@@ -627,11 +663,30 @@ func TestDropKeepsEntryWhenUnlinkFails(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(parent, 0700) })
 
-	s.Drop(testKey)
+	if err := s.Drop(testKey); err == nil {
+		t.Fatal("Drop must report the failed unlink (V2-824 purge contract)")
+	}
 	if count, bytes := s.Stats(); count != 1 || bytes != int64(len("held fast")) {
 		t.Fatalf("Drop forgot bytes it could not unlink: (%d, %d)", count, bytes)
 	}
 	if _, err := os.Lstat(p); err != nil {
 		t.Fatalf("cache file should still exist: %v", err)
+	}
+	if got := s.Metrics().Purged.Load(); got != 0 {
+		t.Fatalf("Purged = %d after failed drop, want 0", got)
+	}
+
+	// Restore permissions: the retry must succeed and count the purge.
+	if err := os.Chmod(parent, 0700); err != nil {
+		t.Fatalf("chmod restore: %v", err)
+	}
+	if err := s.Drop(testKey); err != nil {
+		t.Fatalf("drop after restore: %v", err)
+	}
+	if count, _ := s.Stats(); count != 0 {
+		t.Fatalf("entry survived successful retry: count=%d", count)
+	}
+	if got := s.Metrics().Purged.Load(); got != 1 {
+		t.Fatalf("Purged = %d after successful retry, want 1", got)
 	}
 }

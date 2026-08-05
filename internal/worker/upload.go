@@ -641,6 +641,16 @@ func (w *UploadWorker) seedDownloadCache(upload *services.Upload, contentID stri
 	case err == nil:
 		w.dlCache.Metrics().PromotedSeeded.Add(1)
 		slog.Info("download cache seeded from upload", "uuid", upload.UUID, "bytes", fi.Size())
+		// Resurrection guard (V2-824): the row flipped to completed just
+		// before this seed, and deletion is allowed from that moment — so a
+		// delete may have purged between the flip and the promotion above.
+		// Re-verify the row and take the seed back out if it is gone.
+		if _, gerr := w.uploadSvc.GetByUUID(upload.UUID); errors.Is(gerr, services.ErrUploadNotFound) {
+			if derr := w.dlCache.Drop(downloadcache.KeyForIdentifier(contentID)); derr != nil {
+				slog.Error("download cache purge failed for deleted upload; cached plaintext may remain until evicted",
+					"uuid", upload.UUID, "error", derr)
+			}
+		}
 	case errors.Is(err, downloadcache.ErrOverBudget) || errors.Is(err, downloadcache.ErrNotReady):
 		// Normal refusals — the temp file just gets cleaned up as before.
 	default:

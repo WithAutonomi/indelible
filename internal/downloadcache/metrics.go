@@ -45,6 +45,11 @@ type Metrics struct {
 	// stopped matching its recorded identity (external interference — should
 	// stay at zero in a healthy deployment).
 	SelfHealDrops atomic.Int64
+
+	// Purge (V2-824): successful Drop calls that actually removed bytes or an
+	// index entry — the delete path purging a deleted upload's cached copy
+	// (and the promote-site resurrection guard doing the same).
+	Purged atomic.Int64
 }
 
 // Metrics returns the store's counter set. Never nil.
@@ -59,7 +64,7 @@ type MetricsSnapshot struct {
 	PromotedReadThrough, PromotedSeeded            int64
 	MinUsesRejects, CoalescedWaits, CoalesceTimeouts int64
 	EvictedBudget, EvictedInactive, EvictedPressure  int64
-	EvictedBytes, SelfHealDrops                      int64
+	EvictedBytes, SelfHealDrops, Purged              int64
 }
 
 // Snapshot returns a point-in-time copy of all counters.
@@ -79,5 +84,6 @@ func (m *Metrics) Snapshot() MetricsSnapshot {
 		EvictedPressure:     m.EvictedPressure.Load(),
 		EvictedBytes:        m.EvictedBytes.Load(),
 		SelfHealDrops:       m.SelfHealDrops.Load(),
+		Purged:              m.Purged.Load(),
 	}
 }

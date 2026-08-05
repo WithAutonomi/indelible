@@ -95,6 +95,10 @@ type Store struct {
 	ready   bool   // set once Scan has adopted the previous run's files
 	genSeq  uint64 // source of entry generations; incremented per promotion/adoption
 
+	// lastUnlinkWarn rate-limits the failed-unlink warning (see unlinkLocked);
+	// guarded by mu like everything else here.
+	lastUnlinkWarn time.Time
+
 	metrics Metrics // V2-825 counters; see metrics.go
 }
 
@@ -271,10 +275,17 @@ func (s *Store) PromoteIfFits(key, srcPath string, budget int64) (string, error)
 	return dst, nil
 }
 
-// Drop forgets key and unlinks its file. Delete-only, and safe under a
-// concurrent serve: on POSIX an open descriptor keeps streaming the unlinked
-// bytes, and later lookups miss and refetch. Dropping an absent key is a
-// no-op — Drop is how the delete/shred purge (V2-824) removes entries.
+// Drop removes key's bytes from this instance — the purge primitive for the
+// V2-824 delete invariant, unconditional where DropGen is generation-checked.
+// A nil return guarantees no file for key remains on this instance's disk:
+// the unlink runs even when the key is not indexed (a failed boot scan
+// leaves files present but unindexed, and the delete path must still be able
+// to purge them), and an already-absent file counts as success. A non-nil
+// return means the file is still on disk — the entry (if indexed) stays
+// accounted, and the caller must not report the content as purged.
+//
+// Safe under a concurrent serve: on POSIX an open descriptor keeps streaming
+// the unlinked bytes, and later lookups miss and refetch.
 //
 // The unlink happens inside the same critical section as the index update —
 // the same lock promotion's rename runs under — so a Drop that decided to
@@ -282,18 +293,22 @@ func (s *Store) PromoteIfFits(key, srcPath string, budget int64) (string, error)
 // a concurrent re-promotion renamed into place after the decision. And the
 // unlink comes FIRST: if it fails, the entry stays indexed (bytes still on
 // disk must stay accounted) and a later Drop retries.
-func (s *Store) Drop(key string) {
+func (s *Store) Drop(key string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	e, ok := s.entries[key]
-	if !ok {
-		return
+	removed, err := s.unlinkLocked(key)
+	if err != nil {
+		return err
 	}
-	if !s.unlinkLocked(key) {
-		return
+	if e, ok := s.entries[key]; ok {
+		s.bytes -= e.size
+		delete(s.entries, key)
+		removed = true
 	}
-	s.bytes -= e.size
-	delete(s.entries, key)
+	if removed {
+		s.metrics.Purged.Add(1)
+	}
+	return nil
 }
 
 // DropGen is Drop conditioned on the entry still being the exact promotion
@@ -315,7 +330,7 @@ func (s *Store) DropGen(key string, gen uint64) bool {
 	if !ok || e.gen != gen {
 		return false
 	}
-	if !s.unlinkLocked(key) {
+	if _, err := s.unlinkLocked(key); err != nil {
 		return false
 	}
 	s.bytes -= e.size
@@ -323,24 +338,32 @@ func (s *Store) DropGen(key string, gen uint64) bool {
 	return true
 }
 
-// unlinkLocked removes key's file, reporting whether the file is now absent.
-// An already-missing file counts as success (the goal state holds); any other
-// failure is logged and reported false so callers keep the entry indexed —
-// eviction must never report bytes as freed while they still occupy the disk.
-// Caller holds s.mu.
-func (s *Store) unlinkLocked(key string) bool {
+// unlinkLocked removes key's file, reporting whether a file was actually
+// removed and whether the file is now absent (nil error). An already-missing
+// file counts as success (the goal state holds); any other failure is logged
+// — rate-limited to once a minute per store, since a persistently unwritable
+// cache dir would otherwise warn per victim per sweep tick — and returned so
+// callers keep the entry indexed: eviction and purge must never report bytes
+// as freed while they still occupy the disk. Caller holds s.mu.
+func (s *Store) unlinkLocked(key string) (removed bool, err error) {
 	if !keyValid(key) {
 		// Unreachable for indexed entries (Scan and PromoteIfFits enforce
 		// keyValid), kept as a path-traversal backstop: no file to unlink.
-		return true
+		return false, nil
 	}
-	err := os.Remove(s.path(key))
-	if err == nil || os.IsNotExist(err) {
-		return true
+	err = os.Remove(s.path(key))
+	if err == nil {
+		return true, nil
 	}
-	slog.Warn("download cache unlink failed; keeping entry indexed for retry",
-		"key", key, "error", err)
-	return false
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if time.Since(s.lastUnlinkWarn) >= time.Minute {
+		s.lastUnlinkWarn = time.Now()
+		slog.Warn("download cache unlink failed; keeping entry indexed for retry",
+			"key", key, "error", err)
+	}
+	return false, err
 }
 
 // Victim is one entry of an Oldest snapshot: everything the sweeper needs to
