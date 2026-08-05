@@ -78,7 +78,7 @@ func TestDownloadUpload_AdmissionGate(t *testing.T) {
 	if err := settingsSvc.SetInternal("download_queue_wait_secs", "0"); err != nil {
 		t.Fatalf("set download_queue_wait_secs: %v", err)
 	}
-	router := handlers.NewRouter(cfg, db, nil)
+	router := handlers.NewRouter(cfg, db, nil, nil)
 	adminToken := registerAndGetToken(t, router, seedAdminEmail, seedAdminPassword, "Admin", "User")
 	createTestWallet(t, router, adminToken)
 
@@ -222,7 +222,7 @@ func TestDownloadUpload_QueuedDownloadCompletes(t *testing.T) {
 	if err := settingsSvc.SetInternal("download_queue_wait_secs", "10"); err != nil {
 		t.Fatalf("set download_queue_wait_secs: %v", err)
 	}
-	router := handlers.NewRouter(cfg, db, nil)
+	router := handlers.NewRouter(cfg, db, nil, nil)
 	adminToken := registerAndGetToken(t, router, seedAdminEmail, seedAdminPassword, "Admin", "User")
 	createTestWallet(t, router, adminToken)
 

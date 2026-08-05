@@ -3,11 +3,13 @@ package downloadcache
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 const testKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -380,5 +382,211 @@ func TestConcurrentAccess(t *testing.T) {
 
 	if count, bytes := s.Stats(); count != 0 || bytes != 0 {
 		t.Fatalf("stats after drain = (%d, %d), want (0, 0)", count, bytes)
+	}
+}
+
+// setAccess backdates an entry's access clock directly — deterministic LRU
+// ordering without sleeping through wall-clock granularity.
+func setAccess(t *testing.T, s *Store, key string, at time.Time) {
+	t.Helper()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.entries[key]
+	if !ok {
+		t.Fatalf("setAccess: no entry for %s", key[:8])
+	}
+	e.lastAccess = at
+}
+
+func TestOldestOrdersByAccessAndBoundsResult(t *testing.T) {
+	dir := t.TempDir()
+	s := newReadyStore(t, filepath.Join(dir, "objects"))
+	keys := []string{strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64)}
+	now := time.Now()
+	for i, k := range keys {
+		if _, err := s.PromoteIfFits(k, writeTemp(t, dir, "x"), testBudget); err != nil {
+			t.Fatalf("promote %d: %v", i, err)
+		}
+	}
+	// Access order (oldest first) deliberately differs from promotion order.
+	setAccess(t, s, keys[1], now.Add(-3*time.Hour))
+	setAccess(t, s, keys[2], now.Add(-2*time.Hour))
+	setAccess(t, s, keys[0], now.Add(-1*time.Hour))
+
+	victims := s.Oldest(10)
+	if len(victims) != 3 {
+		t.Fatalf("Oldest returned %d victims, want 3", len(victims))
+	}
+	for i, want := range []string{keys[1], keys[2], keys[0]} {
+		if victims[i].Key != want {
+			t.Fatalf("victim[%d] = %s, want %s", i, victims[i].Key[:8], want[:8])
+		}
+	}
+	if got := s.Oldest(2); len(got) != 2 || got[0].Key != keys[1] {
+		t.Fatalf("Oldest(2) = %d victims starting %s, want 2 starting %s", len(got), got[0].Key[:8], keys[1][:8])
+	}
+}
+
+func TestDropGenEvictsOnlyTheObservedPromotion(t *testing.T) {
+	dir := t.TempDir()
+	s := newReadyStore(t, filepath.Join(dir, "objects"))
+	if _, err := s.PromoteIfFits(testKey, writeTemp(t, dir, "old bytes"), testBudget); err != nil {
+		t.Fatalf("promote: %v", err)
+	}
+	victims := s.Oldest(1)
+	if len(victims) != 1 {
+		t.Fatal("expected one victim")
+	}
+
+	// The sweeper's snapshot goes stale: the key is re-promoted before the
+	// drop lands. The stale-gen drop must be a no-op — the fresh file and its
+	// accounting survive.
+	if _, err := s.PromoteIfFits(testKey, writeTemp(t, dir, "fresh bytes!"), testBudget); err != nil {
+		t.Fatalf("re-promote: %v", err)
+	}
+	if s.DropGen(victims[0].Key, victims[0].Gen) {
+		t.Fatal("stale-gen DropGen acted on a fresh promotion")
+	}
+	p, ok := s.Get(testKey)
+	if !ok {
+		t.Fatal("fresh promotion lost to a stale eviction")
+	}
+	b, err := os.ReadFile(p)
+	if err != nil || string(b) != "fresh bytes!" {
+		t.Fatalf("cached content = %q, %v; want fresh bytes", b, err)
+	}
+	if count, bytes := s.Stats(); count != 1 || bytes != int64(len("fresh bytes!")) {
+		t.Fatalf("stats = (%d, %d), want (1, %d)", count, bytes, len("fresh bytes!"))
+	}
+
+	// A current-gen drop acts: entry, file, and accounting all go.
+	current := s.Oldest(1)
+	if !s.DropGen(current[0].Key, current[0].Gen) {
+		t.Fatal("current-gen DropGen refused to act")
+	}
+	if _, ok := s.Get(testKey); ok {
+		t.Fatal("evicted entry still served")
+	}
+	if _, err := os.Lstat(p); !os.IsNotExist(err) {
+		t.Fatalf("evicted file still on disk: %v", err)
+	}
+	if count, bytes := s.Stats(); count != 0 || bytes != 0 {
+		t.Fatalf("stats after eviction = (%d, %d), want (0, 0)", count, bytes)
+	}
+}
+
+func TestOpenKeepsServingAcrossEviction(t *testing.T) {
+	dir := t.TempDir()
+	s := newReadyStore(t, filepath.Join(dir, "objects"))
+	const content = "still readable after unlink"
+	if _, err := s.PromoteIfFits(testKey, writeTemp(t, dir, content), testBudget); err != nil {
+		t.Fatalf("promote: %v", err)
+	}
+
+	f, ok := s.Open(testKey)
+	if !ok {
+		t.Fatal("open missed on a promoted entry")
+	}
+	defer f.Close()
+
+	// Evict while the descriptor is open — the serve in flight must not care.
+	v := s.Oldest(1)[0]
+	if !s.DropGen(v.Key, v.Gen) {
+		t.Fatal("eviction refused")
+	}
+	b, err := io.ReadAll(f)
+	if err != nil || string(b) != content {
+		t.Fatalf("read across eviction = %q, %v; want full content", b, err)
+	}
+	if _, ok := s.Get(testKey); ok {
+		t.Fatal("evicted entry still indexed")
+	}
+}
+
+func TestOpenSelfHealsOnExternalDeletion(t *testing.T) {
+	dir := t.TempDir()
+	s := newReadyStore(t, filepath.Join(dir, "objects"))
+	if _, err := s.PromoteIfFits(testKey, writeTemp(t, dir, "bytes"), testBudget); err != nil {
+		t.Fatalf("promote: %v", err)
+	}
+	p, _ := s.Get(testKey)
+	if err := os.Remove(p); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	if _, ok := s.Open(testKey); ok {
+		t.Fatal("open served a deleted file")
+	}
+	if count, _ := s.Stats(); count != 0 {
+		t.Fatal("self-heal did not drop the entry")
+	}
+}
+
+// Regression for the #150 panel finding: a failed unlink must not be reported
+// as a successful eviction — the index/accounting mutation commits only after
+// the file is gone, so bytes still on disk stay accounted and retryable.
+func TestDropGenKeepsEntryWhenUnlinkFails(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	dir := t.TempDir()
+	s := newReadyStore(t, filepath.Join(dir, "objects"))
+	if _, err := s.PromoteIfFits(testKey, writeTemp(t, dir, "sticky bytes"), testBudget); err != nil {
+		t.Fatalf("promote: %v", err)
+	}
+	p, _ := s.Get(testKey)
+	parent := filepath.Dir(p)
+	if err := os.Chmod(parent, 0500); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(parent, 0700) })
+
+	v := s.Oldest(1)[0]
+	if s.DropGen(v.Key, v.Gen) {
+		t.Fatal("DropGen claimed success while the unlink failed")
+	}
+	if count, bytes := s.Stats(); count != 1 || bytes != int64(len("sticky bytes")) {
+		t.Fatalf("accounting forgot bytes still on disk: (%d, %d)", count, bytes)
+	}
+	if _, err := os.Lstat(p); err != nil {
+		t.Fatalf("cache file should still exist: %v", err)
+	}
+
+	// Once the obstruction clears, the same (key, gen) evicts cleanly.
+	if err := os.Chmod(parent, 0700); err != nil {
+		t.Fatalf("chmod restore: %v", err)
+	}
+	if !s.DropGen(v.Key, v.Gen) {
+		t.Fatal("retry after the obstruction cleared must succeed")
+	}
+	if count, bytes := s.Stats(); count != 0 || bytes != 0 {
+		t.Fatalf("stats after successful retry = (%d, %d), want (0, 0)", count, bytes)
+	}
+	if _, err := os.Lstat(p); !os.IsNotExist(err) {
+		t.Fatalf("file still present after successful DropGen: %v", err)
+	}
+}
+
+func TestDropKeepsEntryWhenUnlinkFails(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	dir := t.TempDir()
+	s := newReadyStore(t, filepath.Join(dir, "objects"))
+	if _, err := s.PromoteIfFits(testKey, writeTemp(t, dir, "held fast"), testBudget); err != nil {
+		t.Fatalf("promote: %v", err)
+	}
+	p, _ := s.Get(testKey)
+	parent := filepath.Dir(p)
+	if err := os.Chmod(parent, 0500); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(parent, 0700) })
+
+	s.Drop(testKey)
+	if count, bytes := s.Stats(); count != 1 || bytes != int64(len("held fast")) {
+		t.Fatalf("Drop forgot bytes it could not unlink: (%d, %d)", count, bytes)
+	}
+	if _, err := os.Lstat(p); err != nil {
+		t.Fatalf("cache file should still exist: %v", err)
 	}
 }

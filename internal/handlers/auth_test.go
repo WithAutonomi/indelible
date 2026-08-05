@@ -71,7 +71,7 @@ func setupTestRouter(t *testing.T) http.Handler {
 		t.Fatalf("enable registration: %v", err)
 	}
 
-	return handlers.NewRouter(cfg, db, nil)
+	return handlers.NewRouter(cfg, db, nil, nil)
 }
 
 func TestRegisterAndLogin(t *testing.T) {
@@ -168,7 +168,7 @@ func setupTestRouterNoReg(t *testing.T) http.Handler {
 	if _, err := services.SeedAdmin(db, cfg); err != nil {
 		t.Fatalf("seed admin: %v", err)
 	}
-	return handlers.NewRouter(cfg, db, nil)
+	return handlers.NewRouter(cfg, db, nil, nil)
 }
 
 // TestRegistrationDisabledByDefault asserts the core fix: with registration
@@ -596,7 +596,7 @@ func TestHealthEndpointSurfacesAntdInfo(t *testing.T) {
 		PaymentTokenAddress: "0xtoken",
 		PaymentVaultAddress: "0xvault",
 	}}
-	router := handlers.NewRouter(cfg, db, provider)
+	router := handlers.NewRouter(cfg, db, provider, nil)
 
 	// The antd diagnostics are admin-only (V2-485) — an unauthenticated probe
 	// gets the thin response with no antd_* fields, even in managed mode.

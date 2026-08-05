@@ -199,6 +199,7 @@ curl -X POST /api/v2/tokens \
 | `INDELIBLE_BASE_URL` | External URL for email links | -- |
 | `INDELIBLE_CORS_ORIGINS` | Comma-separated allowed origins | -- |
 | `INDELIBLE_TRUSTED_PROXIES` | Comma-separated CIDR ranges | -- |
+| `INDELIBLE_DOWNLOAD_CACHE_MAX_BYTES` | Per-instance override of the `download_cache_max_bytes` runtime setting (the DB setting is fleet-global; use this on instances whose disks differ). `0` disables the download cache on this instance | follow the DB setting |
 
 See the [User Guide](USER-GUIDE.md) for SMTP, debug, and advanced configuration.
 

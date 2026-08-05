@@ -34,6 +34,7 @@ var typedValidators = map[string]func(string) error{
 	"download_cache_max_bytes":             optionalIntInRange(0, 1<<50),
 	"download_cache_max_object_bytes":      optionalIntInRange(1, 1<<40),
 	"download_cache_min_uses":              optionalIntInRange(1, 100),
+	"download_cache_inactive_secs":         optionalIntInRange(0, 315360000), // 0 = off; max 10 years
 }
 
 // oneOf builds a validator that requires the value to be in the allowed set.
