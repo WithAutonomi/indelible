@@ -1,6 +1,7 @@
 package handlers_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 	"github.com/WithAutonomi/indelible/internal/config"
 	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/dbtest"
+	"github.com/WithAutonomi/indelible/internal/downloadcache"
 	"github.com/WithAutonomi/indelible/internal/handlers"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
@@ -90,6 +92,14 @@ func newCacheFakeAntd(t *testing.T, content string) *cacheFakeAntd {
 // runtime settings applied before the settings cache warms.
 func newCacheTestEnv(t *testing.T, antdURL string, settings map[string]string) (http.Handler, string, *config.Config, *database.DB) {
 	t.Helper()
+	router, token, cfg, db, _ := newCacheTestEnvWithStore(t, antdURL, settings)
+	return router, token, cfg, db
+}
+
+// newCacheTestEnvWithStore is newCacheTestEnv but also returns the injected
+// download-cache store, for tests that assert on its index or V2-825 counters.
+func newCacheTestEnvWithStore(t *testing.T, antdURL string, settings map[string]string) (http.Handler, string, *config.Config, *database.DB, *downloadcache.Store) {
+	t.Helper()
 	cfg := &config.Config{
 		Port:                8080,
 		AntdURL:             antdURL,
@@ -109,10 +119,14 @@ func newCacheTestEnv(t *testing.T, antdURL string, settings map[string]string) (
 			t.Fatalf("set %s: %v", k, err)
 		}
 	}
-	router := handlers.NewRouter(cfg, db, nil, nil)
+	store := downloadcache.New(filepath.Join(cfg.DataDir, "cache", "objects"))
+	if err := store.Scan(context.Background()); err != nil {
+		t.Fatalf("store scan: %v", err)
+	}
+	router := handlers.NewRouter(cfg, db, nil, store)
 	adminToken := registerAndGetToken(t, router, seedAdminEmail, seedAdminPassword, "Admin", "User")
 	createTestWallet(t, router, adminToken)
-	return router, adminToken, cfg, db
+	return router, adminToken, cfg, db, store
 }
 
 // makeUpload creates a completed upload row: public rows get a network
@@ -528,5 +542,63 @@ func TestDownloadUpload_CacheStopsAtBudget(t *testing.T) {
 	}
 	if got := fake.publicHits.Load(); got != 2 {
 		t.Fatalf("antd public fetches = %d, want 2 (promotion must respect the byte budget)", got)
+	}
+}
+
+// TestDownloadCacheMetrics_ServePathCounters drives one miss→promote and one
+// hit through the real handler and checks the V2-825 counter arithmetic:
+// hit ratio inputs, bytes served vs fetched, and the promotion split.
+func TestDownloadCacheMetrics_ServePathCounters(t *testing.T) {
+	fake := newCacheFakeAntd(t, "metrics content")
+	router, token, _, db, store := newCacheTestEnvWithStore(t, fake.srv.URL, map[string]string{
+		"download_cache_max_bytes": "1000000",
+	})
+	uuid := makeUpload(t, router, db, token, "m.bin", "public", "metrics-1")
+
+	for i := 0; i < 2; i++ {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", "/api/v2/uploads/"+uuid+"/download", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("download %d: status %d", i, w.Code)
+		}
+	}
+
+	m := store.Metrics().Snapshot()
+	size := int64(len("metrics content"))
+	if m.Misses != 1 || m.Hits != 1 {
+		t.Fatalf("hits/misses = %d/%d, want 1/1", m.Hits, m.Misses)
+	}
+	if m.PromotedReadThrough != 1 || m.PromotedSeeded != 0 {
+		t.Fatalf("promotions = read-through %d / seeded %d, want 1/0", m.PromotedReadThrough, m.PromotedSeeded)
+	}
+	if m.BytesFetch != size || m.BytesServed != size {
+		t.Fatalf("bytes fetched/served = %d/%d, want %d/%d", m.BytesFetch, m.BytesServed, size, size)
+	}
+	if fake.publicHits.Load() != 1 {
+		t.Fatalf("antd fetches = %d, want 1 (second request was a cache hit)", fake.publicHits.Load())
+	}
+}
+
+func TestDownloadCacheMetrics_MinUsesRejectCounter(t *testing.T) {
+	fake := newCacheFakeAntd(t, "warmup content")
+	router, token, _, db, store := newCacheTestEnvWithStore(t, fake.srv.URL, map[string]string{
+		"download_cache_max_bytes": "1000000",
+		"download_cache_min_uses":  "2",
+	})
+	uuid := makeUpload(t, router, db, token, "w.bin", "public", "metrics-2")
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v2/uploads/"+uuid+"/download", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("download: status %d", w.Code)
+	}
+
+	m := store.Metrics().Snapshot()
+	if m.MinUsesRejects != 1 || m.PromotedReadThrough != 0 {
+		t.Fatalf("min-uses rejects %d / promoted %d, want 1/0 on first touch", m.MinUsesRejects, m.PromotedReadThrough)
 	}
 }

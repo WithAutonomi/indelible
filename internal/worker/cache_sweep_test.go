@@ -3,8 +3,10 @@ package worker
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -210,6 +212,77 @@ func TestCacheSweep_StartStopLifecycle(t *testing.T) {
 	w.Start()
 	time.Sleep(50 * time.Millisecond)
 	w.Stop() // must not hang or race (-race build)
+}
+
+// logCapture is a minimal slog.Handler that records message names, so tests
+// can assert on emission without parsing formatted output.
+type logCapture struct {
+	mu   sync.Mutex
+	msgs []string
+}
+
+func (h *logCapture) Enabled(context.Context, slog.Level) bool { return true }
+func (h *logCapture) Handle(_ context.Context, r slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.msgs = append(h.msgs, r.Message)
+	return nil
+}
+func (h *logCapture) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *logCapture) WithGroup(string) slog.Handler      { return h }
+
+func (h *logCapture) count(msg string) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	n := 0
+	for _, m := range h.msgs {
+		if m == msg {
+			n++
+		}
+	}
+	return n
+}
+
+func TestCacheSweep_EvictionCounters(t *testing.T) {
+	w, store, _ := newSweepEnv(t, 10, string(make([]byte, 100)), map[string]string{
+		"download_cache_max_bytes":        "1000",
+		"download_cache_max_object_bytes": "10",
+	})
+
+	w.sweep(context.Background())
+
+	m := store.Metrics().Snapshot()
+	if m.EvictedBudget != 1 || m.EvictedBytes != 100 {
+		t.Fatalf("evicted budget/bytes = %d/%d, want 1/100", m.EvictedBudget, m.EvictedBytes)
+	}
+	if m.EvictedInactive != 0 || m.EvictedPressure != 0 {
+		t.Fatalf("inactive/pressure counters moved (%d/%d) on a budget-only sweep", m.EvictedInactive, m.EvictedPressure)
+	}
+}
+
+func TestCacheSweep_StatsEmissionOnlyOnChange(t *testing.T) {
+	capt := &logCapture{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(capt))
+	defer slog.SetDefault(prev)
+
+	w, store, _ := newSweepEnv(t, 0, "", map[string]string{
+		"download_cache_max_bytes": "1000000",
+	})
+
+	// Nothing has happened: no stats line.
+	w.sweep(context.Background())
+	if n := capt.count("download cache stats"); n != 0 {
+		t.Fatalf("stats emitted %d times on a quiet cache, want 0", n)
+	}
+
+	// A counter moved: exactly one line; an unchanged follow-up tick stays quiet.
+	store.Metrics().Hits.Add(1)
+	w.sweep(context.Background())
+	w.sweep(context.Background())
+	if n := capt.count("download cache stats"); n != 1 {
+		t.Fatalf("stats emitted %d times after one change, want exactly 1", n)
+	}
 }
 
 // A cache directory the process cannot unlink from must not wedge or spin the

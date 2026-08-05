@@ -51,6 +51,10 @@ type CacheSweepWorker struct {
 	batch    int
 	pause    time.Duration
 
+	// lastStats is the counter snapshot as of the last emission, so the
+	// periodic stats line only prints when something actually happened.
+	lastStats downloadcache.MetricsSnapshot
+
 	wg     sync.WaitGroup
 	cancel context.CancelFunc
 }
@@ -127,20 +131,49 @@ func (w *CacheSweepWorker) Stop() {
 }
 
 // sweep runs one policy pass: disk pressure first (highest precedence), then
-// the inactivity window, then the byte budget.
+// the inactivity window, then the byte budget — and finally the periodic
+// stats emission, which runs even over an empty cache (counters may have
+// moved since the last tick drained it).
 func (w *CacheSweepWorker) sweep(ctx context.Context) {
-	count, _ := w.store.Stats()
-	if count == 0 {
+	if count, _ := w.store.Stats(); count > 0 {
+		w.sweepDiskPressure(ctx)
+
+		if secs := w.settingsSvc.GetIntWithBounds("download_cache_inactive_secs", 0, 0, 315360000); secs > 0 {
+			w.sweepInactive(ctx, time.Now().Add(-time.Duration(secs)*time.Second))
+		}
+
+		w.sweepBudget(ctx)
+	}
+
+	w.emitStats()
+}
+
+// emitStats writes one cumulative "download cache stats" line to slog (V2-825)
+// when any counter moved since the last emission — the operator's sizing
+// telemetry (hit ratio, eviction churn, bytes saved) until the V2-767 traffic
+// accounting gives these a fleet-aggregable home. Cumulative since boot;
+// stdout-only, like everything on the reader fleet (V2-514).
+func (w *CacheSweepWorker) emitStats() {
+	snap := w.store.Metrics().Snapshot()
+	if snap == w.lastStats {
 		return
 	}
-
-	w.sweepDiskPressure(ctx)
-
-	if secs := w.settingsSvc.GetIntWithBounds("download_cache_inactive_secs", 0, 0, 315360000); secs > 0 {
-		w.sweepInactive(ctx, time.Now().Add(-time.Duration(secs)*time.Second))
+	w.lastStats = snap
+	count, bytes := w.store.Stats()
+	ratio := 0.0
+	if total := snap.Hits + snap.Misses; total > 0 {
+		ratio = float64(snap.Hits) / float64(total)
 	}
-
-	w.sweepBudget(ctx)
+	slog.Info("download cache stats",
+		"entries", count, "bytes", bytes,
+		"hits", snap.Hits, "misses", snap.Misses, "hit_ratio", ratio,
+		"bytes_served", snap.BytesServed, "bytes_fetched", snap.BytesFetch,
+		"promoted_read_through", snap.PromotedReadThrough, "promoted_seeded", snap.PromotedSeeded,
+		"min_uses_rejects", snap.MinUsesRejects,
+		"coalesced_waits", snap.CoalescedWaits, "coalesce_timeouts", snap.CoalesceTimeouts,
+		"evicted_budget", snap.EvictedBudget, "evicted_inactive", snap.EvictedInactive,
+		"evicted_pressure", snap.EvictedPressure, "evicted_bytes", snap.EvictedBytes,
+		"self_heal_drops", snap.SelfHealDrops)
 }
 
 // sweepDiskPressure evicts toward empty while the DataDir volume sits at or
@@ -173,6 +206,9 @@ func (w *CacheSweepWorker) sweepDiskPressure(ctx context.Context) {
 		w.batchPause(ctx)
 	}
 	if evicted > 0 {
+		m := w.store.Metrics()
+		m.EvictedPressure.Add(int64(evicted))
+		m.EvictedBytes.Add(freed)
 		slog.Warn("download cache evicted under disk pressure",
 			"entries", evicted, "bytes", freed, "threshold_pct", cacheDiskPressurePct)
 	}
@@ -194,6 +230,9 @@ func (w *CacheSweepWorker) sweepInactive(ctx context.Context, cutoff time.Time) 
 		w.batchPause(ctx)
 	}
 	if evicted > 0 {
+		m := w.store.Metrics()
+		m.EvictedInactive.Add(int64(evicted))
+		m.EvictedBytes.Add(freed)
 		slog.Info("download cache evicted inactive entries",
 			"entries", evicted, "bytes", freed, "cutoff", cutoff.Format(time.RFC3339))
 	}
@@ -240,6 +279,9 @@ func (w *CacheSweepWorker) sweepBudget(ctx context.Context) {
 		w.batchPause(ctx)
 	}
 	if evicted > 0 {
+		m := w.store.Metrics()
+		m.EvictedBudget.Add(int64(evicted))
+		m.EvictedBytes.Add(freed)
 		slog.Info("download cache evicted over budget",
 			"entries", evicted, "bytes", freed, "budget", budget, "target", target)
 	}

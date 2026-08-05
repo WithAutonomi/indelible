@@ -94,6 +94,8 @@ type Store struct {
 	bytes   int64  // running total of indexed entry sizes
 	ready   bool   // set once Scan has adopted the previous run's files
 	genSeq  uint64 // source of entry generations; incremented per promotion/adoption
+
+	metrics Metrics // V2-825 counters; see metrics.go
 }
 
 // New returns a Store rooted at dir (conventionally DataDir/cache/objects).
@@ -138,7 +140,9 @@ func (s *Store) Get(key string) (string, bool) {
 	// entry survives and this lookup just misses.
 	fi, err := os.Lstat(p)
 	if err != nil || !fi.Mode().IsRegular() || fi.Size() != size {
-		s.DropGen(key, gen)
+		if s.DropGen(key, gen) {
+			s.metrics.SelfHealDrops.Add(1)
+		}
 		return "", false
 	}
 
@@ -175,19 +179,25 @@ func (s *Store) Open(key string) (*os.File, bool) {
 	p := s.path(key)
 	fi, err := os.Lstat(p)
 	if err != nil || !fi.Mode().IsRegular() || fi.Size() != size {
-		s.DropGen(key, gen)
+		if s.DropGen(key, gen) {
+			s.metrics.SelfHealDrops.Add(1)
+		}
 		return nil, false
 	}
 	f, err := os.Open(p)
 	if err != nil {
 		// Vanished between the Lstat and the open (eviction races are that
 		// narrow). Gen-checked self-heal: never disturbs a fresh re-promotion.
-		s.DropGen(key, gen)
+		if s.DropGen(key, gen) {
+			s.metrics.SelfHealDrops.Add(1)
+		}
 		return nil, false
 	}
 	if fi, err := f.Stat(); err != nil || !fi.Mode().IsRegular() || fi.Size() != size {
 		_ = f.Close()
-		s.DropGen(key, gen)
+		if s.DropGen(key, gen) {
+			s.metrics.SelfHealDrops.Add(1)
+		}
 		return nil, false
 	}
 
@@ -196,6 +206,12 @@ func (s *Store) Open(key string) (*os.File, bool) {
 		e.lastAccess = time.Now()
 	}
 	s.mu.Unlock()
+	// Every successful Open is a serve from local disk. Bytes count the whole
+	// object per hit — Range responses send less on the wire, but the number
+	// exists to compare against BytesFetch (what antd would have re-fetched),
+	// and a fetch would also have been the whole object.
+	s.metrics.Hits.Add(1)
+	s.metrics.BytesServed.Add(size)
 	return f, true
 }
 

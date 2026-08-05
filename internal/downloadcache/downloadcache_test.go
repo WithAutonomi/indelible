@@ -537,6 +537,35 @@ func TestKeyForIdentifier(t *testing.T) {
 	}
 }
 
+func TestMetricsOpenAndSelfHeal(t *testing.T) {
+	dir := t.TempDir()
+	s := newReadyStore(t, filepath.Join(dir, "objects"))
+	if _, err := s.PromoteIfFits(testKey, writeTemp(t, dir, "counted"), testBudget); err != nil {
+		t.Fatalf("promote: %v", err)
+	}
+
+	f, ok := s.Open(testKey)
+	if !ok {
+		t.Fatal("open missed")
+	}
+	f.Close()
+	m := s.Metrics().Snapshot()
+	if m.Hits != 1 || m.BytesServed != int64(len("counted")) {
+		t.Fatalf("hits/bytes = %d/%d, want 1/%d", m.Hits, m.BytesServed, len("counted"))
+	}
+
+	p, _ := s.Get(testKey)
+	if err := os.Remove(p); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	if _, ok := s.Open(testKey); ok {
+		t.Fatal("open served a deleted file")
+	}
+	if m := s.Metrics().Snapshot(); m.SelfHealDrops != 1 {
+		t.Fatalf("self-heal drops = %d, want 1", m.SelfHealDrops)
+	}
+}
+
 // Regression for the #150 panel finding: a failed unlink must not be reported
 // as a successful eviction — the index/accounting mutation commits only after
 // the file is gone, so bytes still on disk stay accounted and retryable.
