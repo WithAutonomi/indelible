@@ -24,7 +24,8 @@ jobs:
   # `paths:` (the ant-sdk pattern) because master's required checks (Lint,
   # Test, Frontend, Smoke) would sit "Expected" forever on a docs-only PR if
   # the workflow never triggered; a job skipped via `if:` reports
-  # skipped-success and satisfies branch protection.
+  # skipped-success and satisfies branch protection. (Matrix jobs are the
+  # exception — see the test-skip stand-in below.)
   #
   # `code` is true when at least one changed file is NOT pure documentation
   # (predicate-quantifier: every = a file counts only if it matches ALL
@@ -128,6 +129,25 @@ jobs:
         env:
           INDELIBLE_TEST_DB_URL: ${{ matrix.db == 'postgres' && 'postgres://postgres:ci@localhost:5432/postgres?sslmode=disable' || '' }}
         run: go test -count=1 -timeout 5m ./...
+
+  # The skipped-success trick above fails for MATRIX jobs: a matrix job
+  # skipped at job level never expands, so it reports under the literal
+  # unexpanded job name and the required contexts Test (sqlite) /
+  # Test (postgres) sit missing forever — docs-only PRs were un-mergeable
+  # (found on #148). This stand-in carries the same matrix and display name
+  # with the inverted condition: exactly one of the pair expands per run, so
+  # the required names are always reported and never collide.
+  test-skip:
+    name: Test (${{ matrix.db }})
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code != 'true'
+    strategy:
+      matrix:
+        db: [sqlite, postgres]
+    steps:
+      - name: Report skip
+        run: echo "Documentation-only change — Test (${{ matrix.db }}) not required."
 
   # Race detection is master-only — runs after a PR merges to catch races we
   # can't afford to run on every push. Local pre-push checks (scripts/ci-local.sh
