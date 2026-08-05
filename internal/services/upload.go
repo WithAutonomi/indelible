@@ -570,42 +570,49 @@ func (s *UploadService) ForceRetry(id int64) error {
 
 // Delete permanently removes an upload record. Only allowed for failed or completed uploads.
 func (s *UploadService) Delete(id int64) error {
-	// Fan the purge out to the fleet FIRST (V2-873): append the upload's
-	// cache keys to cache_purge_log before anything is deleted, so a failure
-	// later in this sequence can at worst cause a spurious purge (an instance
-	// drops a live entry and re-warms) — never a missed one. Every instance's
-	// cache sweep worker consumes this log each tick; the handling instance
-	// additionally purges synchronously in the handler (V2-824).
-	if u, err := s.GetByID(id); err == nil {
-		for _, key := range u.CacheKeys() {
-			if _, err := s.db.Exec(`INSERT INTO cache_purge_log (cache_key) VALUES (?)`, key); err != nil {
-				return err
-			}
+	// One transaction for the purge-log fan-out and the row deletion
+	// (V2-873, #155 panel finding 1): any other connection sees either
+	// row-live/no-log or row-gone/log-present — never a state where a
+	// reconciling instance could read the log's high-water mark, still see
+	// the live row, and then miss the delete that committed between. A
+	// refused or failed delete rolls the log rows back with it.
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }() // no-op once committed
+
+	var dataMap, addr sql.NullString
+	if err := tx.QueryRow(`SELECT data_map, datamap_address FROM uploads WHERE id = ?`, id).Scan(&dataMap, &addr); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return errors.New("only failed or completed uploads can be deleted")
 		}
-	} else if !errors.Is(err, ErrUploadNotFound) {
+		return err
+	}
+	for _, key := range (&Upload{DataMap: dataMap, DatamapAddress: addr}).CacheKeys() {
+		if _, err := tx.Exec(`INSERT INTO cache_purge_log (cache_key) VALUES (?)`, key); err != nil {
+			return err
+		}
+	}
+
+	if _, err := tx.Exec(`DELETE FROM file_tags WHERE upload_id = ?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM collection_files WHERE upload_id = ?`, id); err != nil {
 		return err
 	}
 
-	// Clean up related data first
-	if _, err := s.db.Exec(`DELETE FROM file_tags WHERE upload_id = ?`, id); err != nil {
-		return err
-	}
-	if _, err := s.db.Exec(`DELETE FROM collection_files WHERE upload_id = ?`, id); err != nil {
-		return err
-	}
-
-	result, err := s.db.Exec(
+	result, err := tx.Exec(
 		`DELETE FROM uploads WHERE id = ? AND status IN ('failed', 'completed')`,
 		id,
 	)
 	if err != nil {
 		return err
 	}
-	n, _ := result.RowsAffected()
-	if n == 0 {
+	if n, _ := result.RowsAffected(); n == 0 {
 		return errors.New("only failed or completed uploads can be deleted")
 	}
-	return nil
+	return tx.Commit()
 }
 
 // CacheKeys returns every download-cache key this upload's bytes could live
@@ -680,10 +687,13 @@ func (s *UploadService) PrunePurgeLog(before time.Time) (int64, error) {
 	return n, nil
 }
 
-// LiveCacheKeys reports which of the given cache keys belong to a live upload
-// row — the boot-reconciliation lookup (uploads.cache_key is indexed).
-func (s *UploadService) LiveCacheKeys(keys []string) (map[string]bool, error) {
-	live := make(map[string]bool, len(keys))
+// CacheKeyVisibility reports, for each given cache key that belongs to a live
+// upload row, that row's visibility ("public"/"private") — the reconciliation
+// lookup (uploads.cache_key is indexed). Keys absent from the result have no
+// live row. Reconciliation is policy-aware (#155 panel finding 3): a private
+// key is kept only while download_cache_private allows it.
+func (s *UploadService) CacheKeyVisibility(keys []string) (map[string]string, error) {
+	live := make(map[string]string, len(keys))
 	const chunk = 500
 	for start := 0; start < len(keys); start += chunk {
 		end := start + chunk
@@ -701,18 +711,18 @@ func (s *UploadService) LiveCacheKeys(keys []string) (map[string]bool, error) {
 			args = append(args, k)
 		}
 		rows, err := s.db.Query(
-			`SELECT cache_key FROM uploads WHERE cache_key IN (`+string(placeholders)+`)`, args...,
+			`SELECT cache_key, visibility FROM uploads WHERE cache_key IN (`+string(placeholders)+`)`, args...,
 		)
 		if err != nil {
 			return nil, err
 		}
 		for rows.Next() {
-			var k string
-			if err := rows.Scan(&k); err != nil {
+			var k, vis string
+			if err := rows.Scan(&k, &vis); err != nil {
 				rows.Close()
 				return nil, err
 			}
-			live[k] = true
+			live[k] = vis
 		}
 		if err := rows.Err(); err != nil {
 			rows.Close()

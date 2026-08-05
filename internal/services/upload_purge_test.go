@@ -122,12 +122,12 @@ func TestPrunePurgeLogAndLiveCacheKeys(t *testing.T) {
 	}
 	liveKey := downloadcache.KeyForIdentifier("dm-live")
 
-	live, err := svc.LiveCacheKeys([]string{liveKey, "0000000000000000000000000000000000000000000000000000000000000000"})
+	live, err := svc.CacheKeyVisibility([]string{liveKey, "0000000000000000000000000000000000000000000000000000000000000000"})
 	if err != nil {
-		t.Fatalf("LiveCacheKeys: %v", err)
+		t.Fatalf("CacheKeyVisibility: %v", err)
 	}
-	if !live[liveKey] || len(live) != 1 {
-		t.Fatalf("LiveCacheKeys = %v, want only the live key", live)
+	if live[liveKey] != "private" || len(live) != 1 {
+		t.Fatalf("CacheKeyVisibility = %v, want only the live key mapped to private", live)
 	}
 
 	if _, err := db.Exec(`INSERT INTO cache_purge_log (cache_key, deleted_at) VALUES (?, ?)`, "old-key", "2020-01-01 00:00:00"); err != nil {
@@ -143,5 +143,30 @@ func TestPrunePurgeLogAndLiveCacheKeys(t *testing.T) {
 	entries, err := svc.PurgeLogSince(0, 10)
 	if err != nil || len(entries) != 1 || entries[0].CacheKey != "fresh-key" {
 		t.Fatalf("post-prune log = %+v (err=%v), want only fresh-key", entries, err)
+	}
+}
+
+// #155 panel finding 1: the purge-log append and the row delete are one
+// transaction — a refused delete must leave no log rows behind (and other
+// connections can never observe row-live + log-present).
+func TestDeleteRefusedRollsBackPurgeLog(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, NewUserService(db), "atomic@example.com", "A", "T")
+	svc := NewUploadService(db)
+
+	u := createTestUpload(t, svc, user.ID, "queued.bin", 10) // status stays "queued"
+	if _, err := db.Exec(`UPDATE uploads SET data_map='dm-atomic' WHERE id = ?`, u.ID); err != nil {
+		t.Fatalf("set identifier: %v", err)
+	}
+
+	if err := svc.Delete(u.ID); err == nil {
+		t.Fatal("delete of a queued upload must be refused")
+	}
+	entries, err := svc.PurgeLogSince(0, 10)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("refused delete leaked purge-log rows: %+v (err=%v)", entries, err)
+	}
+	if _, err := svc.GetByID(u.ID); err != nil {
+		t.Fatalf("row must survive a refused delete: %v", err)
 	}
 }

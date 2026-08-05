@@ -470,7 +470,7 @@ onMounted(async () => {
             <div class="grid grid-cols-3 gap-6 py-5">
               <div>
                 <label class="text-sm font-medium">Cache Private Files</label>
-                <p class="text-xs text-surface-400 mt-1">Serve repeat reads of private files from this deployment's disk. This keeps decrypted private content on every caching instance's disk (off by default): deleting an upload purges the deleting instance immediately and every other instance within about a minute, but treat cache volumes with the same care as the database. Leave off unless private read performance matters.</p>
+                <p class="text-xs text-surface-400 mt-1">Serve repeat reads of private files from this deployment's disk. This keeps decrypted private content on every caching instance's disk (off by default): deleting an upload purges the deleting instance immediately and every other instance within about a minute, but treat cache volumes with the same care as the database. Turning it off also removes already-cached private files fleet-wide (within about a minute online; at next start for instances that were down). Leave off unless private read performance matters.</p>
               </div>
               <div class="col-span-2 flex items-center gap-3">
                 <ToggleSwitch :modelValue="uploads.download_cache_private === 'true'"
