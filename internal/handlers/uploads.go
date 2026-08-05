@@ -2,8 +2,6 @@ package handlers
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -647,7 +645,9 @@ const downloadCacheControl = "private, max-age=31536000, immutable"
 // "" when no content identifier is available. The identifier (local DataMap or
 // network address) is content-addressed, so a hash of it is a stable validator.
 // It is hashed — not emitted raw — so the ETag never leaks the DataMap, which
-// is itself the capability needed to retrieve the file.
+// is itself the capability needed to retrieve the file. The digest doubles as
+// the download-cache key (unquoted), derived in one place —
+// downloadcache.KeyForIdentifier — shared with upload-side seeding (V2-822).
 func downloadETag(u *services.Upload) string {
 	var id string
 	switch {
@@ -658,8 +658,7 @@ func downloadETag(u *services.Upload) string {
 	default:
 		return ""
 	}
-	sum := sha256.Sum256([]byte("indelible-download-v1:" + id))
-	return `"` + hex.EncodeToString(sum[:]) + `"`
+	return `"` + downloadcache.KeyForIdentifier(id) + `"`
 }
 
 // etagMatches reports whether an If-None-Match header matches the given strong
@@ -699,7 +698,7 @@ func etagMatches(ifNoneMatch, etag string) bool {
 // @Failure      503  {object}  map[string]string  "Concurrent download limit reached — retry after the Retry-After interval"
 // @Security     BearerAuth
 // @Router       /uploads/{id}/download [get]
-func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
+func DownloadUpload(db *database.DB, cfg *config.Config, cache *downloadcache.Store) http.HandlerFunc {
 	uploadSvc := services.NewUploadService(db)
 	logSvc := services.NewLogService(db)
 	settingsSvc := services.NewCachedSettingsService(services.NewSettingsService(db))
@@ -714,16 +713,20 @@ func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	// of public download bytes under DataDir — same volume as the temp files,
 	// so promotion is an atomic rename. Off until the operator sets a byte
 	// budget (download_cache_max_bytes); like all runtime settings, changes
-	// propagate within the settings cache TTL (~30s), not per request. The
-	// boot scan adopting a previous run's entries runs synchronously so the
-	// index is authoritative before the first request — the store refuses
-	// promotion until then, else the byte budget would be admitted against
-	// an undercount of what is already on disk.
-	cache := downloadcache.New(filepath.Join(cfg.DataDir, "cache", "objects"))
-	if err := cache.Scan(context.Background()); err != nil {
-		// Not fatal: the cache stays not-ready (hits impossible, promotion
-		// refused), and downloads flow through the plain gated path.
-		slog.Warn("download cache scan failed; cache disabled", "error", err)
+	// propagate within the settings cache TTL (~30s), not per request.
+	// Production passes the store in (main also hands it to the V2-823 sweep
+	// worker — eviction and admission must share one index); nil means own it
+	// here, in which case the boot scan adopting a previous run's entries runs
+	// synchronously so the index is authoritative before the first request —
+	// the store refuses promotion until then, else the byte budget would be
+	// admitted against an undercount of what is already on disk.
+	if cache == nil {
+		cache = downloadcache.New(filepath.Join(cfg.DataDir, "cache", "objects"))
+		if err := cache.Scan(context.Background()); err != nil {
+			// Not fatal: the cache stays not-ready (hits impossible, promotion
+			// refused), and downloads flow through the plain gated path.
+			slog.Warn("download cache scan failed; cache disabled", "error", err)
+		}
 	}
 	// Fill coalescing and min-uses admission state for the cache (V2-821).
 	// Both are per-instance and in-memory, like all cache recency state.
@@ -806,7 +809,11 @@ func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 		// waits for the V2-824 opt-in. The key is the unquoted ETag hex: the
 		// same content identity the 304 path validates against, known before
 		// any fetch, and it never exposes the DataMap capability.
-		cacheBudget := int64(settingsSvc.GetIntWithBounds("download_cache_max_bytes", 0, 0, 1<<50))
+		// The budget resolves through the per-instance override (V2-823): the
+		// DB setting is fleet-global, so heterogeneous-disk fleets pin
+		// individual instances via INDELIBLE_DOWNLOAD_CACHE_MAX_BYTES.
+		cacheBudget := cfg.DownloadCacheBudget(
+			int64(settingsSvc.GetIntWithBounds("download_cache_max_bytes", 0, 0, 1<<50)))
 		queueWait := time.Duration(settingsSvc.GetIntWithBounds(
 			"download_queue_wait_secs", 30, 0, 600,
 		)) * time.Second
@@ -814,19 +821,26 @@ func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 		if cacheBudget > 0 && etag != "" && upload.Visibility == "public" {
 			cacheKey = strings.Trim(etag, `"`)
 		}
-		serveCacheHit := func(cachePath string) {
-			// Hit: local bytes via http.ServeFile (Range/resume preserved),
+		// The coalesce loop clears cacheKey on wait-timeout; remember the
+		// original eligibility so the hit/miss accounting (V2-825) still
+		// counts those requests as cache misses.
+		cacheEligible := cacheKey != ""
+		metrics := cache.Metrics()
+		serveCacheHit := func(f *os.File) {
+			// Hit: local bytes via http.ServeContent (Range/resume preserved),
 			// outside the V2-809 gate — a hit consumes neither antd chunk
-			// budget nor temp disk, the two resources the gate protects.
-			// ServeFile would answer If-Modified-Since against the file's
-			// promotion-time mtime, which differs per replica; the immutable
-			// contract here is ETag/If-None-Match (already handled above), so
-			// drop IMS rather than serve per-replica Last-Modified semantics.
-			r.Header.Del("If-Modified-Since")
+			// budget nor temp disk, the two resources the gate protects. The
+			// store hands back an OPEN descriptor rather than a path so the
+			// V2-823 sweeper unlinking this entry mid-serve cannot 404 it —
+			// the descriptor keeps streaming the unlinked bytes. Zero modtime:
+			// no Last-Modified / If-Modified-Since semantics — a file's mtime
+			// is its per-replica promotion time, and the immutable contract
+			// here is ETag/If-None-Match (already handled above).
+			defer f.Close()
 			fileAccessEvent(r, logSvc, "file_downloaded", "info", &userID,
 				fmt.Sprintf("uuid=%s filename=%s visibility=%s cache=hit", upload.UUID, upload.OriginalFilename, upload.Visibility))
 			serveHeaders()
-			http.ServeFile(w, r, cachePath)
+			http.ServeContent(w, r, "", time.Time{}, f)
 		}
 		if cacheKey != "" {
 			// Coalesce concurrent fills: when several requests miss on the
@@ -846,9 +860,10 @@ func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 			fillTimer := time.NewTimer(queueWait)
 			defer fillTimer.Stop()
 			const maxFillRounds = 4
+			waited := false
 			for round := 0; ; round++ {
-				if cachePath, ok := cache.Get(cacheKey); ok {
-					serveCacheHit(cachePath)
+				if f, ok := cache.Open(cacheKey); ok {
+					serveCacheHit(f)
 					return
 				}
 				leader, done := flights.Begin(cacheKey)
@@ -857,8 +872,13 @@ func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 					break
 				}
 				if round >= maxFillRounds {
+					metrics.CoalesceTimeouts.Add(1)
 					cacheKey = ""
 					break
+				}
+				if !waited {
+					waited = true
+					metrics.CoalescedWaits.Add(1)
 				}
 				select {
 				case <-done:
@@ -866,6 +886,7 @@ func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 					// the next leader if the fill produced none.
 					continue
 				case <-fillTimer.C:
+					metrics.CoalesceTimeouts.Add(1)
 					cacheKey = ""
 				case <-r.Context().Done():
 					return
@@ -907,9 +928,9 @@ func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 		// promoted this object while we waited for a slot. Release the slot
 		// first — a hit consumes neither antd budget nor temp disk.
 		if cacheKey != "" {
-			if cachePath, ok := cache.Get(cacheKey); ok {
+			if f, ok := cache.Open(cacheKey); ok {
 				gate.release()
-				serveCacheHit(cachePath)
+				serveCacheHit(f)
 				return
 			}
 		}
@@ -957,15 +978,37 @@ func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
+		// Open the fetched bytes BEFORE any promotion: a rename does not
+		// invalidate the descriptor, so this one FD serves the response in
+		// every outcome — promotion skipped, refused, succeeded, or succeeded
+		// and already evicted again by the V2-823 sweeper. (Serving the
+		// post-promotion *path* would race eviction into a 404.)
+		f, err := os.Open(tempPath)
+		if err != nil {
+			jsonError(w, "failed to read downloaded file", http.StatusInternalServerError)
+			return
+		}
+		defer f.Close()
+
+		// Fetch accounting (V2-825): every download-path antd fetch counts,
+		// cache-eligible or not — BytesFetch is the baseline BytesServed is
+		// compared against. Misses count only cache-eligible requests, so
+		// hits/(hits+misses) is a true cache hit ratio.
+		if fi, err := f.Stat(); err == nil {
+			metrics.BytesFetch.Add(fi.Size())
+		}
+		if cacheEligible {
+			metrics.Misses.Add(1)
+		}
+
 		// Promote the fetched bytes into the cache where the temp file was
 		// previously just discarded (the deferred os.Remove degrades to a
 		// no-op after the rename). Per-object ceiling keeps large files in
-		// the temp/streaming regime; until the V2-823 sweeper lands, the
-		// byte budget is enforced at admission only — the cache stops
-		// growing at the budget instead of evicting. Promotion failure is
-		// never a download failure: worst case we serve from the temp file
-		// exactly as before the cache existed.
-		servePath := tempPath
+		// the temp/streaming regime; the byte budget is enforced at
+		// admission (stop-at-full) with the sweeper evicting LRU headroom
+		// back below it between ticks. Promotion failure is never a download
+		// failure: worst case we serve from the temp file exactly as before
+		// the cache existed.
 		if cacheKey != "" {
 			maxObject := int64(settingsSvc.GetIntWithBounds("download_cache_max_object_bytes", 64<<20, 1, 1<<40))
 			minUses := settingsSvc.GetIntWithBounds("download_cache_min_uses", 1, 1, 100)
@@ -974,18 +1017,20 @@ func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 				// objects are never re-referenced, so when the operator has
 				// raised the bar, an object must miss minUses times on this
 				// instance before its bytes are worth keeping.
+				metrics.MinUsesRejects.Add(1)
 			} else if fi, err := os.Stat(tempPath); err == nil && fi.Size() <= maxObject {
 				// Budget admission is atomic inside the store: the check,
 				// rename, and accounting share one critical section, so
 				// concurrent promotions of distinct keys can't all spend the
 				// same remaining bytes. Over-budget and not-ready refusals
 				// are normal operation, not errors.
-				switch cachePath, err := cache.PromoteIfFits(cacheKey, tempPath, cacheBudget); {
+				switch _, err := cache.PromoteIfFits(cacheKey, tempPath, cacheBudget); {
 				case err == nil:
-					servePath = cachePath
+					metrics.PromotedReadThrough.Add(1)
 				case errors.Is(err, downloadcache.ErrOverBudget) || errors.Is(err, downloadcache.ErrNotReady):
-					// Cache full (no sweeper yet — V2-823) or scan failed at
-					// boot: serve from the temp file as before the cache.
+					// Cache full (sweeper hasn't freed headroom yet) or scan
+					// failed at boot: serve from the temp file as before the
+					// cache.
 				default:
 					slog.Warn("download cache promotion failed", "uuid", upload.UUID, "error", err)
 				}
@@ -1000,7 +1045,10 @@ func DownloadUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 			fmt.Sprintf("uuid=%s filename=%s visibility=%s", upload.UUID, upload.OriginalFilename, upload.Visibility))
 
 		serveHeaders()
-		http.ServeFile(w, r, servePath)
+		// Zero modtime, matching the cache-hit path: ETag is the validator
+		// for these immutable bytes; a temp/promotion mtime is meaningless
+		// to clients and differs per replica.
+		http.ServeContent(w, r, "", time.Time{}, f)
 	}
 }
 

@@ -23,10 +23,14 @@ package downloadcache
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 )
@@ -39,6 +43,21 @@ var ErrNotReady = errors.New("downloadcache: index not ready (scan incomplete)")
 // ErrOverBudget is returned by PromoteIfFits when admitting the object would
 // push the indexed total over the caller's byte budget.
 var ErrOverBudget = errors.New("downloadcache: promotion exceeds byte budget")
+
+// KeyForIdentifier returns the cache key for an upload's content identifier
+// (local DataMap or published network address): the hex sha256 of the
+// domain-separated identifier — the same digest the download ETag quotes.
+// One derivation shared by the serve path and upload-side seeding (V2-822),
+// so both sides always agree on an object's identity, and neither ever
+// exposes the raw identifier (the DataMap is the retrieval capability).
+// Returns "" for an empty identifier.
+func KeyForIdentifier(id string) string {
+	if id == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte("indelible-download-v1:" + id))
+	return hex.EncodeToString(sum[:])
+}
 
 // keyValid reports whether key is safe as a cache filename: lowercase hex,
 // long enough to be a real digest, so a hostile key can never traverse paths.
@@ -57,6 +76,11 @@ func keyValid(key string) bool {
 type entry struct {
 	size       int64
 	lastAccess time.Time // in-memory LRU/inactivity clock (V2-823) — never filesystem atime
+	// gen identifies this particular promotion of the key. The sweeper holds
+	// (key, gen) pairs from an Oldest snapshot; DropGen refuses to act when
+	// the generations differ, so eviction planned against one file can never
+	// unlink the fresher file a concurrent re-promotion put in its place.
+	gen uint64
 }
 
 // Store is the in-memory index over a directory of promoted files. The
@@ -67,8 +91,11 @@ type Store struct {
 
 	mu      sync.Mutex
 	entries map[string]*entry
-	bytes   int64 // running total of indexed entry sizes
-	ready   bool  // set once Scan has adopted the previous run's files
+	bytes   int64  // running total of indexed entry sizes
+	ready   bool   // set once Scan has adopted the previous run's files
+	genSeq  uint64 // source of entry generations; incremented per promotion/adoption
+
+	metrics Metrics // V2-825 counters; see metrics.go
 }
 
 // New returns a Store rooted at dir (conventionally DataDir/cache/objects).
@@ -90,6 +117,10 @@ func (s *Store) path(key string) string {
 // vanished or changed size out from under the index (external deletion,
 // truncation, corruption), the entry is dropped and Get reports a miss — the
 // cache is expendable, the caller just refetches.
+//
+// Serve paths should prefer Open: a path returned here can be unlinked by the
+// (V2-823) sweeper before the caller opens it, turning a hit into a 404,
+// whereas an open descriptor keeps serving the unlinked bytes.
 func (s *Store) Get(key string) (string, bool) {
 	s.mu.Lock()
 	e, ok := s.entries[key]
@@ -97,17 +128,21 @@ func (s *Store) Get(key string) (string, bool) {
 		s.mu.Unlock()
 		return "", false
 	}
-	size := e.size
+	size, gen := e.size, e.gen
 	s.mu.Unlock()
 
 	p := s.path(key)
 	// Lstat outside the lock: cheap, but no reason to serialize other lookups
 	// behind disk latency. Lstat (not Stat) plus the regular-file check means
 	// an entry swapped for a symlink or device node on disk is dropped, never
-	// followed and served.
+	// followed and served. Self-healing is gen-checked: if the mismatch was a
+	// concurrent eviction already replaced by a fresh promotion, the fresh
+	// entry survives and this lookup just misses.
 	fi, err := os.Lstat(p)
 	if err != nil || !fi.Mode().IsRegular() || fi.Size() != size {
-		s.Drop(key)
+		if s.DropGen(key, gen) {
+			s.metrics.SelfHealDrops.Add(1)
+		}
 		return "", false
 	}
 
@@ -117,6 +152,67 @@ func (s *Store) Get(key string) (string, bool) {
 	}
 	s.mu.Unlock()
 	return p, true
+}
+
+// Open returns an open descriptor for key's cached bytes, or false on a miss.
+// This is the serve-path lookup: once the descriptor is returned, concurrent
+// eviction (the V2-823 sweeper unlinks files) cannot fail the serve — on
+// POSIX the unlinked inode keeps streaming until the descriptor closes. The
+// caller owns the returned file and must Close it.
+//
+// The entry is revalidated before returning: Lstat rejects a symlink or
+// non-regular swap without following it, and after opening, the descriptor's
+// own fstat must still report a regular file of the recorded size — so a file
+// swapped between the check and the open is caught, and identity mismatches
+// self-heal exactly like Get (drop, report a miss, caller refetches). A hit
+// refreshes the entry's access clock.
+func (s *Store) Open(key string) (*os.File, bool) {
+	s.mu.Lock()
+	e, ok := s.entries[key]
+	if !ok {
+		s.mu.Unlock()
+		return nil, false
+	}
+	size, gen := e.size, e.gen
+	s.mu.Unlock()
+
+	p := s.path(key)
+	fi, err := os.Lstat(p)
+	if err != nil || !fi.Mode().IsRegular() || fi.Size() != size {
+		if s.DropGen(key, gen) {
+			s.metrics.SelfHealDrops.Add(1)
+		}
+		return nil, false
+	}
+	f, err := os.Open(p)
+	if err != nil {
+		// Vanished between the Lstat and the open (eviction races are that
+		// narrow). Gen-checked self-heal: never disturbs a fresh re-promotion.
+		if s.DropGen(key, gen) {
+			s.metrics.SelfHealDrops.Add(1)
+		}
+		return nil, false
+	}
+	if fi, err := f.Stat(); err != nil || !fi.Mode().IsRegular() || fi.Size() != size {
+		_ = f.Close()
+		if s.DropGen(key, gen) {
+			s.metrics.SelfHealDrops.Add(1)
+		}
+		return nil, false
+	}
+
+	s.mu.Lock()
+	if e, ok := s.entries[key]; ok {
+		e.lastAccess = time.Now()
+	}
+	s.mu.Unlock()
+	// Every successful Open is a serve from local disk. Bytes count the whole
+	// object per hit — Range responses send less on the wire, but the number
+	// exists to compare against BytesFetch (what antd would have re-fetched),
+	// and a fetch would also have been the whole object.
+	s.metrics.Hits.Add(1)
+	s.metrics.BytesServed.Add(size)
+	return f, true
 }
 
 // PromoteIfFits moves srcPath (a fully-written temp file on the same
@@ -169,7 +265,8 @@ func (s *Store) PromoteIfFits(key, srcPath string, budget int64) (string, error)
 	// The bytes came from antd with whatever mode the daemon wrote; pin the
 	// cached copy to owner-only for shared-volume deployments.
 	_ = os.Chmod(dst, 0600)
-	s.entries[key] = &entry{size: fi.Size(), lastAccess: time.Now()}
+	s.genSeq++
+	s.entries[key] = &entry{size: fi.Size(), lastAccess: time.Now(), gen: s.genSeq}
 	s.bytes += delta
 	return dst, nil
 }
@@ -177,19 +274,107 @@ func (s *Store) PromoteIfFits(key, srcPath string, budget int64) (string, error)
 // Drop forgets key and unlinks its file. Delete-only, and safe under a
 // concurrent serve: on POSIX an open descriptor keeps streaming the unlinked
 // bytes, and later lookups miss and refetch. Dropping an absent key is a
-// no-op — Drop is how eviction (V2-823) and the delete/shred purge (V2-824)
-// will remove entries, and both may race lookups' self-healing.
+// no-op — Drop is how the delete/shred purge (V2-824) removes entries.
+//
+// The unlink happens inside the same critical section as the index update —
+// the same lock promotion's rename runs under — so a Drop that decided to
+// remove one promotion of the key can never end up unlinking a fresher file
+// a concurrent re-promotion renamed into place after the decision. And the
+// unlink comes FIRST: if it fails, the entry stays indexed (bytes still on
+// disk must stay accounted) and a later Drop retries.
 func (s *Store) Drop(key string) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	e, ok := s.entries[key]
-	if ok {
-		s.bytes -= e.size
+	if !ok {
+		return
 	}
+	if !s.unlinkLocked(key) {
+		return
+	}
+	s.bytes -= e.size
 	delete(s.entries, key)
-	s.mu.Unlock()
-	if ok && keyValid(key) {
-		_ = os.Remove(s.path(key))
+}
+
+// DropGen is Drop conditioned on the entry still being the exact promotion
+// the caller observed: it removes key only if the current entry's generation
+// matches gen, reporting whether it acted. This is the eviction primitive for
+// the V2-823 sweeper (and lookups' self-healing): a (key, gen) pair taken
+// from an Oldest snapshot stays safe to act on no matter how stale it gets,
+// because a re-promotion in the meantime bumps the generation and the drop
+// degrades to a no-op instead of unlinking the fresh file.
+//
+// True means the entry is gone AND its file is absent from disk — the unlink
+// runs before the index/accounting mutation, so a failed unlink leaves the
+// entry indexed (returning false) rather than stranding unaccounted bytes the
+// sweeper would never revisit.
+func (s *Store) DropGen(key string, gen uint64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.entries[key]
+	if !ok || e.gen != gen {
+		return false
 	}
+	if !s.unlinkLocked(key) {
+		return false
+	}
+	s.bytes -= e.size
+	delete(s.entries, key)
+	return true
+}
+
+// unlinkLocked removes key's file, reporting whether the file is now absent.
+// An already-missing file counts as success (the goal state holds); any other
+// failure is logged and reported false so callers keep the entry indexed —
+// eviction must never report bytes as freed while they still occupy the disk.
+// Caller holds s.mu.
+func (s *Store) unlinkLocked(key string) bool {
+	if !keyValid(key) {
+		// Unreachable for indexed entries (Scan and PromoteIfFits enforce
+		// keyValid), kept as a path-traversal backstop: no file to unlink.
+		return true
+	}
+	err := os.Remove(s.path(key))
+	if err == nil || os.IsNotExist(err) {
+		return true
+	}
+	slog.Warn("download cache unlink failed; keeping entry indexed for retry",
+		"key", key, "error", err)
+	return false
+}
+
+// Victim is one entry of an Oldest snapshot: everything the sweeper needs to
+// pick and safely evict a candidate (DropGen with the recorded generation).
+type Victim struct {
+	Key        string
+	Gen        uint64
+	Size       int64
+	LastAccess time.Time
+}
+
+// Oldest returns up to max entries ordered least-recently-accessed first —
+// the sweeper's LRU candidate list. It is a snapshot: entries may be
+// accessed, replaced, or removed after it is taken, which is why eviction
+// goes through DropGen rather than trusting the snapshot. (An entry accessed
+// after the snapshot keeps its generation, so it can still be evicted a beat
+// after a hit — the sweeper's batches run within milliseconds of the
+// snapshot, and a wrongly evicted entry just refetches, so approximate LRU
+// is accepted here like in every surveyed production cache.)
+func (s *Store) Oldest(max int) []Victim {
+	s.mu.Lock()
+	victims := make([]Victim, 0, len(s.entries))
+	for k, e := range s.entries {
+		victims = append(victims, Victim{Key: k, Gen: e.gen, Size: e.size, LastAccess: e.lastAccess})
+	}
+	s.mu.Unlock()
+
+	sort.Slice(victims, func(i, j int) bool {
+		return victims[i].LastAccess.Before(victims[j].LastAccess)
+	})
+	if max >= 0 && len(victims) > max {
+		victims = victims[:max]
+	}
+	return victims
 }
 
 // Scan walks the cache directory and adopts every valid file into the index,
@@ -232,7 +417,8 @@ func (s *Store) Scan(ctx context.Context) error {
 		}
 		s.mu.Lock()
 		if _, exists := s.entries[key]; !exists {
-			s.entries[key] = &entry{size: fi.Size(), lastAccess: time.Now()}
+			s.genSeq++
+			s.entries[key] = &entry{size: fi.Size(), lastAccess: time.Now(), gen: s.genSeq}
 			s.bytes += fi.Size()
 		}
 		s.mu.Unlock()
