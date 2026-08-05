@@ -212,3 +212,45 @@ func TestDeleteResidual_OrphanedCacheBytesNotServable(t *testing.T) {
 		t.Fatalf("orphaned cache bytes were served: %d", w.Code)
 	}
 }
+
+// V2-873: private uploads enter the cache only behind download_cache_private,
+// and their deletion purges the plaintext like any other entry.
+
+func TestDownloadUpload_PrivateCachedWhenOptedIn(t *testing.T) {
+	const content = "private but cached by choice"
+	fake := newCacheFakeAntd(t, content)
+	router, token, cfg, db, _ := newCacheTestEnvWithStore(t, fake.srv.URL, map[string]string{
+		"download_cache_max_bytes": "1048576",
+		"download_cache_private":   "true",
+	})
+	uuid := makeUpload(t, router, db, token, "opted-in.txt", "private", "dm-opted-in")
+
+	warmCache(t, router, token, uuid, cfg.DataDir, content)
+	if w := doDownload(router, token, uuid, ""); w.Code != http.StatusOK || w.Body.String() != content {
+		t.Fatalf("repeat download: %d %q", w.Code, w.Body.String())
+	}
+	if got := fake.privateHits.Load(); got != 1 {
+		t.Fatalf("antd private fetches = %d, want 1 (repeat must be a cache hit)", got)
+	}
+}
+
+func TestDeleteUpload_PurgesPrivateCachedCopy(t *testing.T) {
+	const content = "private plaintext must die with the DataMap"
+	fake := newCacheFakeAntd(t, content)
+	router, token, cfg, db, store := newCacheTestEnvWithStore(t, fake.srv.URL, map[string]string{
+		"download_cache_max_bytes": "1048576",
+		"download_cache_private":   "true",
+	})
+	uuid := makeUpload(t, router, db, token, "shred-me.txt", "private", "dm-shred-me")
+	cached := warmCache(t, router, token, uuid, cfg.DataDir, content)
+
+	if w := doDelete(router, token, uuid); w.Code != http.StatusOK {
+		t.Fatalf("delete: %d %s", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(cached); !os.IsNotExist(err) {
+		t.Fatalf("private plaintext outlived the delete: %v", err)
+	}
+	if count, _ := store.Stats(); count != 0 {
+		t.Fatalf("cache still indexes %d entries after private delete", count)
+	}
+}

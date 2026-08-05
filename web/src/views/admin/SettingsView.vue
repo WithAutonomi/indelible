@@ -41,8 +41,8 @@ watch(general, () => {
 }, { deep: true })
 
 // Transfer Limits card
-const uploadsSaved = ref({ max_upload_gb: '0', max_concurrent_uploads: '', max_gas_fee: '', payment_confirmation_timeout_seconds: '', max_concurrent_downloads: '', download_queue_wait_secs: '', download_cache_gb: '0', download_cache_max_object_mb: '', download_cache_min_uses: '', download_cache_inactive_secs: '', download_cache_seed_on_upload: 'true' })
-const uploads = reactive({ max_upload_gb: '0', max_concurrent_uploads: '', max_gas_fee: '', payment_confirmation_timeout_seconds: '', max_concurrent_downloads: '', download_queue_wait_secs: '', download_cache_gb: '0', download_cache_max_object_mb: '', download_cache_min_uses: '', download_cache_inactive_secs: '', download_cache_seed_on_upload: 'true' })
+const uploadsSaved = ref({ max_upload_gb: '0', max_concurrent_uploads: '', max_gas_fee: '', payment_confirmation_timeout_seconds: '', max_concurrent_downloads: '', download_queue_wait_secs: '', download_cache_gb: '0', download_cache_max_object_mb: '', download_cache_min_uses: '', download_cache_inactive_secs: '', download_cache_seed_on_upload: 'true', download_cache_private: 'false' })
+const uploads = reactive({ max_upload_gb: '0', max_concurrent_uploads: '', max_gas_fee: '', payment_confirmation_timeout_seconds: '', max_concurrent_downloads: '', download_queue_wait_secs: '', download_cache_gb: '0', download_cache_max_object_mb: '', download_cache_min_uses: '', download_cache_inactive_secs: '', download_cache_seed_on_upload: 'true', download_cache_private: 'false' })
 const uploadsDirty = ref(false)
 const uploadsSaving = ref(false)
 
@@ -58,7 +58,8 @@ watch(uploads, () => {
     uploads.download_cache_max_object_mb !== uploadsSaved.value.download_cache_max_object_mb ||
     uploads.download_cache_min_uses !== uploadsSaved.value.download_cache_min_uses ||
     uploads.download_cache_inactive_secs !== uploadsSaved.value.download_cache_inactive_secs ||
-    uploads.download_cache_seed_on_upload !== uploadsSaved.value.download_cache_seed_on_upload
+    uploads.download_cache_seed_on_upload !== uploadsSaved.value.download_cache_seed_on_upload ||
+    uploads.download_cache_private !== uploadsSaved.value.download_cache_private
 }, { deep: true })
 
 // Operations card
@@ -144,6 +145,7 @@ async function fetchSettings() {
     uploads.download_cache_min_uses = s.download_cache_min_uses || ''
     uploads.download_cache_inactive_secs = s.download_cache_inactive_secs || ''
     uploads.download_cache_seed_on_upload = s.download_cache_seed_on_upload || 'true'
+    uploads.download_cache_private = s.download_cache_private || 'false'
     uploadsSaved.value = { ...uploads }
 
     // Operations
@@ -187,6 +189,7 @@ async function saveCard(card: string) {
       download_cache_min_uses: uploads.download_cache_min_uses,
       download_cache_inactive_secs: uploads.download_cache_inactive_secs,
       download_cache_seed_on_upload: uploads.download_cache_seed_on_upload,
+      download_cache_private: uploads.download_cache_private,
     }
   } else if (card === 'ops') {
     opsSaving.value = true
@@ -462,6 +465,17 @@ onMounted(async () => {
                   <InputText v-model="uploads.download_cache_inactive_secs" type="number" placeholder="0" class="w-40" />
                   <span class="text-sm text-surface-400">seconds</span>
                 </div>
+              </div>
+            </div>
+            <div class="grid grid-cols-3 gap-6 py-5">
+              <div>
+                <label class="text-sm font-medium">Cache Private Files</label>
+                <p class="text-xs text-surface-400 mt-1">Serve repeat reads of private files from this deployment's disk. This keeps decrypted private content on every caching instance's disk (off by default): deleting an upload purges the deleting instance immediately and every other instance within about a minute, but treat cache volumes with the same care as the database. Leave off unless private read performance matters.</p>
+              </div>
+              <div class="col-span-2 flex items-center gap-3">
+                <ToggleSwitch :modelValue="uploads.download_cache_private === 'true'"
+                  @update:modelValue="uploads.download_cache_private = $event ? 'true' : 'false'" />
+                <span class="text-sm text-surface-500">{{ uploads.download_cache_private === 'true' ? 'Enabled' : 'Disabled' }}</span>
               </div>
             </div>
             <div class="grid grid-cols-3 gap-6 py-5">

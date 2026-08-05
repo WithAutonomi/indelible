@@ -188,6 +188,15 @@ func main() {
 	// upload-queue dequeue, hash-chain writes). Defers here are function-scoped,
 	// so they still fire on shutdown.
 	if cfg.WorkersEnabled {
+		// One-time Go-side backfill of uploads.cache_key (V2-873 migration
+		// 013): the key is a Go-side digest, so SQL couldn't fill it. Writer
+		// singleton, idempotent, cheap once caught up.
+		if n, err := services.NewUploadService(db).BackfillCacheKeys(); err != nil {
+			slog.Warn("cache_key backfill incomplete; boot reconciliation may re-warm some entries", "stamped", n, "error", err)
+		} else if n > 0 {
+			slog.Info("backfilled uploads.cache_key", "rows", n)
+		}
+
 		uploadWorker := worker.NewUploadWorker(db, cfg, dlCache)
 		uploadWorker.Start()
 		defer uploadWorker.Stop()

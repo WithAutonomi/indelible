@@ -42,6 +42,17 @@ type CacheSweepWorker struct {
 	cfg         *config.Config
 	settingsSvc *services.CachedSettingsService
 	store       *downloadcache.Store
+	uploadSvc   *services.UploadService
+
+	// Fleet purge propagation (V2-873): lastPurgeID is this instance's
+	// high-water mark in cache_purge_log — in-memory only, because boot runs
+	// a full reconciliation against uploads.cache_key that subsumes any log
+	// history. pruneLog is writer-role only (readers stay DB-write-free,
+	// V2-514). booted flips after the boot reconciliation succeeds.
+	lastPurgeID int64
+	pruneLog    bool
+	lastPrune   time.Time
+	booted      bool
 
 	// usage reports volume capacity for the disk-pressure trigger; injected
 	// so tests can simulate a filling disk. Defaults to diskusage.Usage.
@@ -79,6 +90,15 @@ const (
 	cacheSweepBatch = 100
 
 	cacheSweepBatchPause = 50 * time.Millisecond
+
+	// cachePurgeLogRetention is how long consumed-or-not purge-log rows are
+	// kept before the writer prunes them. It bounds the log's size, not
+	// correctness: an instance offline longer than this reconciles its whole
+	// cache against uploads.cache_key at boot anyway.
+	cachePurgeLogRetention = 7 * 24 * time.Hour
+
+	// cachePurgeBatch is the per-read tail size when consuming the log.
+	cachePurgeBatch = 500
 )
 
 // NewCacheSweepWorker creates the sweeper over the same store the download
@@ -88,6 +108,8 @@ func NewCacheSweepWorker(db *database.DB, cfg *config.Config, store *downloadcac
 		cfg:         cfg,
 		settingsSvc: services.NewCachedSettingsService(services.NewSettingsService(db)),
 		store:       store,
+		uploadSvc:   services.NewUploadService(db),
+		pruneLog:    cfg.WorkersEnabled,
 		usage:       diskusage.Usage,
 		interval:    cacheSweepInterval,
 		batch:       cacheSweepBatch,
@@ -135,6 +157,8 @@ func (w *CacheSweepWorker) Stop() {
 // stats emission, which runs even over an empty cache (counters may have
 // moved since the last tick drained it).
 func (w *CacheSweepWorker) sweep(ctx context.Context) {
+	w.propagatePurges(ctx)
+
 	if count, _ := w.store.Stats(); count > 0 {
 		w.sweepDiskPressure(ctx)
 
@@ -146,6 +170,103 @@ func (w *CacheSweepWorker) sweep(ctx context.Context) {
 	}
 
 	w.emitStats()
+}
+
+// propagatePurges applies fleet-wide delete purges to this instance's cache
+// (V2-873). Boot: one full reconciliation of every cached key against live
+// uploads.cache_key rows — which subsumes all purge-log history, so the log
+// high-water mark starts at the log's current tail. Steady state: consume the
+// log tail each tick, never advancing past a key whose unlink failed (it is
+// retried next tick — a delete's disk-level guarantee on remote instances is
+// this loop). Writer-role instances also prune the log hourly.
+func (w *CacheSweepWorker) propagatePurges(ctx context.Context) {
+	if !w.booted {
+		if err := w.bootReconcile(ctx); err != nil {
+			slog.Warn("download cache boot reconciliation failed; retrying next tick", "error", err)
+			return // never consume the tail from an unreconciled baseline
+		}
+		w.booted = true
+	}
+
+	for {
+		entries, err := w.uploadSvc.PurgeLogSince(w.lastPurgeID, cachePurgeBatch)
+		if err != nil {
+			slog.Warn("download cache purge-log read failed", "error", err)
+			return
+		}
+		if len(entries) == 0 {
+			break
+		}
+		for _, e := range entries {
+			if ctx.Err() != nil {
+				return
+			}
+			if err := w.store.Drop(e.CacheKey); err != nil {
+				slog.Warn("download cache propagated purge failed; will retry next tick",
+					"key", e.CacheKey, "error", err)
+				return
+			}
+			w.lastPurgeID = e.ID
+		}
+		if len(entries) < cachePurgeBatch {
+			break
+		}
+	}
+
+	if w.pruneLog && time.Since(w.lastPrune) >= time.Hour {
+		w.lastPrune = time.Now()
+		if n, err := w.uploadSvc.PrunePurgeLog(time.Now().Add(-cachePurgeLogRetention)); err != nil {
+			slog.Warn("cache purge-log prune failed", "error", err)
+		} else if n > 0 {
+			slog.Info("cache purge-log pruned", "rows", n)
+		}
+	}
+}
+
+// bootReconcile validates every cached key against live upload rows and
+// purges the orphans — deletes that happened while this instance was down.
+// The log high-water mark is read BEFORE the cache snapshot: a delete landing
+// during reconciliation either logs past that mark (caught by the tail) or
+// its row is already gone (caught by the liveness check) — no gap. Drops are
+// unconditional (Store.Drop): the only concurrent promotion of a non-live
+// key is a resurrection, which the promote-site guard is already unwinding.
+func (w *CacheSweepWorker) bootReconcile(ctx context.Context) error {
+	maxID, err := w.uploadSvc.MaxPurgeLogID()
+	if err != nil {
+		return err
+	}
+	count, _ := w.store.Stats()
+	if count == 0 {
+		w.lastPurgeID = maxID
+		return nil
+	}
+	victims := w.store.Oldest(count)
+	keys := make([]string, len(victims))
+	for i, v := range victims {
+		keys[i] = v.Key
+	}
+	live, err := w.uploadSvc.LiveCacheKeys(keys)
+	if err != nil {
+		return err
+	}
+	purged := 0
+	for _, v := range victims {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if live[v.Key] {
+			continue
+		}
+		if err := w.store.Drop(v.Key); err != nil {
+			return err
+		}
+		purged++
+	}
+	w.lastPurgeID = maxID
+	if purged > 0 {
+		slog.Info("download cache reconciled at boot", "purged_orphans", purged)
+	}
+	return nil
 }
 
 // emitStats writes one cumulative "download cache stats" line to slog (V2-825)

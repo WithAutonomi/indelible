@@ -577,6 +577,11 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 				return fmt.Errorf("Failed to save upload record")
 			}
 		}
+		// Private seeding (V2-873) mirrors the public branch above, keyed on
+		// the local DataMap — the serve path's derivation for private rows.
+		// seedDownloadCache itself refuses unless the operator opted in via
+		// download_cache_private.
+		w.seedDownloadCache(upload, result.DataMap)
 	}
 
 	slog.Info("upload completed", "uuid", upload.UUID, "payment_type", prepared.PaymentType,
@@ -619,6 +624,11 @@ func (w *UploadWorker) seedDownloadCache(upload *services.Upload, contentID stri
 		return
 	}
 	if !upload.TempPath.Valid || upload.TempPath.String == "" {
+		return
+	}
+	// Private plaintext enters the cache only behind the operator's explicit
+	// opt-in (V2-873); public content is cacheable unconditionally.
+	if upload.Visibility != "public" && !w.settingsSvc.GetBool("download_cache_private", false) {
 		return
 	}
 	// Default true: seeding is the point of the cache for publish-then-read
