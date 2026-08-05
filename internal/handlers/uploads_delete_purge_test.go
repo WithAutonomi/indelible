@@ -181,3 +181,34 @@ func TestDeleteUpload_ResurrectionGuard(t *testing.T) {
 		t.Fatalf("Purged = %d, want 1 (the guard's drop)", got)
 	}
 }
+
+// The panel-confirmed residual: if the doubly-degraded interleaving (a late
+// promotion raced the delete AND the final unlink failed) ever leaves bytes
+// behind a deleted row, those bytes must not be HTTP-servable — the row gate
+// 404s before the cache is consulted. This pins the property the residual's
+// risk assessment leans on; removing the residual itself (durable purge
+// retry) arrives with the fleet purge log (V2-873).
+func TestDeleteResidual_OrphanedCacheBytesNotServable(t *testing.T) {
+	const content = "orphaned but unreachable"
+	fake := newCacheFakeAntd(t, content)
+	router, token, cfg, db, store := newCacheTestEnvWithStore(t, fake.srv.URL, map[string]string{
+		"download_cache_max_bytes": "1048576",
+	})
+	uuid := makeUpload(t, router, db, token, "orphan.txt", "public", "addr-orphan")
+	cached := warmCache(t, router, token, uuid, cfg.DataDir, content)
+
+	// The residual end state, reproduced directly: row gone, purge missed.
+	if _, err := db.Exec("DELETE FROM uploads WHERE uuid = ?", uuid); err != nil {
+		t.Fatalf("delete row: %v", err)
+	}
+	if _, err := os.Stat(cached); err != nil {
+		t.Fatalf("precondition: orphaned bytes should be on disk: %v", err)
+	}
+	if count, _ := store.Stats(); count != 1 {
+		t.Fatalf("precondition: orphan should still be indexed, count=%d", count)
+	}
+
+	if w := doDownload(router, token, uuid, ""); w.Code != http.StatusNotFound {
+		t.Fatalf("orphaned cache bytes were served: %d", w.Code)
+	}
+}

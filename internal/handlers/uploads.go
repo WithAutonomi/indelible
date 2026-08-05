@@ -1259,7 +1259,11 @@ func DeleteUpload(db *database.DB, cache *downloadcache.Store) http.HandlerFunc 
 		// bytes back between the purge above and the row deletion. The
 		// promote sites run the mirror-image guard (re-verify the row after
 		// promoting), so whichever side acts last observes the final state
-		// and holds the unlink.
+		// and holds the unlink. This half is best-effort by design: the row
+		// is already gone, so a failed unlink here can only be logged — the
+		// leftover bytes are not servable (the row gate 404s before the
+		// cache is consulted) and fall to eviction/inactivity. Durable
+		// purge retry is the V2-873 fleet purge log.
 		if cache != nil {
 			for _, k := range keys {
 				if err := cache.Drop(k); err != nil {
