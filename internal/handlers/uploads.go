@@ -2,8 +2,6 @@ package handlers
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -647,7 +645,9 @@ const downloadCacheControl = "private, max-age=31536000, immutable"
 // "" when no content identifier is available. The identifier (local DataMap or
 // network address) is content-addressed, so a hash of it is a stable validator.
 // It is hashed — not emitted raw — so the ETag never leaks the DataMap, which
-// is itself the capability needed to retrieve the file.
+// is itself the capability needed to retrieve the file. The digest doubles as
+// the download-cache key (unquoted), derived in one place —
+// downloadcache.KeyForIdentifier — shared with upload-side seeding (V2-822).
 func downloadETag(u *services.Upload) string {
 	var id string
 	switch {
@@ -658,8 +658,7 @@ func downloadETag(u *services.Upload) string {
 	default:
 		return ""
 	}
-	sum := sha256.Sum256([]byte("indelible-download-v1:" + id))
-	return `"` + hex.EncodeToString(sum[:]) + `"`
+	return `"` + downloadcache.KeyForIdentifier(id) + `"`
 }
 
 // etagMatches reports whether an If-None-Match header matches the given strong

@@ -544,6 +544,7 @@ Runtime settings are stored in the database and take effect immediately without 
 | `download_cache_max_object_bytes` | `67108864` (64 MiB) | Per-object ceiling for the download cache: larger files are never cached and always stream through the temp path. Bounds: **1–2^40**. |
 | `download_cache_min_uses` | `1` | How many times an object must be requested (per instance) before its bytes are cached. `1` caches on first download; raising it keeps one-hit-wonders from displacing hot content. Bounds: **1–100**. |
 | `download_cache_inactive_secs` | `0` (off) | Inactivity expiry for cached objects: entries not **accessed** within this window are deleted regardless of the size budget. Independent pruning axis — also bounds how long cached plaintext can linger on an instance's disk. Example: `604800` = 7 days. Bounds: **0–315360000**. |
+| `download_cache_seed_on_upload` | `true` | Seed the download cache from a **public** upload's staged bytes the moment its network store succeeds, so publish-then-read is served from local disk with no network fetch (a rename — zero extra I/O). Applies where uploads are processed — the writer (or the whole instance in an all-in-one deployment); on a reader fleet each reader still warms by read-through. Seeds respect the size ceiling and byte budget but deliberately skip `download_cache_min_uses`; the sweeper evicts wrong bets. Disable for archive-shaped workloads (upload-heavy, rarely re-read). |
 
 ### Tuning antd timeouts
 

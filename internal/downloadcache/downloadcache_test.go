@@ -521,6 +521,22 @@ func TestOpenSelfHealsOnExternalDeletion(t *testing.T) {
 	}
 }
 
+func TestKeyForIdentifier(t *testing.T) {
+	k := KeyForIdentifier("some-datamap-address")
+	if len(k) != 64 || !keyValid(k) {
+		t.Fatalf("key %q is not 64-char lowercase hex", k)
+	}
+	if KeyForIdentifier("some-datamap-address") != k {
+		t.Fatal("derivation must be stable")
+	}
+	if KeyForIdentifier("other-address") == k {
+		t.Fatal("distinct identifiers must yield distinct keys")
+	}
+	if KeyForIdentifier("") != "" {
+		t.Fatal("empty identifier must yield empty key")
+	}
+}
+
 // Regression for the #150 panel finding: a failed unlink must not be reported
 // as a successful eviction — the index/accounting mutation commits only after
 // the file is gone, so bytes still on disk stay accounted and retryable.
