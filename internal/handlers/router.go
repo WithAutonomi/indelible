@@ -131,7 +131,7 @@ func NewRouter(cfg *config.Config, db *database.DB, antdInfo AntdInfoProvider, d
 			r.Post("/uploads/{id}/cancel", CancelUpload(db))
 			r.Post("/uploads/{id}/retry", RetryUpload(db))
 			r.Post("/uploads/{id}/force-retry", ForceRetryUpload(db))
-			r.Delete("/uploads/{id}", DeleteUpload(db))
+			r.Delete("/uploads/{id}", DeleteUpload(db, dlCache))
 			r.Get("/uploads/{id}/collections", UploadCollections(db))
 
 			// Tags

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1027,6 +1028,18 @@ func DownloadUpload(db *database.DB, cfg *config.Config, cache *downloadcache.St
 				switch _, err := cache.PromoteIfFits(cacheKey, tempPath, cacheBudget); {
 				case err == nil:
 					metrics.PromotedReadThrough.Add(1)
+					// Resurrection guard (V2-824): this request passed its DB
+					// check before any concurrent delete committed, so the
+					// promotion may have just re-created bytes for a row that
+					// no longer exists. Re-verify after promoting; paired
+					// with the delete path's post-commit purge, whichever
+					// side acts last observes the final state and unlinks.
+					if _, gerr := uploadSvc.GetByUUID(upload.UUID); errors.Is(gerr, services.ErrUploadNotFound) {
+						if derr := cache.Drop(cacheKey); derr != nil {
+							slog.Error("download cache purge failed for deleted upload; cached plaintext may remain until evicted",
+								"uuid", upload.UUID, "error", derr)
+						}
+					}
 				case errors.Is(err, downloadcache.ErrOverBudget) || errors.Is(err, downloadcache.ErrNotReady):
 					// Cache full (sweeper hasn't freed headroom yet) or scan
 					// failed at boot: serve from the temp file as before the
@@ -1194,7 +1207,7 @@ func ForceRetryUpload(db *database.DB) http.HandlerFunc {
 // @Failure      500  {object}  map[string]string
 // @Security     BearerAuth
 // @Router       /uploads/{id} [delete]
-func DeleteUpload(db *database.DB) http.HandlerFunc {
+func DeleteUpload(db *database.DB, cache *downloadcache.Store) http.HandlerFunc {
 	uploadSvc := services.NewUploadService(db)
 	logSvc := services.NewLogService(db)
 
@@ -1218,9 +1231,42 @@ func DeleteUpload(db *database.DB) http.HandlerFunc {
 			return
 		}
 
+		// Purge any cached copy BEFORE the row delete (V2-824): if the
+		// plaintext cannot be removed from this instance's disk, the delete
+		// fails with the row intact — the API must never report a deletion
+		// while a cached copy of the content remains locally readable. For a
+		// private upload the row delete destroys the DataMap, so this
+		// ordering is what makes the shred honest.
+		keys := cachePurgeKeys(upload)
+		if cache != nil {
+			for _, k := range keys {
+				if err := cache.Drop(k); err != nil {
+					auditEvent(r, logSvc, "file_delete_purge_failed", "warn", &userID,
+						fmt.Sprintf("uuid=%s error=%v", uploadUUID, err))
+					jsonError(w, "failed to purge cached copy; upload not deleted", http.StatusInternalServerError)
+					return
+				}
+			}
+		}
+
 		if err := uploadSvc.Delete(upload.ID); err != nil {
 			jsonError(w, err.Error(), http.StatusConflict)
 			return
+		}
+
+		// Second purge now that the row is gone: closes the window where a
+		// download that passed its DB check before the delete promotes the
+		// bytes back between the purge above and the row deletion. The
+		// promote sites run the mirror-image guard (re-verify the row after
+		// promoting), so whichever side acts last observes the final state
+		// and holds the unlink.
+		if cache != nil {
+			for _, k := range keys {
+				if err := cache.Drop(k); err != nil {
+					slog.Error("download cache purge failed after upload delete; cached plaintext may remain until evicted",
+						"uuid", uploadUUID, "error", err)
+				}
+			}
 		}
 
 		auditEvent(r, logSvc, "file_deleted", "info", &userID,
@@ -1228,6 +1274,23 @@ func DeleteUpload(db *database.DB) http.HandlerFunc {
 
 		jsonResponse(w, http.StatusOK, map[string]string{"message": "upload deleted"})
 	}
+}
+
+// cachePurgeKeys returns every cache key an upload's bytes could live under:
+// the serve path keys on the local DataMap when one exists while seeding keys
+// on the network address, so a purge must cover both derivations.
+func cachePurgeKeys(u *services.Upload) []string {
+	var keys []string
+	for _, id := range []sql.NullString{u.DataMap, u.DatamapAddress} {
+		if !id.Valid || id.String == "" {
+			continue
+		}
+		k := downloadcache.KeyForIdentifier(id.String)
+		if len(keys) == 0 || keys[0] != k {
+			keys = append(keys, k)
+		}
+	}
+	return keys
 }
 
 // effectiveAllowlist resolves the content-type allowlist for an upload using

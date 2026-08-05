@@ -43,12 +43,49 @@ func newSeedEnv(t *testing.T, content string, settings map[string]string) (*Uplo
 		WalletEncryptionKey: "1111111111111111111111111111111111111111111111111111111111111111",
 	}
 	w := NewUploadWorker(db, cfg, store)
+
+	// A real uploads row backs the in-memory struct: the V2-824 resurrection
+	// guard re-verifies the row after promoting, so a rowless upload would
+	// read as "deleted mid-seed" and the seed would be purged.
+	if _, err := db.Exec(`INSERT INTO users (id, email) VALUES (7001, 'seed-test@example.com')`); err != nil {
+		t.Fatalf("insert user: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO uploads (id, uuid, user_id, filename, original_filename, file_size, content_type, visibility, status, datamap_address)
+		VALUES (7101, 'seed-test-uuid', 7001, 'seed.txt', 'seed.txt', ?, 'text/plain', 'public', 'completed', ?)`,
+		len(content), seedContentID); err != nil {
+		t.Fatalf("insert upload: %v", err)
+	}
 	upload := &services.Upload{
+		ID:         7101,
 		UUID:       "seed-test-uuid",
 		Visibility: "public",
 		TempPath:   sql.NullString{String: temp, Valid: true},
 	}
 	return w, store, upload
+}
+
+// Resurrection guard (V2-824): deletion is allowed the moment the row flips
+// to completed, and the seed promotes just after — a seed for a row that is
+// already gone must be taken back out, not left as unpurgeable plaintext.
+func TestSeedDownloadCache_PurgedWhenRowDeleted(t *testing.T) {
+	w, store, upload := newSeedEnv(t, "deleted before seed landed", map[string]string{
+		"download_cache_max_bytes": "1000000",
+	})
+	if err := w.uploadSvc.Delete(upload.ID); err != nil {
+		t.Fatalf("delete row: %v", err)
+	}
+
+	w.seedDownloadCache(upload, seedContentID)
+
+	if count, _ := store.Stats(); count != 0 {
+		t.Fatalf("seed outlived its upload row: %d entries", count)
+	}
+	if _, ok := store.Get(downloadcache.KeyForIdentifier(seedContentID)); ok {
+		t.Fatal("purged seed still hits")
+	}
+	if got := store.Metrics().Purged.Load(); got != 1 {
+		t.Fatalf("Purged = %d, want 1", got)
+	}
 }
 
 func TestSeedDownloadCache_PromotesStagedBytes(t *testing.T) {

@@ -42,6 +42,7 @@ The sweep worker emits a cumulative `download cache stats` line (JSON, stdout) w
 | `min_uses_rejects` | One-hit-wonders the admission filter absorbed | High values confirm the filter is earning its keep |
 | `coalesced_waits` / `coalesce_timeouts` | Concurrent misses that piggybacked on another request's fill / gave up waiting | Frequent timeouts → raise `download_queue_wait_secs` or the download gate cap |
 | `self_heal_drops` | Entries dropped because the on-disk file changed or vanished outside indelible's control | Should stay 0; investigate the volume if it doesn't |
+| `purged` | Cached copies removed because their upload was deleted (the delete-purge invariant) | Informational — tracks delete traffic hitting cached content |
 
 Sizing rule of thumb: budget ≥ your hot working set (for a wiki-style deployment, usually ~1–a few GB). The per-instance gauges `entries`/`bytes` in the same line show utilisation against the budget.
 
@@ -66,7 +67,7 @@ Every instance owns its cache — there is no shared cache tier, by design (shar
 
 Cached entries are **plaintext bytes on the instance's disk**, held outside the audit surface of the upload store. That is why:
 
-- **Only public uploads are cached.** Private content would put plaintext where a disk snapshot, misconfigured backup, or shared volume could expose it, and a deleted-and-shredded upload must not survive in a cache copy. (A private-content opt-in with purge integration is tracked separately — V2-824.)
+- **Only public uploads are cached.** Private content would put plaintext where a disk snapshot, misconfigured backup, or shared volume could expose it, and a deleted-and-shredded upload must not survive in a cache copy. (Whether a private-content opt-in should ever exist — with the fleet purge propagation it would need — is tracked separately as V2-873.)
 - Cache files are owner-only (`0600`) under `<data_dir>/cache/objects`, named by content digest — the name never reveals the DataMap (which is the retrieval capability), and the digest is domain-separated from the plaintext hash.
 - `download_cache_inactive_secs` doubles as the bound on how long unread cached plaintext can linger; budget `0` (or the env override `0`) drains an instance completely.
-- Deleting an upload removes it from the network's reach; a cached copy on an instance that served it recently is dropped by eviction/inactivity rather than synchronously — until V2-824 lands, treat cache disks with the same care as temp-upload disks.
+- **Deleting an upload purges its cached copy synchronously on the instance that handles the delete** (V2-824): the purge runs before the record is removed, and a purge that cannot unlink fails the delete rather than reporting a deletion while the plaintext remains readable. A download already in flight when the delete lands finishes streaming (its descriptor outlives the unlink) and any promotion it makes is taken back out. On a reader fleet, other instances' cached copies of a deleted *public* upload are unreachable immediately (the record is gone) and age out by eviction/inactivity — acceptable for public bytes, and exactly why private content is not cached.

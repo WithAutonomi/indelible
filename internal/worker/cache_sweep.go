@@ -173,7 +173,7 @@ func (w *CacheSweepWorker) emitStats() {
 		"coalesced_waits", snap.CoalescedWaits, "coalesce_timeouts", snap.CoalesceTimeouts,
 		"evicted_budget", snap.EvictedBudget, "evicted_inactive", snap.EvictedInactive,
 		"evicted_pressure", snap.EvictedPressure, "evicted_bytes", snap.EvictedBytes,
-		"self_heal_drops", snap.SelfHealDrops)
+		"self_heal_drops", snap.SelfHealDrops, "purged", snap.Purged)
 }
 
 // sweepDiskPressure evicts toward empty while the DataDir volume sits at or
