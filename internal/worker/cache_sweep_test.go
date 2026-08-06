@@ -43,6 +43,13 @@ func newSweepEnv(t *testing.T, n int, content string, settings map[string]string
 	if err := store.Scan(context.Background()); err != nil {
 		t.Fatalf("scan: %v", err)
 	}
+	// Each promoted entry gets a backing upload row with a matching
+	// cache_key: the V2-873 boot reconciliation purges cached keys with no
+	// live row, and these fixtures are standing in for legitimately cached
+	// live content — not orphans.
+	if _, err := db.Exec(`INSERT INTO users (id, email) VALUES (9001, 'sweep-test@example.com')`); err != nil {
+		t.Fatalf("insert user: %v", err)
+	}
 	for i := 0; i < n; i++ {
 		src := filepath.Join(dir, fmt.Sprintf("tmp-%d", i))
 		if err := os.WriteFile(src, []byte(content), 0600); err != nil {
@@ -50,6 +57,11 @@ func newSweepEnv(t *testing.T, n int, content string, settings map[string]string
 		}
 		if _, err := store.PromoteIfFits(sweepKey(i), src, 1<<40); err != nil {
 			t.Fatalf("promote %d: %v", i, err)
+		}
+		if _, err := db.Exec(`INSERT INTO uploads (id, uuid, user_id, filename, original_filename, file_size, content_type, visibility, status, cache_key)
+			VALUES (?, ?, 9001, 'sweep.bin', 'sweep.bin', ?, 'text/plain', 'public', 'completed', ?)`,
+			9100+i, fmt.Sprintf("sweep-uuid-%d", i), len(content), sweepKey(i)); err != nil {
+			t.Fatalf("insert upload %d: %v", i, err)
 		}
 	}
 

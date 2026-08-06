@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -818,9 +817,16 @@ func DownloadUpload(db *database.DB, cfg *config.Config, cache *downloadcache.St
 		queueWait := time.Duration(settingsSvc.GetIntWithBounds(
 			"download_queue_wait_secs", 30, 0, 600,
 		)) * time.Second
+		// Private content is cacheable only behind the explicit opt-in
+		// (V2-873): it puts decrypted plaintext on this instance's disk, so
+		// the operator owns that call. Public stays cacheable uncondition-
+		// ally. Auth is unaffected either way — the cache is consulted only
+		// after the row/owner/visibility checks above.
 		var cacheKey string
-		if cacheBudget > 0 && etag != "" && upload.Visibility == "public" {
-			cacheKey = strings.Trim(etag, `"`)
+		if cacheBudget > 0 && etag != "" {
+			if upload.Visibility == "public" || settingsSvc.GetBool("download_cache_private", false) {
+				cacheKey = strings.Trim(etag, `"`)
+			}
 		}
 		// The coalesce loop clears cacheKey on wait-timeout; remember the
 		// original eligibility so the hit/miss accounting (V2-825) still
@@ -1237,7 +1243,7 @@ func DeleteUpload(db *database.DB, cache *downloadcache.Store) http.HandlerFunc 
 		// while a cached copy of the content remains locally readable. For a
 		// private upload the row delete destroys the DataMap, so this
 		// ordering is what makes the shred honest.
-		keys := cachePurgeKeys(upload)
+		keys := upload.CacheKeys()
 		if cache != nil {
 			for _, k := range keys {
 				if err := cache.Drop(k); err != nil {
@@ -1280,22 +1286,6 @@ func DeleteUpload(db *database.DB, cache *downloadcache.Store) http.HandlerFunc 
 	}
 }
 
-// cachePurgeKeys returns every cache key an upload's bytes could live under:
-// the serve path keys on the local DataMap when one exists while seeding keys
-// on the network address, so a purge must cover both derivations.
-func cachePurgeKeys(u *services.Upload) []string {
-	var keys []string
-	for _, id := range []sql.NullString{u.DataMap, u.DatamapAddress} {
-		if !id.Valid || id.String == "" {
-			continue
-		}
-		k := downloadcache.KeyForIdentifier(id.String)
-		if len(keys) == 0 || keys[0] != k {
-			keys = append(keys, k)
-		}
-	}
-	return keys
-}
 
 // effectiveAllowlist resolves the content-type allowlist for an upload using
 // the override chain: token > user > system setting > built-in default.

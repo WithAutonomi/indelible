@@ -85,3 +85,14 @@ func (c *CachedSettingsService) GetIntWithBounds(key string, fallback, min, max 
 	}
 	return n
 }
+
+// GetBool returns the setting as a bool ("true"/"false"), or fallback when
+// missing or empty. Validation constrains stored values to that pair, so any
+// other value is treated as fallback.
+func (c *CachedSettingsService) GetBool(key string, fallback bool) bool {
+	v, err := c.Get(key)
+	if err != nil || v == "" {
+		return fallback
+	}
+	return v == "true"
+}

@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/WithAutonomi/indelible/internal/database"
+	"github.com/WithAutonomi/indelible/internal/downloadcache"
 )
 
 var (
@@ -340,8 +341,8 @@ func (s *UploadService) DequeueNext() (*Upload, error) {
 // The dataMap is the hex-encoded serialized DataMap returned by antd's finalize endpoint.
 func (s *UploadService) MarkCompleted(id int64, dataMap, actualCost string) error {
 	_, err := s.db.Exec(
-		`UPDATE uploads SET status = 'completed', data_map = ?, actual_cost = ?, completed_at = CURRENT_TIMESTAMP, temp_path = NULL WHERE id = ?`,
-		dataMap, actualCost, id,
+		`UPDATE uploads SET status = 'completed', data_map = ?, actual_cost = ?, cache_key = ?, completed_at = CURRENT_TIMESTAMP, temp_path = NULL WHERE id = ?`,
+		dataMap, actualCost, downloadcache.KeyForIdentifier(dataMap), id,
 	)
 	return err
 }
@@ -353,8 +354,8 @@ func (s *UploadService) MarkCompleted(id int64, dataMap, actualCost string) erro
 // payment batch — no separate daemon-wallet payment.
 func (s *UploadService) MarkCompletedPublic(id int64, datamapAddress, actualCost string) error {
 	_, err := s.db.Exec(
-		`UPDATE uploads SET status = 'completed', datamap_address = ?, actual_cost = ?, completed_at = CURRENT_TIMESTAMP, temp_path = NULL WHERE id = ?`,
-		datamapAddress, actualCost, id,
+		`UPDATE uploads SET status = 'completed', datamap_address = ?, actual_cost = ?, cache_key = ?, completed_at = CURRENT_TIMESTAMP, temp_path = NULL WHERE id = ?`,
+		datamapAddress, actualCost, downloadcache.KeyForIdentifier(datamapAddress), id,
 	)
 	return err
 }
@@ -366,8 +367,8 @@ func (s *UploadService) MarkCompletedPublic(id int64, datamapAddress, actualCost
 // fresh store (V2-399).
 func (s *UploadService) MarkAlreadyStored(id int64, dataMap, actualCost string) error {
 	_, err := s.db.Exec(
-		`UPDATE uploads SET status = 'already_stored', data_map = ?, actual_cost = ?, completed_at = CURRENT_TIMESTAMP, temp_path = NULL WHERE id = ?`,
-		dataMap, actualCost, id,
+		`UPDATE uploads SET status = 'already_stored', data_map = ?, actual_cost = ?, cache_key = ?, completed_at = CURRENT_TIMESTAMP, temp_path = NULL WHERE id = ?`,
+		dataMap, actualCost, downloadcache.KeyForIdentifier(dataMap), id,
 	)
 	return err
 }
@@ -376,8 +377,8 @@ func (s *UploadService) MarkAlreadyStored(id int64, dataMap, actualCost string) 
 // counterpart (V2-399).
 func (s *UploadService) MarkAlreadyStoredPublic(id int64, datamapAddress, actualCost string) error {
 	_, err := s.db.Exec(
-		`UPDATE uploads SET status = 'already_stored', datamap_address = ?, actual_cost = ?, completed_at = CURRENT_TIMESTAMP, temp_path = NULL WHERE id = ?`,
-		datamapAddress, actualCost, id,
+		`UPDATE uploads SET status = 'already_stored', datamap_address = ?, actual_cost = ?, cache_key = ?, completed_at = CURRENT_TIMESTAMP, temp_path = NULL WHERE id = ?`,
+		datamapAddress, actualCost, downloadcache.KeyForIdentifier(datamapAddress), id,
 	)
 	return err
 }
@@ -569,26 +570,216 @@ func (s *UploadService) ForceRetry(id int64) error {
 
 // Delete permanently removes an upload record. Only allowed for failed or completed uploads.
 func (s *UploadService) Delete(id int64) error {
-	// Clean up related data first
-	if _, err := s.db.Exec(`DELETE FROM file_tags WHERE upload_id = ?`, id); err != nil {
+	// One transaction for the purge-log fan-out and the row deletion
+	// (V2-873, #155 panel finding 1): any other connection sees either
+	// row-live/no-log or row-gone/log-present — never a state where a
+	// reconciling instance could read the log's high-water mark, still see
+	// the live row, and then miss the delete that committed between. A
+	// refused or failed delete rolls the log rows back with it.
+	tx, err := s.db.Begin()
+	if err != nil {
 		return err
 	}
-	if _, err := s.db.Exec(`DELETE FROM collection_files WHERE upload_id = ?`, id); err != nil {
+	defer func() { _ = tx.Rollback() }() // no-op once committed
+
+	var dataMap, addr sql.NullString
+	if err := tx.QueryRow(`SELECT data_map, datamap_address FROM uploads WHERE id = ?`, id).Scan(&dataMap, &addr); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return errors.New("only failed or completed uploads can be deleted")
+		}
+		return err
+	}
+	for _, key := range (&Upload{DataMap: dataMap, DatamapAddress: addr}).CacheKeys() {
+		if _, err := tx.Exec(`INSERT INTO cache_purge_log (cache_key) VALUES (?)`, key); err != nil {
+			return err
+		}
+	}
+
+	if _, err := tx.Exec(`DELETE FROM file_tags WHERE upload_id = ?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM collection_files WHERE upload_id = ?`, id); err != nil {
 		return err
 	}
 
-	result, err := s.db.Exec(
+	result, err := tx.Exec(
 		`DELETE FROM uploads WHERE id = ? AND status IN ('failed', 'completed')`,
 		id,
 	)
 	if err != nil {
 		return err
 	}
-	n, _ := result.RowsAffected()
-	if n == 0 {
+	if n, _ := result.RowsAffected(); n == 0 {
 		return errors.New("only failed or completed uploads can be deleted")
 	}
-	return nil
+	return tx.Commit()
+}
+
+// CacheKeys returns every download-cache key this upload's bytes could live
+// under, serve-path derivation first: the serve path (downloadETag) prefers
+// the local DataMap when one exists, while public upload seeding keys on the
+// network address — a purge must cover both.
+func (u *Upload) CacheKeys() []string {
+	var keys []string
+	for _, id := range []sql.NullString{u.DataMap, u.DatamapAddress} {
+		if !id.Valid || id.String == "" {
+			continue
+		}
+		k := downloadcache.KeyForIdentifier(id.String)
+		if len(keys) == 0 || keys[0] != k {
+			keys = append(keys, k)
+		}
+	}
+	return keys
+}
+
+// PurgeLogEntry is one consumed row of cache_purge_log.
+type PurgeLogEntry struct {
+	ID       int64
+	CacheKey string
+}
+
+// PurgeLogSince returns up to limit purge-log rows with id > after, oldest
+// first — the sweep worker's per-tick tail read.
+func (s *UploadService) PurgeLogSince(after int64, limit int) ([]PurgeLogEntry, error) {
+	rows, err := s.db.Query(
+		`SELECT id, cache_key FROM cache_purge_log WHERE id > ? ORDER BY id LIMIT ?`,
+		after, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PurgeLogEntry
+	for rows.Next() {
+		var e PurgeLogEntry
+		if err := rows.Scan(&e.ID, &e.CacheKey); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// MaxPurgeLogID returns the current high-water mark of cache_purge_log (0 on
+// an empty log). Boot uses it to skip history: everything at or before it is
+// covered by the boot reconciliation pass.
+func (s *UploadService) MaxPurgeLogID() (int64, error) {
+	var id sql.NullInt64
+	if err := s.db.QueryRow(`SELECT MAX(id) FROM cache_purge_log`).Scan(&id); err != nil {
+		return 0, err
+	}
+	return id.Int64, nil
+}
+
+// PrunePurgeLog deletes purge-log rows older than before. Writer-role only
+// (reader discipline, V2-514); instances offline past the retention window
+// are covered by boot reconciliation.
+func (s *UploadService) PrunePurgeLog(before time.Time) (int64, error) {
+	res, err := s.db.Exec(
+		`DELETE FROM cache_purge_log WHERE deleted_at < ?`,
+		before.UTC().Format("2006-01-02 15:04:05"),
+	)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+// CacheKeyVisibility reports, for each given cache key that belongs to a live
+// upload row, that row's visibility ("public"/"private") — the reconciliation
+// lookup (uploads.cache_key is indexed). Keys absent from the result have no
+// live row. Reconciliation is policy-aware (#155 panel finding 3): a private
+// key is kept only while download_cache_private allows it.
+func (s *UploadService) CacheKeyVisibility(keys []string) (map[string]string, error) {
+	live := make(map[string]string, len(keys))
+	const chunk = 500
+	for start := 0; start < len(keys); start += chunk {
+		end := start + chunk
+		if end > len(keys) {
+			end = len(keys)
+		}
+		batch := keys[start:end]
+		placeholders := make([]byte, 0, len(batch)*2)
+		args := make([]any, 0, len(batch))
+		for i, k := range batch {
+			if i > 0 {
+				placeholders = append(placeholders, ',')
+			}
+			placeholders = append(placeholders, '?')
+			args = append(args, k)
+		}
+		rows, err := s.db.Query(
+			`SELECT cache_key, visibility FROM uploads WHERE cache_key IN (`+string(placeholders)+`)`, args...,
+		)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var k, vis string
+			if err := rows.Scan(&k, &vis); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			live[k] = vis
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
+	}
+	return live, nil
+}
+
+// BackfillCacheKeys computes uploads.cache_key for rows stored before the
+// column existed (V2-873 migration 013). Writer-boot singleton — the digest
+// is Go-side (KeyForIdentifier), so SQL backfill in the migration was not
+// possible. Idempotent; returns how many rows were stamped.
+func (s *UploadService) BackfillCacheKeys() (int64, error) {
+	rows, err := s.db.Query(
+		`SELECT id, data_map, datamap_address FROM uploads
+		 WHERE cache_key IS NULL
+		 AND ((data_map IS NOT NULL AND data_map != '') OR (datamap_address IS NOT NULL AND datamap_address != ''))`,
+	)
+	if err != nil {
+		return 0, err
+	}
+	type pending struct {
+		id  int64
+		key string
+	}
+	var todo []pending
+	for rows.Next() {
+		var id int64
+		var dataMap, addr sql.NullString
+		if err := rows.Scan(&id, &dataMap, &addr); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		identifier := dataMap.String
+		if identifier == "" {
+			identifier = addr.String
+		}
+		if identifier != "" {
+			todo = append(todo, pending{id: id, key: downloadcache.KeyForIdentifier(identifier)})
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, err
+	}
+	rows.Close()
+
+	var n int64
+	for _, p := range todo {
+		if _, err := s.db.Exec(`UPDATE uploads SET cache_key = ? WHERE id = ?`, p.key, p.id); err != nil {
+			return n, err
+		}
+		n++
+	}
+	return n, nil
 }
 
 // ListActiveTempPaths returns all temp_path values for uploads still in queued or processing state.

@@ -42,6 +42,23 @@ type CacheSweepWorker struct {
 	cfg         *config.Config
 	settingsSvc *services.CachedSettingsService
 	store       *downloadcache.Store
+	uploadSvc   *services.UploadService
+
+	// Fleet purge propagation (V2-873): lastPurgeID is this instance's
+	// high-water mark in cache_purge_log — in-memory only, because a full
+	// reconciliation against uploads.cache_key subsumes log history and runs
+	// at boot, every cacheReconcileInterval (the guaranteed backstop the
+	// #155 panel required: it recovers purges whose log rows were pruned
+	// while an unlink was stuck), and on a private-caching opt-out (which
+	// must remove already-cached private plaintext, not just stop admitting
+	// it). pruneLog is writer-role only (readers stay DB-write-free, V2-514).
+	// privateAllowed is the last observed opt-in value, for detecting the
+	// true→false transition.
+	lastPurgeID    int64
+	pruneLog       bool
+	lastPrune      time.Time
+	lastReconcile  time.Time
+	privateAllowed bool
 
 	// usage reports volume capacity for the disk-pressure trigger; injected
 	// so tests can simulate a filling disk. Defaults to diskusage.Usage.
@@ -79,6 +96,23 @@ const (
 	cacheSweepBatch = 100
 
 	cacheSweepBatchPause = 50 * time.Millisecond
+
+	// cachePurgeLogRetention is how long consumed-or-not purge-log rows are
+	// kept before the writer prunes them. It bounds the log's size, not
+	// correctness: an instance offline longer than this reconciles its whole
+	// cache against uploads.cache_key at boot anyway.
+	cachePurgeLogRetention = 7 * 24 * time.Hour
+
+	// cachePurgeBatch is the per-read tail size when consuming the log.
+	cachePurgeBatch = 500
+
+	// cacheReconcileInterval is how often the full cache-vs-rows liveness
+	// reconciliation re-runs after boot. It is the guaranteed erasure
+	// backstop: even if a purge-log row is pruned while an instance's unlink
+	// of that key is stuck, the next reconciliation re-derives the orphan
+	// from uploads.cache_key and retries. Comfortably inside the 7-day log
+	// retention.
+	cacheReconcileInterval = 12 * time.Hour
 )
 
 // NewCacheSweepWorker creates the sweeper over the same store the download
@@ -88,6 +122,8 @@ func NewCacheSweepWorker(db *database.DB, cfg *config.Config, store *downloadcac
 		cfg:         cfg,
 		settingsSvc: services.NewCachedSettingsService(services.NewSettingsService(db)),
 		store:       store,
+		uploadSvc:   services.NewUploadService(db),
+		pruneLog:    cfg.WorkersEnabled,
 		usage:       diskusage.Usage,
 		interval:    cacheSweepInterval,
 		batch:       cacheSweepBatch,
@@ -135,6 +171,8 @@ func (w *CacheSweepWorker) Stop() {
 // stats emission, which runs even over an empty cache (counters may have
 // moved since the last tick drained it).
 func (w *CacheSweepWorker) sweep(ctx context.Context) {
+	w.propagatePurges(ctx)
+
 	if count, _ := w.store.Stats(); count > 0 {
 		w.sweepDiskPressure(ctx)
 
@@ -146,6 +184,136 @@ func (w *CacheSweepWorker) sweep(ctx context.Context) {
 	}
 
 	w.emitStats()
+}
+
+// propagatePurges applies fleet-wide delete purges to this instance's cache
+// (V2-873). A full liveness reconciliation runs at boot, every
+// cacheReconcileInterval, and on a private-caching opt-out — it subsumes log
+// history, so it is the guaranteed backstop for purges whose log rows were
+// pruned while this instance's unlink was stuck. Steady state consumes the
+// log tail: every entry's Drop is attempted (one stuck key never delays
+// later deletes), but the high-water mark advances only through the
+// contiguous successful prefix, so failed keys are retried from the log next
+// tick (re-drops of already-purged keys are no-ops). Writer-role instances
+// also prune the log hourly.
+func (w *CacheSweepWorker) propagatePurges(ctx context.Context) {
+	privateNow := w.settingsSvc.GetBool("download_cache_private", false)
+	switch {
+	case w.lastReconcile.IsZero(): // boot
+	case w.privateAllowed && !privateNow: // opt-out: purge existing private plaintext
+	case time.Since(w.lastReconcile) >= cacheReconcileInterval: // periodic backstop
+	default:
+		goto tail
+	}
+	if clean, err := w.reconcile(ctx, privateNow); err != nil {
+		slog.Warn("download cache reconciliation failed; retrying next tick", "error", err)
+		return // never consume the tail from an unreconciled baseline
+	} else if clean {
+		w.lastReconcile = time.Now()
+	}
+	// A not-clean pass (some unlink failed) completed its scan — the tail
+	// may proceed — but lastReconcile stays put so the next tick re-runs the
+	// reconciliation until every orphan's bytes are actually gone.
+
+tail:
+	w.privateAllowed = privateNow
+	for {
+		entries, err := w.uploadSvc.PurgeLogSince(w.lastPurgeID, cachePurgeBatch)
+		if err != nil {
+			slog.Warn("download cache purge-log read failed", "error", err)
+			return
+		}
+		if len(entries) == 0 {
+			break
+		}
+		stalled := false
+		for _, e := range entries {
+			if ctx.Err() != nil {
+				return
+			}
+			if err := w.store.Drop(e.CacheKey); err != nil {
+				if !stalled {
+					slog.Warn("download cache propagated purge failed; will retry next tick",
+						"key", e.CacheKey, "error", err)
+				}
+				stalled = true
+				continue // later purges still apply this tick
+			}
+			if !stalled {
+				w.lastPurgeID = e.ID
+			}
+		}
+		if stalled || len(entries) < cachePurgeBatch {
+			break
+		}
+	}
+
+	if w.pruneLog && time.Since(w.lastPrune) >= time.Hour {
+		w.lastPrune = time.Now()
+		if n, err := w.uploadSvc.PrunePurgeLog(time.Now().Add(-cachePurgeLogRetention)); err != nil {
+			slog.Warn("cache purge-log prune failed", "error", err)
+		} else if n > 0 {
+			slog.Info("cache purge-log pruned", "rows", n)
+		}
+	}
+}
+
+// reconcile validates every cached key against live upload rows and purges
+// the orphans — deletes that happened while this instance was down or whose
+// log rows are gone — plus, policy-awareness (#155 panel finding 3): private
+// keys are orphans whenever download_cache_private is off, so an opt-out
+// removes already-cached private plaintext instead of stranding it.
+//
+// The log high-water mark is read BEFORE the cache snapshot, and the
+// row-delete + log-append commit atomically (UploadService.Delete), so a
+// delete landing during reconciliation either logs past that mark (caught by
+// the tail) or its row is already invisible (caught by the liveness check) —
+// no interleaving skips it. Drops are unconditional (Store.Drop): the only
+// concurrent promotion of a non-live key is a resurrection, which the
+// promote-site guard is already unwinding.
+//
+// Returns clean=false when some unlink failed: the scan completed and the
+// caller may consume the tail, but the reconciliation must re-run next tick
+// until the bytes are gone.
+func (w *CacheSweepWorker) reconcile(ctx context.Context, privateAllowed bool) (clean bool, err error) {
+	maxID, err := w.uploadSvc.MaxPurgeLogID()
+	if err != nil {
+		return false, err
+	}
+	count, _ := w.store.Stats()
+	if count == 0 {
+		w.lastPurgeID = maxID
+		return true, nil
+	}
+	victims := w.store.Oldest(count)
+	keys := make([]string, len(victims))
+	for i, v := range victims {
+		keys[i] = v.Key
+	}
+	visibility, err := w.uploadSvc.CacheKeyVisibility(keys)
+	if err != nil {
+		return false, err
+	}
+	purged, stuck := 0, 0
+	for _, v := range victims {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		vis, live := visibility[v.Key]
+		if live && (vis == "public" || privateAllowed) {
+			continue
+		}
+		if err := w.store.Drop(v.Key); err != nil {
+			stuck++
+			continue
+		}
+		purged++
+	}
+	w.lastPurgeID = maxID
+	if purged > 0 || stuck > 0 {
+		slog.Info("download cache reconciled", "purged", purged, "unlink_failures", stuck)
+	}
+	return stuck == 0, nil
 }
 
 // emitStats writes one cumulative "download cache stats" line to slog (V2-825)
