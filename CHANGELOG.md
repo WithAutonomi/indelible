@@ -2,6 +2,12 @@
 
 All notable changes to Indelible are documented in this file. This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- **Duplicate re-uploads no longer fail at the final step.** The `already_stored` status (content-addressed dedup — re-uploading a file whose chunks are all already on the network) was written by the upload worker but missing from the database schema's status constraint, so the transition was rejected after the network store succeeded and the upload surfaced as "Failed to save upload record". Migration 014 fixes the constraint in both dialects, and such uploads are now also deletable like any other stored upload.
+- **Operator note:** uploads that hit this bug before the fix sit in `failed` state; migration 014 does not rewrite them. Retry them once (the re-Prepare is a zero-cost dedup) and they will complete as `already_stored`.
+
 ## [0.11.0] - 2026-06-18
 
 This release tracks **antd / ant-sdk v0.10.0** (bundled daemon, Go client module, and image). Note that `v0.10.0` is the *antd* version; the Indelible release is `v0.11.0`.
