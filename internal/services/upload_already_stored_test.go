@@ -63,3 +63,27 @@ func TestDeleteAlreadyStoredUpload(t *testing.T) {
 		t.Fatalf("purge log = %+v (err=%v), want the dedup key exactly once", entries, err)
 	}
 }
+
+// Review follow-up: the public variant's delete → purge fan-out, keyed on the
+// network-address derivation rather than the DataMap.
+func TestDeleteAlreadyStoredPublicUpload(t *testing.T) {
+	db := setupTestDB(t)
+	user := createTestUser(t, NewUserService(db), "dedup-del-pub@example.com", "D", "P")
+	svc := NewUploadService(db)
+
+	u := createTestUpload(t, svc, user.ID, "dedup-del-pub.bin", 10)
+	if err := svc.MarkAlreadyStoredPublic(u.ID, "addr-dedup-del-pub", "0"); err != nil {
+		t.Fatalf("MarkAlreadyStoredPublic: %v", err)
+	}
+
+	if err := svc.Delete(u.ID); err != nil {
+		t.Fatalf("public already_stored upload must be deletable: %v", err)
+	}
+	if _, err := svc.GetByID(u.ID); err != ErrUploadNotFound {
+		t.Fatalf("row survived the delete: %v", err)
+	}
+	entries, err := svc.PurgeLogSince(0, 10)
+	if err != nil || len(entries) != 1 || entries[0].CacheKey != downloadcache.KeyForIdentifier("addr-dedup-del-pub") {
+		t.Fatalf("purge log = %+v (err=%v), want the address-derived key exactly once", entries, err)
+	}
+}
