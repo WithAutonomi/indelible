@@ -297,6 +297,13 @@ func TestPropagatePurges_PrivateOptOutPurgesExisting(t *testing.T) {
 		t.Fatal("boot purged an allowed private entry")
 	}
 
+	// No-op true→true tick: nothing purged, no transition work.
+	purgedAtBoot := store.Metrics().Purged.Load()
+	w.propagatePurges(context.Background())
+	if got := store.Metrics().Purged.Load(); got != purgedAtBoot {
+		t.Fatalf("true→true tick purged %d entries", got-purgedAtBoot)
+	}
+
 	if err := settings.SetInternal("download_cache_private", "false"); err != nil {
 		t.Fatalf("flip: %v", err)
 	}
