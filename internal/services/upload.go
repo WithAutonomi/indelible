@@ -26,7 +26,7 @@ type Upload struct {
 	FileSize         int64
 	ContentType      string
 	Visibility       string         // "public" or "private"
-	Status           string         // "queued", "processing", "completed", "failed"
+	Status           string         // "queued", "processing", "completed", "failed", "already_stored"
 	StatusDetail     sql.NullString // substatus: "gas_backoff", etc.
 	DatamapAddress   sql.NullString
 	EstimatedCost    sql.NullString
@@ -174,7 +174,7 @@ type UploadListOptions struct {
 	Offset    int
 	SortBy    string // "created_at" (default), "file_size", "filename", "status"
 	SortOrder string // "desc" (default), "asc"
-	Status    string // filter: "queued", "processing", "completed", "failed", "" (all)
+	Status    string // filter: "queued", "processing", "completed", "failed", "already_stored", "" (all)
 	From      *time.Time
 	To        *time.Time
 }
@@ -585,7 +585,7 @@ func (s *UploadService) Delete(id int64) error {
 	var dataMap, addr sql.NullString
 	if err := tx.QueryRow(`SELECT data_map, datamap_address FROM uploads WHERE id = ?`, id).Scan(&dataMap, &addr); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return errors.New("only failed or completed uploads can be deleted")
+			return errors.New("only failed, completed, or already-stored uploads can be deleted")
 		}
 		return err
 	}
@@ -603,14 +603,14 @@ func (s *UploadService) Delete(id int64) error {
 	}
 
 	result, err := tx.Exec(
-		`DELETE FROM uploads WHERE id = ? AND status IN ('failed', 'completed')`,
+		`DELETE FROM uploads WHERE id = ? AND status IN ('failed', 'completed', 'already_stored')`,
 		id,
 	)
 	if err != nil {
 		return err
 	}
 	if n, _ := result.RowsAffected(); n == 0 {
-		return errors.New("only failed or completed uploads can be deleted")
+		return errors.New("only failed, completed, or already-stored uploads can be deleted")
 	}
 	return tx.Commit()
 }
