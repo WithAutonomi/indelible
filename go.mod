@@ -4,7 +4,7 @@ go 1.25.12
 
 require (
 	github.com/BurntSushi/toml v1.6.0
-	github.com/WithAutonomi/ant-sdk/antd-go v0.11.2-rc.1
+	github.com/WithAutonomi/ant-sdk/antd-go v0.12.0
 	github.com/coreos/go-oidc/v3 v3.18.0
 	github.com/elimity-com/scim v0.0.0-20240320110924-172bf2aee9c8
 	github.com/ethereum/go-ethereum v1.17.3
