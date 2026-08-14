@@ -14,6 +14,8 @@ github.com/VictoriaMetrics/fastcache v1.13.0 h1:AW4mheMR5Vd9FkAPUv+NH6Nhw+fmbTMG
 github.com/VictoriaMetrics/fastcache v1.13.0/go.mod h1:hHXhl4DA2fTL2HTZDJFXWgW0LNjo6B+4aj2Wmng3TjU=
 github.com/WithAutonomi/ant-sdk/antd-go v0.11.2 h1:ziVI38M1DpVJLZJ7GaLgTvGJhzgYK0xdgta31qph2XE=
 github.com/WithAutonomi/ant-sdk/antd-go v0.11.2/go.mod h1:5JtaWzf87rJ3YqPRfQDyHJXrLEyakeAJyLIj7cspHVs=
+github.com/WithAutonomi/ant-sdk/antd-go v0.12.0 h1:Yt8lCXU6C2yiTA5sHCo3ozGn5sAEdqFRRRv6H+xXSZI=
+github.com/WithAutonomi/ant-sdk/antd-go v0.12.0/go.mod h1:5JtaWzf87rJ3YqPRfQDyHJXrLEyakeAJyLIj7cspHVs=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
 github.com/beorn7/perks v1.0.1/go.mod h1:G2ZrVWU2WbWT9wwq4/hrbKbnv/1ERSJQ0ibhJ6rlkpw=
 github.com/bits-and-blooms/bitset v1.20.0 h1:2F+rfL86jE2d/bmw7OhqUg2Sj/1rURkBn3MdfoPyRVU=
