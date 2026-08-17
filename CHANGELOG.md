@@ -2,11 +2,42 @@
 
 All notable changes to Indelible are documented in this file. This project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.12.0] - 2026-08-17
+
+This release tracks **antd / ant-sdk v0.12.0** (bundled daemon, Go client module, and image). The matching version numbers are a coincidence — the two projects are versioned independently.
+
+### Download cache (read acceleration)
+
+A new per-instance, content-addressed download cache turns the read path into a three-layer degradation: `304` (ETag match) → **cache hit** (local bytes, Range preserved, no antd fetch, no gate slot) → gated miss (fetch, then promote the temp file the download already paid to materialise). **Off by default** — set `download_cache_max_bytes` to enable; see the new deployment guide at `docs/guides/download-cache.md`.
+
+- **Cache core** — atomic rename promotion (no partially-written file is ever visible), boot scan rebuilds the index with no DB writes (reader-fleet discipline), per-key fill coalescing so concurrent misses on one object produce a single antd fetch.
+- **Disk policy sweeper** — a per-minute pass in strict precedence order: disk pressure (the cache is sacrificed, toward empty if needed, before disk usage can pause uploads), optional inactivity window (`download_cache_inactive_secs` — also the privacy dial bounding how long cached plaintext lingers), then LRU eviction to the byte budget with admission headroom. Runs on every role, readers included.
+- **Write-through seeding** (`download_cache_seed_on_upload`, default on) — after a public upload completes, the staged temp file is renamed into the cache instead of deleted, so publish-then-read is served from local disk with zero extra I/O. Warms the writer's cache only; readers warm by read-through.
+- **Private-content caching opt-in** (`download_cache_private`, default off) with **fleet-wide delete purge**: deletes append the upload's cache keys to a `cache_purge_log` (migration 013) consumed by every instance's sweep tick, with boot reconciliation covering deletes that happen while an instance is down. The purge-window contract: the deleting instance purges synchronously (a reported deletion never leaves pre-existing cached plaintext readable — the API fails closed instead), every other instance purges within ~one 60s sweep tick.
+- **Observability** — lifecycle counters across serve/admission/coalescing/eviction/purge, emitted as a periodic `download cache stats` log line only when something changed, with a telemetry table in the guide mapping each stat to the action it should trigger.
+- Settings: `download_cache_max_bytes` (master switch; `INDELIBLE_DOWNLOAD_CACHE_MAX_BYTES` overrides per instance for heterogeneous fleets), `download_cache_max_object_bytes`, `download_cache_min_uses`, `download_cache_inactive_secs`, `download_cache_seed_on_upload`, `download_cache_private` — all live-tunable, all in the admin UI.
+
+### Download admission control
+
+- **`max_concurrent_downloads`** (default 8) bounds concurrent downloads for the whole request, so download temp disk is deterministically bounded and bulk-download bursts can no longer flip the disk-pressure uploads pause or collectively starve the per-file fetch timeout. Excess requests wait up to **`download_queue_wait_secs`** (default 30) for a slot, then get `503` with `{"code":"downloads_saturated"}` and a `Retry-After` hint. The `304` conditional path and cache hits stay outside the gate.
+
+### Security & hardening
+
+- **Removed chi's `RealIP` middleware** (GO-2026-5777, Critical): it rewrote `RemoteAddr` from the forgeable `X-Forwarded-For` before the trusted-proxy logic ran, making per-IP rate limits bypassable and logged IPs spoofable by any direct client. `X-Forwarded-For` is now honored exclusively by the trusted-proxy-gated resolver (`trusted_proxies`); chi bumped to v5.3.0.
+- **Audit, file-access, and settings-change logs record the resolved client IP** — `X-Forwarded-For` honored only from peers inside `trusted_proxies` — restoring real client attribution behind a reverse proxy, safely.
+- Toolchain and dependency advisories cleared: Go 1.25.13 (six stdlib advisories incl. `crypto/tls`, `net/http`, `net/url`), `golang.org/x/net` v0.55.0, `google.golang.org/grpc` 1.82.1, chi 5.3.0, vite 8 (esbuild gone from the tree entirely), axios 1.18.1, nanoid, brace-expansion.
 
 ### Fixed
+
 - **Duplicate re-uploads no longer fail at the final step.** The `already_stored` status (content-addressed dedup — re-uploading a file whose chunks are all already on the network) was written by the upload worker but missing from the database schema's status constraint, so the transition was rejected after the network store succeeded and the upload surfaced as "Failed to save upload record". Migration 014 fixes the constraint in both dialects, and such uploads are now also deletable like any other stored upload.
 - **Operator note:** uploads that hit this bug before the fix sit in `failed` state; migration 014 does not rewrite them. Retry them once (the re-Prepare is a zero-cost dedup) and they will complete as `already_stored`.
+- **Deleting an upload purges its cached bytes** on the handling instance before the row is removed (fails closed if the unlink fails), with resurrection guards closing the promote-vs-delete race on every instance.
+
+### Internal
+
+- Bundled antd moved v0.10.0 → v0.12.0 across all three lockstep pins (`antd-go` module, `.antd-version`, Docker `ANTD_IMAGE`).
+- CI: heavy jobs skip on documentation-only changes (required Test contexts still reported); release artifact download scoped to the binaries.
+- Docs: runtime-settings table reconciled with the actual settings surface; new download-cache deployment guide; reader-fleet scaling guide updated for cache warm-up semantics.
 
 ## [0.11.0] - 2026-06-18
 

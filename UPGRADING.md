@@ -4,6 +4,44 @@ Operator-facing notes for upgrades that need an action. Most upgrades are a
 plain `docker compose pull && docker compose up -d` (data volumes persist) and
 need nothing from this file — only the entries below call for a manual step.
 
+## v0.12.0 — 2026-08-17
+
+### Bundled antd updated to v0.12.0
+
+The bundled antd daemon (and the `antd-go` client module) move to **v0.12.0**. Container
+deployments get the new daemon automatically on `docker compose pull`. **If you run antd
+yourself**, update your antd daemon to v0.12.0 so it stays in lockstep with the binary
+Indelible was built against.
+
+### Reverse-proxy deployments: set `trusted_proxies` (log/rate-limit attribution change)
+
+The spoofable `RealIP` middleware was removed (GO-2026-5777). `X-Forwarded-For` is now
+honored **only** when the connecting peer is listed in `trusted_proxies`. Behind nginx/caddy:
+
+- **With `trusted_proxies` configured** (as the deployment guide recommends): audit and
+  file-access logs now record the true client IP, and per-IP rate limiting works as designed.
+  No action beyond confirming the setting.
+- **Without it**: logs record the proxy's address and rate limiting keys on the proxy —
+  add your proxy addresses to `trusted_proxies` to restore client attribution.
+
+Direct (no-proxy) deployments need nothing; forged `X-Forwarded-For` headers from clients
+were never trusted by the rate limiter and are now ignored everywhere else too.
+
+### Database migrations 013 + 014 (automatic)
+
+Both apply on first boot as usual (no manual step): 013 adds the download-cache purge log
+and `uploads.cache_key`; 014 admits the `already_stored` status. One post-upgrade action:
+**uploads that previously failed with "Failed to save upload record"** (a duplicate-content
+re-upload hitting the pre-014 constraint) sit in `failed` state — retry each once; the
+re-Prepare is a zero-cost dedup and they will complete as `already_stored`.
+
+### Download cache is available but off by default
+
+Nothing changes unless you opt in. To enable the read cache, set `download_cache_max_bytes`
+(admin UI → Transfer Limits, or the `INDELIBLE_DOWNLOAD_CACHE_MAX_BYTES` per-instance
+override) and read `docs/guides/download-cache.md` for sizing, fleet scope of each dial,
+and the privacy posture — especially before enabling `download_cache_private`.
+
 ## v0.11.0 — 2026-06-18
 
 ### Bundled antd updated to v0.10.0
