@@ -281,8 +281,8 @@ func (s *Signer) PayForMerkleTree(
 		}
 		commitments[i].PoolHash = poolHash
 
-		if len(pc.Candidates) != 16 {
-			return "", "", fmt.Errorf("pool %d: expected 16 candidates, got %d", i, len(pc.Candidates))
+		if len(pc.Candidates) != MerklePoolCandidateCount {
+			return "", "", fmt.Errorf("pool %d: expected %d candidates, got %d", i, MerklePoolCandidateCount, len(pc.Candidates))
 		}
 		for j, c := range pc.Candidates {
 			amt, ok := new(big.Int).SetString(c.Amount, 10)
@@ -410,6 +410,62 @@ func (s *Signer) sendTxWithReceipt(
 	}
 
 	return signedTx.Hash().Hex(), receipt, nil
+}
+
+// MaxMerkleBatchesPayout returns the largest total a multi-batch merkle
+// payment plan could charge: the sum over batches of the sum over pools of the
+// highest candidate amount (the contract pays exactly one winning candidate
+// per pool). Unparseable amounts contribute zero — strict validation happens
+// in the worker before any money moves. Shared by the worker's max_gas_fee
+// precheck and EnsureMerkleAllowance so the two always agree.
+func MaxMerkleBatchesPayout(batches []antd.MerkleBatchEntry) *big.Int {
+	total := new(big.Int)
+	for _, b := range batches {
+		for _, pc := range b.PoolCommitments {
+			poolMax := new(big.Int)
+			for _, c := range pc.Candidates {
+				if amt, ok := new(big.Int).SetString(c.Amount, 10); ok && amt.Cmp(poolMax) > 0 {
+					poolMax = amt
+				}
+			}
+			total.Add(total, poolMax)
+		}
+	}
+	return total
+}
+
+// EnsureMerkleAllowance approves the ERC-20 allowance for a whole multi-batch
+// merkle payment plan in one transaction: the sum of every batch's maximum
+// payout. Each subsequent PayForMerkleTree call re-checks the allowance and
+// finds it sufficient (spend per batch never exceeds that batch's maximum), so
+// the per-batch approval short-circuits — one approve tx instead of N.
+func (s *Signer) EnsureMerkleAllowance(
+	ctx context.Context,
+	privateKeyHex string,
+	batches []antd.MerkleBatchEntry,
+	tokenAddress string,
+	merklePaymentsAddress string,
+) error {
+	required := MaxMerkleBatchesPayout(batches)
+	if required.Sign() == 0 {
+		return nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	privateKeyHex = strings.TrimPrefix(privateKeyHex, "0x")
+	privateKey, err := crypto.HexToECDSA(privateKeyHex)
+	if err != nil {
+		return fmt.Errorf("invalid private key: %w", err)
+	}
+	fromAddress := crypto.PubkeyToAddress(privateKey.PublicKey)
+
+	if err := s.ensureAllowance(ctx, privateKey, fromAddress,
+		common.HexToAddress(tokenAddress), common.HexToAddress(merklePaymentsAddress), required); err != nil {
+		return fmt.Errorf("token approval: %w", err)
+	}
+	return nil
 }
 
 // maxMerklePayout returns the largest total the merkle payment contract could

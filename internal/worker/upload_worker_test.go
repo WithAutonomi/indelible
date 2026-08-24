@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -376,6 +377,12 @@ func TestClassifyFailure(t *testing.T) {
 	merklePaid := errors.Join(errPaidNoRetry, errors.New("finalize reverted"))
 	permanent := &antd.BadRequestError{AntdError: antd.AntdError{StatusCode: 400, Message: "bad"}}
 	generic := errors.New("boom")
+	// The exact wrapping shapes the multi-batch merkle branch produces (V2-1056):
+	merkleMidPlanPaid := fmt.Errorf("EVM merkle payment failed at batch 3/5 (2 paid): %w",
+		errors.Join(errPaidNoRetry, errors.New("transaction reverted")))
+	merkleMidPlanTimeout := fmt.Errorf("EVM merkle payment failed (batch 3/5): %w", evm.ErrConfirmationTimeout)
+	merklePartialFinalize := errors.Join(errPaidNoRetry, &antd.PartialUploadError{
+		AntdError: antd.AntdError{StatusCode: 502, Message: "partial"}, ChunksStored: 300, ChunksFailed: 12, TotalChunks: 312})
 
 	tests := []struct {
 		name        string
@@ -395,6 +402,9 @@ func TestClassifyFailure(t *testing.T) {
 		{"permanent error, nothing paid → abandon immediately", permanent, false, true, outcomeAbandon},
 		{"generic error after payment → preserve", generic, true, true, outcomePreservePaid},
 		{"generic error, nothing paid → abandon", generic, false, true, outcomeAbandon},
+		{"merkle mid-plan definitive failure after paid batches → preserve paid", merkleMidPlanPaid, true, true, outcomePreservePaid},
+		{"merkle mid-plan confirmation timeout → preserve unconfirmed", merkleMidPlanTimeout, true, true, outcomePreserveUnconfirmed},
+		{"merkle multi finalize partial → preserve paid (not transient-retried)", merklePartialFinalize, true, true, outcomePreservePaid},
 	}
 
 	for _, tt := range tests {
@@ -433,6 +443,183 @@ func TestEstimatedUploadCost_Merkle(t *testing.T) {
 	}
 	if got := estimatedUploadCost(p); got.String() != "79" { // 70 + 9
 		t.Errorf("merkle cost = %s, want 79", got)
+	}
+}
+
+func TestEstimatedUploadCost_MerkleMultiBatch(t *testing.T) {
+	// Ceiling sums across ALL payment batches, not just the legacy mirror.
+	p := &antd.PrepareUploadResult{
+		PaymentType: "merkle",
+		MerkleBatches: []antd.MerkleBatchEntry{
+			{PoolCommitments: []antd.PoolCommitmentEntry{
+				{Candidates: []antd.CandidateNodeEntry{{Amount: "10"}, {Amount: "70"}}},
+			}},
+			{PoolCommitments: []antd.PoolCommitmentEntry{
+				{Candidates: []antd.CandidateNodeEntry{{Amount: "5"}, {Amount: "9"}}},
+				{Candidates: []antd.CandidateNodeEntry{{Amount: "100"}}},
+			}},
+		},
+	}
+	if got := estimatedUploadCost(p); got.String() != "179" { // 70 + 9 + 100
+		t.Errorf("multi-batch merkle cost = %s, want 179", got)
+	}
+}
+
+func TestEstimatedUploadCost_MerkleEmptyBothIsZero(t *testing.T) {
+	// No batches and no legacy fields: estimate is zero — the precheck passes
+	// and the payment branch then fails with the clear version-gap error.
+	p := &antd.PrepareUploadResult{PaymentType: "merkle"}
+	if got := estimatedUploadCost(p); got.Sign() != 0 {
+		t.Errorf("empty merkle cost = %s, want 0", got)
+	}
+}
+
+// --- multi-batch merkle helpers (V2-1056) ---
+
+func fullPool(amount string) antd.PoolCommitmentEntry {
+	pc := antd.PoolCommitmentEntry{PoolHash: "0x01"}
+	for i := 0; i < evm.MerklePoolCandidateCount; i++ {
+		pc.Candidates = append(pc.Candidates, antd.CandidateNodeEntry{Amount: amount})
+	}
+	return pc
+}
+
+func TestMerkleBatchPlan_UsesBatches(t *testing.T) {
+	batches := []antd.MerkleBatchEntry{
+		{Depth: 8, MerklePaymentTimestamp: 111},
+		{Depth: 6, MerklePaymentTimestamp: 222},
+		{Depth: 4, MerklePaymentTimestamp: 333},
+	}
+	got, err := merkleBatchPlan(&antd.PrepareUploadResult{PaymentType: "merkle", MerkleBatches: batches})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 3 || got[0].MerklePaymentTimestamp != 111 || got[2].MerklePaymentTimestamp != 333 {
+		t.Errorf("plan = %+v, want the 3 batches in order", got)
+	}
+}
+
+func TestMerkleBatchPlan_LegacyFallback(t *testing.T) {
+	p := &antd.PrepareUploadResult{
+		PaymentType:            "merkle",
+		Depth:                  5,
+		PoolCommitments:        []antd.PoolCommitmentEntry{fullPool("10")},
+		MerklePaymentTimestamp: 999,
+	}
+	got, err := merkleBatchPlan(p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 || got[0].Depth != 5 || got[0].MerklePaymentTimestamp != 999 || len(got[0].PoolCommitments) != 1 {
+		t.Errorf("plan = %+v, want one batch synthesized from the legacy fields", got)
+	}
+}
+
+func TestMerkleBatchPlan_PrefersBatchesOverLegacyMirror(t *testing.T) {
+	// antd >= 0.12.0 single-batch shape: MerkleBatches[0] AND the legacy mirror.
+	p := &antd.PrepareUploadResult{
+		PaymentType:            "merkle",
+		Depth:                  5,
+		PoolCommitments:        []antd.PoolCommitmentEntry{fullPool("10")},
+		MerklePaymentTimestamp: 999,
+		MerkleBatches:          []antd.MerkleBatchEntry{{Depth: 5, MerklePaymentTimestamp: 999}},
+	}
+	got, err := merkleBatchPlan(p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 || len(got[0].PoolCommitments) != 0 {
+		t.Errorf("plan = %+v, want MerkleBatches verbatim (not a legacy synthesis)", got)
+	}
+}
+
+func TestMerkleBatchPlan_EmptyBothVersionGapError(t *testing.T) {
+	_, err := merkleBatchPlan(&antd.PrepareUploadResult{PaymentType: "merkle"})
+	if err == nil {
+		t.Fatal("want error for merkle prepare with no batches and no legacy fields")
+	}
+	if !strings.Contains(err.Error(), "antd >= 0.12.0") {
+		t.Errorf("error %q should name the version gap", err)
+	}
+}
+
+func TestValidateMerkleBatches(t *testing.T) {
+	shortPool := antd.PoolCommitmentEntry{Candidates: make([]antd.CandidateNodeEntry, 15)}
+	for i := range shortPool.Candidates {
+		shortPool.Candidates[i].Amount = "1"
+	}
+	badAmountPool := fullPool("1")
+	badAmountPool.Candidates[3].Amount = "not-a-number"
+
+	tests := []struct {
+		name    string
+		batches []antd.MerkleBatchEntry
+		wantErr string // empty = valid
+	}{
+		{"valid multi-batch", []antd.MerkleBatchEntry{
+			{PoolCommitments: []antd.PoolCommitmentEntry{fullPool("1"), fullPool("2")}},
+			{PoolCommitments: []antd.PoolCommitmentEntry{fullPool("3")}},
+		}, ""},
+		{"batch without pools", []antd.MerkleBatchEntry{
+			{PoolCommitments: []antd.PoolCommitmentEntry{fullPool("1")}},
+			{},
+		}, "batch 2/2 has no pool commitments"},
+		{"wrong candidate count names batch and pool", []antd.MerkleBatchEntry{
+			{PoolCommitments: []antd.PoolCommitmentEntry{fullPool("1")}},
+			{PoolCommitments: []antd.PoolCommitmentEntry{fullPool("1"), shortPool}},
+		}, "batch 2/2 pool 1: expected 16 candidates, got 15"},
+		{"unparseable amount names batch and pool", []antd.MerkleBatchEntry{
+			{PoolCommitments: []antd.PoolCommitmentEntry{badAmountPool}},
+		}, `batch 1/1 pool 0: invalid candidate amount "not-a-number"`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateMerkleBatches(tt.batches)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || err.Error() != tt.wantErr {
+				t.Errorf("error = %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestPadWinnerList(t *testing.T) {
+	got := padWinnerList([]string{"0xa", "0xb"}, 5)
+	want := []string{"0xa", "0xb", "", "", ""}
+	if len(got) != len(want) {
+		t.Fatalf("len = %d, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("padded[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+	if full := padWinnerList([]string{"0xa"}, 1); len(full) != 1 || full[0] != "0xa" {
+		t.Errorf("already-full list changed: %v", full)
+	}
+	if empty := padWinnerList(nil, 2); len(empty) != 2 || empty[0] != "" || empty[1] != "" {
+		t.Errorf("nil winners = %v, want two empty entries", empty)
+	}
+}
+
+func TestShouldSalvageMerkle(t *testing.T) {
+	definitive := errors.New("transaction reverted: 0xdead")
+	timeout := fmt.Errorf("payment: %w", evm.ErrConfirmationTimeout)
+
+	if !shouldSalvageMerkle(definitive, 2) {
+		t.Error("definitive failure with paid batches should salvage")
+	}
+	if shouldSalvageMerkle(definitive, 0) {
+		t.Error("nothing paid → nothing to salvage")
+	}
+	if shouldSalvageMerkle(timeout, 2) {
+		t.Error("confirmation timeout must NOT salvage — the tx may still mine")
 	}
 }
 
