@@ -84,11 +84,13 @@ func classifyFailure(err error, paymentMade, canRetry bool) uploadOutcome {
 }
 
 // estimatedUploadCost returns the cost to compare against max_gas_fee. For
-// wave-batch it's the quoted TotalAmount; for merkle (cost determined on-chain)
-// it's the upper bound the contract could charge across every payment batch —
-// the sum over pools of the largest candidate amount. Unparseable/empty
-// amounts count as zero; a merkle prepare with no batches at all estimates
-// zero here and fails with a clear error in the payment branch.
+// wave-batch it's the quoted TotalAmount; for merkle (cost determined
+// on-chain) it's the upper bound the contract could charge across every
+// payment batch — per batch, the highest pool median quote * 2^depth
+// (PaymentVaultV2 charges the winner pool's median16 * 2^depth and picks the
+// winner at execution time). Unparseable/empty amounts count as zero; a
+// merkle prepare with no batches at all estimates zero here and fails with a
+// clear error in the payment branch.
 func estimatedUploadCost(prepared *antd.PrepareUploadResult) *big.Int {
 	if prepared.PaymentType == "merkle" {
 		batches, err := merkleBatchPlan(prepared)
@@ -128,6 +130,9 @@ func merkleBatchPlan(prepared *antd.PrepareUploadResult) ([]antd.MerkleBatchEntr
 // the checks PayForMerkleTree applies per batch, naming the batch and pool.
 func validateMerkleBatches(batches []antd.MerkleBatchEntry) error {
 	for i, b := range batches {
+		if b.Depth < 1 || b.Depth > 8 {
+			return fmt.Errorf("batch %d/%d has invalid merkle depth %d (want 1-8)", i+1, len(batches), b.Depth)
+		}
 		if len(b.PoolCommitments) == 0 {
 			return fmt.Errorf("batch %d/%d has no pool commitments", i+1, len(batches))
 		}

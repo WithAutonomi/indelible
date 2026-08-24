@@ -433,35 +433,38 @@ func TestEstimatedUploadCost_WaveUnparseable(t *testing.T) {
 }
 
 func TestEstimatedUploadCost_Merkle(t *testing.T) {
-	// Two pools; cost ceiling = sum of the max candidate amount in each pool.
+	// Legacy single-batch shape. PaymentVaultV2 charges the winner pool's
+	// median quote * 2^depth; the ceiling takes the highest pool median.
 	p := &antd.PrepareUploadResult{
 		PaymentType: "merkle",
+		Depth:       3,
 		PoolCommitments: []antd.PoolCommitmentEntry{
-			{Candidates: []antd.CandidateNodeEntry{{Amount: "10"}, {Amount: "70"}, {Amount: "30"}}},
-			{Candidates: []antd.CandidateNodeEntry{{Amount: "5"}, {Amount: "9"}}},
+			{Candidates: []antd.CandidateNodeEntry{{Amount: "10"}, {Amount: "70"}, {Amount: "30"}}}, // median 30
+			{Candidates: []antd.CandidateNodeEntry{{Amount: "5"}, {Amount: "9"}}},                   // median 9
 		},
 	}
-	if got := estimatedUploadCost(p); got.String() != "79" { // 70 + 9
-		t.Errorf("merkle cost = %s, want 79", got)
+	if got := estimatedUploadCost(p); got.String() != "240" { // 30 << 3
+		t.Errorf("merkle cost = %s, want 240", got)
 	}
 }
 
 func TestEstimatedUploadCost_MerkleMultiBatch(t *testing.T) {
-	// Ceiling sums across ALL payment batches, not just the legacy mirror.
+	// Ceiling sums per-batch charges across ALL payment batches, not just the
+	// legacy mirror.
 	p := &antd.PrepareUploadResult{
 		PaymentType: "merkle",
 		MerkleBatches: []antd.MerkleBatchEntry{
-			{PoolCommitments: []antd.PoolCommitmentEntry{
-				{Candidates: []antd.CandidateNodeEntry{{Amount: "10"}, {Amount: "70"}}},
+			{Depth: 2, PoolCommitments: []antd.PoolCommitmentEntry{
+				{Candidates: []antd.CandidateNodeEntry{{Amount: "10"}, {Amount: "70"}}}, // median 70
 			}},
-			{PoolCommitments: []antd.PoolCommitmentEntry{
-				{Candidates: []antd.CandidateNodeEntry{{Amount: "5"}, {Amount: "9"}}},
-				{Candidates: []antd.CandidateNodeEntry{{Amount: "100"}}},
+			{Depth: 1, PoolCommitments: []antd.PoolCommitmentEntry{
+				{Candidates: []antd.CandidateNodeEntry{{Amount: "5"}, {Amount: "9"}}}, // median 9
+				{Candidates: []antd.CandidateNodeEntry{{Amount: "100"}}},              // median 100
 			}},
 		},
 	}
-	if got := estimatedUploadCost(p); got.String() != "179" { // 70 + 9 + 100
-		t.Errorf("multi-batch merkle cost = %s, want 179", got)
+	if got := estimatedUploadCost(p); got.String() != "480" { // (70 << 2) + (100 << 1)
+		t.Errorf("multi-batch merkle cost = %s, want 480", got)
 	}
 }
 
@@ -557,19 +560,25 @@ func TestValidateMerkleBatches(t *testing.T) {
 		wantErr string // empty = valid
 	}{
 		{"valid multi-batch", []antd.MerkleBatchEntry{
-			{PoolCommitments: []antd.PoolCommitmentEntry{fullPool("1"), fullPool("2")}},
-			{PoolCommitments: []antd.PoolCommitmentEntry{fullPool("3")}},
+			{Depth: 8, PoolCommitments: []antd.PoolCommitmentEntry{fullPool("1"), fullPool("2")}},
+			{Depth: 5, PoolCommitments: []antd.PoolCommitmentEntry{fullPool("3")}},
 		}, ""},
-		{"batch without pools", []antd.MerkleBatchEntry{
+		{"invalid depth", []antd.MerkleBatchEntry{
+			{Depth: 9, PoolCommitments: []antd.PoolCommitmentEntry{fullPool("1")}},
+		}, "batch 1/1 has invalid merkle depth 9 (want 1-8)"},
+		{"zero depth", []antd.MerkleBatchEntry{
 			{PoolCommitments: []antd.PoolCommitmentEntry{fullPool("1")}},
-			{},
+		}, "batch 1/1 has invalid merkle depth 0 (want 1-8)"},
+		{"batch without pools", []antd.MerkleBatchEntry{
+			{Depth: 8, PoolCommitments: []antd.PoolCommitmentEntry{fullPool("1")}},
+			{Depth: 5},
 		}, "batch 2/2 has no pool commitments"},
 		{"wrong candidate count names batch and pool", []antd.MerkleBatchEntry{
-			{PoolCommitments: []antd.PoolCommitmentEntry{fullPool("1")}},
-			{PoolCommitments: []antd.PoolCommitmentEntry{fullPool("1"), shortPool}},
+			{Depth: 8, PoolCommitments: []antd.PoolCommitmentEntry{fullPool("1")}},
+			{Depth: 5, PoolCommitments: []antd.PoolCommitmentEntry{fullPool("1"), shortPool}},
 		}, "batch 2/2 pool 1: expected 16 candidates, got 15"},
 		{"unparseable amount names batch and pool", []antd.MerkleBatchEntry{
-			{PoolCommitments: []antd.PoolCommitmentEntry{badAmountPool}},
+			{Depth: 8, PoolCommitments: []antd.PoolCommitmentEntry{badAmountPool}},
 		}, `batch 1/1 pool 0: invalid candidate amount "not-a-number"`},
 	}
 
