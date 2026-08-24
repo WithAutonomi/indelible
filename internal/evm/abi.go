@@ -14,6 +14,10 @@ import (
 // Contract ABIs for Autonomi storage payments.
 // Sourced from evmlib's IPaymentVault ABI.
 
+// MerklePoolCandidateCount is the contract's fixed candidate count per pool
+// (the CandidateNode[16] tuple below).
+const MerklePoolCandidateCount = 16
+
 var payForQuotesABI abi.ABI
 var payForMerkleTreeABI abi.ABI
 var merklePaymentMadeEvent abi.Event
