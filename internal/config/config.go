@@ -80,6 +80,9 @@ type Config struct {
 	// the gateway at PaymentGatewayURL instead of signing locally.
 	PaymentMode       string `toml:"payment_mode"`        // "local" (default) or "hosted"
 	PaymentGatewayURL string `toml:"payment_gateway_url"` // required when payment_mode=hosted
+	// PaymentGatewayAPIKey authenticates this instance's tenant account at
+	// the gateway (Bearer). Required when payment_mode=hosted.
+	PaymentGatewayAPIKey string `toml:"payment_gateway_api_key"`
 
 	// SMTP configuration for transactional emails (password reset, email verification)
 	SMTP SMTPConfig `toml:"smtp"`
@@ -393,6 +396,9 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("INDELIBLE_PAYMENT_GATEWAY_URL"); v != "" {
 		cfg.PaymentGatewayURL = v
+	}
+	if v := os.Getenv("INDELIBLE_PAYMENT_GATEWAY_API_KEY"); v != "" {
+		cfg.PaymentGatewayAPIKey = v
 	}
 
 	// Default antd binary

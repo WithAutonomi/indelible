@@ -482,7 +482,7 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 			return fmt.Errorf("payment_mode=hosted requires payment_gateway_url")
 		}
 		if w.evmSigner == nil {
-			w.evmSigner = evm.NewHostedPayer(w.cfg.PaymentGatewayURL)
+			w.evmSigner = evm.NewHostedPayer(w.cfg.PaymentGatewayURL, w.cfg.PaymentGatewayAPIKey)
 		}
 	} else if w.evmSigner == nil || w.evmSigner.RPCUrl() != rpcURL {
 		signer, err := evm.NewSigner(rpcURL)

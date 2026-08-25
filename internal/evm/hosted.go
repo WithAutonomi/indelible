@@ -20,13 +20,16 @@ import (
 // treasury key.
 type HostedPayer struct {
 	gatewayURL string
+	apiKey     string
 	client     *http.Client
 }
 
-// NewHostedPayer builds a payer that delegates to the gateway at gatewayURL.
-func NewHostedPayer(gatewayURL string) *HostedPayer {
+// NewHostedPayer builds a payer that delegates to the gateway at gatewayURL,
+// authenticating as this instance's tenant account via apiKey (Bearer).
+func NewHostedPayer(gatewayURL, apiKey string) *HostedPayer {
 	return &HostedPayer{
 		gatewayURL: strings.TrimRight(gatewayURL, "/"),
+		apiKey:     apiKey,
 		// No overall timeout: /pay legitimately blocks for the gateway's
 		// on-chain confirmation wait, mirroring the local signer's bound.
 		client: &http.Client{},
@@ -83,6 +86,7 @@ func (h *HostedPayer) PayForQuotes(
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+h.apiKey)
 
 	resp, err := h.client.Do(req)
 	if err != nil {
@@ -134,6 +138,7 @@ func (h *HostedPayer) GetBalances(ctx context.Context, _ string, tokenAddress st
 	if err != nil {
 		return "", "", err
 	}
+	req.Header.Set("Authorization", "Bearer "+h.apiKey)
 	resp, err := h.client.Do(req)
 	if err != nil {
 		return "", "", fmt.Errorf("payment gateway unreachable: %w", err)
