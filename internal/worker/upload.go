@@ -110,12 +110,24 @@ func estimatedUploadCost(prepared *antd.PrepareUploadResult) *big.Int {
 // payer is the payment seam: either the local EVM signer or the hosted
 // gateway client (payment_mode=hosted, V2-929 PoC). Both settle a prepared
 // batch and answer balance queries; the worker never sees the difference.
+// signedQuotes carries the opaque signed artifacts from the prepare response
+// (V2-926) — the hosted gateway verifies them before paying; local signing
+// ignores them.
 type payer interface {
-	PayForQuotes(ctx context.Context, privateKeyHex string, payments []antd.PaymentInfo, tokenAddress, dataPaymentsAddress string) (map[string]string, error)
+	PayForQuotes(ctx context.Context, privateKeyHex string, payments []antd.PaymentInfo, signedQuotes []antd.SignedQuoteEntry, tokenAddress, dataPaymentsAddress string) (map[string]string, error)
 	PayForMerkleTree(ctx context.Context, privateKeyHex string, depth int, poolCommitments []antd.PoolCommitmentEntry, merklePaymentTimestamp uint64, tokenAddress, merklePaymentsAddress string) (winnerPoolHash, totalAmount string, err error)
 	GetBalances(ctx context.Context, walletAddress, tokenAddress string) (string, string, error)
 	SetConfirmationTimeout(d time.Duration)
 	RPCUrl() string
+}
+
+// localPayer adapts *evm.Signer to the payer seam: local signing has no use
+// for the relayed signed quotes, so it drops them. Keeps evm.Signer's own
+// signature untouched (migrate.EvmPayer and the audit-anchor worker use it).
+type localPayer struct{ *evm.Signer }
+
+func (l localPayer) PayForQuotes(ctx context.Context, privateKeyHex string, payments []antd.PaymentInfo, _ []antd.SignedQuoteEntry, tokenAddress, dataPaymentsAddress string) (map[string]string, error) {
+	return l.Signer.PayForQuotes(ctx, privateKeyHex, payments, tokenAddress, dataPaymentsAddress)
 }
 
 // UploadWorker processes queued file uploads in the background.
@@ -387,7 +399,15 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 	// one EVM tx, and finalize returns a network address for the DataMap.
 	// Private visibility: DataMap stays in-memory and is stored locally.
 	var prepared *antd.PrepareUploadResult
-	if upload.Visibility == "public" {
+	if w.cfg.PaymentMode == "hosted" {
+		// Hosted mode (V2-926): ask for the signed quotes so the gateway can
+		// verify the batch offline before paying. Requires antd >= 0.13.0.
+		opts := antd.PrepareOptions{IncludeSignedQuotes: true}
+		if upload.Visibility == "public" {
+			opts.Visibility = "public"
+		}
+		prepared, err = w.antdClient.PrepareUploadWithOptions(ctx, tempPath, opts)
+	} else if upload.Visibility == "public" {
 		prepared, err = w.antdClient.PrepareUploadPublic(ctx, tempPath)
 	} else {
 		prepared, err = w.antdClient.PrepareUpload(ctx, tempPath)
@@ -469,7 +489,7 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		if err != nil {
 			return fmt.Errorf("Failed to connect to EVM RPC: %w", err)
 		}
-		w.evmSigner = signer
+		w.evmSigner = localPayer{signer}
 	}
 
 	// Optional operator override for how long we wait for a payment tx to
@@ -525,7 +545,7 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		var txHashes map[string]string
 		paymentMade := false
 		if len(prepared.Payments) > 0 {
-			txHashes, err = w.evmSigner.PayForQuotes(ctx, walletKey, prepared.Payments, tokenAddr, prepared.PaymentVaultAddress)
+			txHashes, err = w.evmSigner.PayForQuotes(ctx, walletKey, prepared.Payments, prepared.SignedQuotes, tokenAddr, prepared.PaymentVaultAddress)
 			if err != nil {
 				return fmt.Errorf("EVM payment failed: %w", err)
 			}

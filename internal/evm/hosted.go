@@ -34,11 +34,12 @@ func NewHostedPayer(gatewayURL string) *HostedPayer {
 }
 
 type hostedPayRequest struct {
-	AccountID           string             `json:"account_id"`
-	PaymentType         string             `json:"payment_type,omitempty"`
-	Payments            []antd.PaymentInfo `json:"payments"`
-	TokenAddress        string             `json:"token_address"`
-	PaymentVaultAddress string             `json:"payment_vault_address"`
+	AccountID           string                  `json:"account_id"`
+	PaymentType         string                  `json:"payment_type,omitempty"`
+	Payments            []antd.PaymentInfo      `json:"payments"`
+	TokenAddress        string                  `json:"token_address"`
+	PaymentVaultAddress string                  `json:"payment_vault_address"`
+	SignedQuotes        []antd.SignedQuoteEntry `json:"signed_quotes,omitempty"`
 }
 
 type hostedPayResponse struct {
@@ -51,13 +52,17 @@ type hostedPayResponse struct {
 }
 
 // PayForQuotes submits the batch to the gateway and returns the
-// quote_hash → tx_hash map antd's finalize expects. A gateway "unconfirmed"
-// answer (202) is surfaced as ErrConfirmationTimeout so the worker preserves
-// the upload for reconciliation instead of re-paying.
+// quote_hash → tx_hash map antd's finalize expects. The signed quotes are
+// relayed unmodified so the gateway can verify the batch offline before
+// paying (V2-926). A gateway "unconfirmed" answer (202) is surfaced as
+// ErrConfirmationTimeout so the worker preserves the upload for
+// reconciliation instead of re-paying; a "rejected" answer is a permanent
+// refusal — the worker abandons rather than retrying.
 func (h *HostedPayer) PayForQuotes(
 	ctx context.Context,
 	_ string, // private key unused — the gateway signs
 	payments []antd.PaymentInfo,
+	signedQuotes []antd.SignedQuoteEntry,
 	tokenAddress string,
 	dataPaymentsAddress string,
 ) (map[string]string, error) {
@@ -67,6 +72,7 @@ func (h *HostedPayer) PayForQuotes(
 		Payments:            payments,
 		TokenAddress:        tokenAddress,
 		PaymentVaultAddress: dataPaymentsAddress,
+		SignedQuotes:        signedQuotes,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("encoding /pay request: %w", err)
