@@ -75,6 +75,12 @@ type Config struct {
 	EvmRPCURL       string `toml:"evm_rpc_url"`       // EVM RPC endpoint
 	EvmTokenAddress string `toml:"evm_token_address"` // Payment token contract address
 
+	// Hosted payments (PoC, V2-929/V2-923): "local" (default) signs payments
+	// with the instance wallet; "hosted" POSTs each upload's payment batch to
+	// the gateway at PaymentGatewayURL instead of signing locally.
+	PaymentMode       string `toml:"payment_mode"`        // "local" (default) or "hosted"
+	PaymentGatewayURL string `toml:"payment_gateway_url"` // required when payment_mode=hosted
+
 	// SMTP configuration for transactional emails (password reset, email verification)
 	SMTP SMTPConfig `toml:"smtp"`
 
@@ -381,6 +387,12 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("INDELIBLE_EVM_TOKEN_ADDRESS"); v != "" {
 		cfg.EvmTokenAddress = v
+	}
+	if v := os.Getenv("INDELIBLE_PAYMENT_MODE"); v != "" {
+		cfg.PaymentMode = v
+	}
+	if v := os.Getenv("INDELIBLE_PAYMENT_GATEWAY_URL"); v != "" {
+		cfg.PaymentGatewayURL = v
 	}
 
 	// Default antd binary

@@ -107,6 +107,17 @@ func estimatedUploadCost(prepared *antd.PrepareUploadResult) *big.Int {
 	return new(big.Int)
 }
 
+// payer is the payment seam: either the local EVM signer or the hosted
+// gateway client (payment_mode=hosted, V2-929 PoC). Both settle a prepared
+// batch and answer balance queries; the worker never sees the difference.
+type payer interface {
+	PayForQuotes(ctx context.Context, privateKeyHex string, payments []antd.PaymentInfo, tokenAddress, dataPaymentsAddress string) (map[string]string, error)
+	PayForMerkleTree(ctx context.Context, privateKeyHex string, depth int, poolCommitments []antd.PoolCommitmentEntry, merklePaymentTimestamp uint64, tokenAddress, merklePaymentsAddress string) (winnerPoolHash, totalAmount string, err error)
+	GetBalances(ctx context.Context, walletAddress, tokenAddress string) (string, string, error)
+	SetConfirmationTimeout(d time.Duration)
+	RPCUrl() string
+}
+
 // UploadWorker processes queued file uploads in the background.
 type UploadWorker struct {
 	uploadSvc   *services.UploadService
@@ -116,7 +127,7 @@ type UploadWorker struct {
 	webhookSvc  *services.WebhookDeliveryService
 	settingsSvc *services.CachedSettingsService
 	antdClient  *antd.Client
-	evmSigner   *evm.Signer // lazily initialized on first upload
+	evmSigner   payer // lazily initialized on first upload
 	cfg         *config.Config
 	// dlCache is the shared download cache store, seeded write-through from
 	// upload temp files after a successful store (V2-822). Nil disables
@@ -443,8 +454,17 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		w.cfg.EvmTokenAddress = prepared.PaymentTokenAddress
 	}
 
-	// Ensure EVM signer is connected to the resolved URL.
-	if w.evmSigner == nil || w.evmSigner.RPCUrl() != rpcURL {
+	// Ensure the payer is connected. Hosted mode (V2-929 PoC) delegates
+	// signing to the payment gateway; otherwise connect the local EVM signer
+	// to the resolved URL.
+	if w.cfg.PaymentMode == "hosted" {
+		if w.cfg.PaymentGatewayURL == "" {
+			return fmt.Errorf("payment_mode=hosted requires payment_gateway_url")
+		}
+		if w.evmSigner == nil {
+			w.evmSigner = evm.NewHostedPayer(w.cfg.PaymentGatewayURL)
+		}
+	} else if w.evmSigner == nil || w.evmSigner.RPCUrl() != rpcURL {
 		signer, err := evm.NewSigner(rpcURL)
 		if err != nil {
 			return fmt.Errorf("Failed to connect to EVM RPC: %w", err)
