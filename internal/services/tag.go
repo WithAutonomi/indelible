@@ -169,7 +169,7 @@ func (s *TagService) Search(tagFilters map[string]string, query string, userID i
 	// Fetch results
 	selectSQL := `SELECT DISTINCT u.id, u.uuid, u.user_id, u.token_id, u.filename, u.original_filename, u.file_size, u.content_type, u.visibility, u.status,
 		u.status_detail, u.datamap_address, u.estimated_cost, u.actual_cost, u.error_message, u.temp_path,
-		u.data_map, u.backoff_until, u.backoff_attempt, u.last_quoted_cost,
+		u.data_map, u.backoff_until, u.backoff_attempt, u.last_quoted_cost, u.payment_mode, u.gateway_payment_key,
 		u.queued_at, u.processing_at, u.completed_at, u.failed_at, u.created_at ` +
 		baseQuery + where + ` ORDER BY u.created_at DESC LIMIT ? OFFSET ?`
 	queryArgs := make([]any, len(args), len(args)+2)
@@ -206,7 +206,7 @@ func (s *TagService) SearchBySelector(userID int64, selectorClauses []string, se
 
 	query := `SELECT DISTINCT u.id, u.uuid, u.user_id, u.token_id, u.filename, u.original_filename, u.file_size, u.content_type, u.visibility, u.status,
 		u.status_detail, u.datamap_address, u.estimated_cost, u.actual_cost, u.error_message, u.temp_path,
-		u.data_map, u.backoff_until, u.backoff_attempt, u.last_quoted_cost,
+		u.data_map, u.backoff_until, u.backoff_attempt, u.last_quoted_cost, u.payment_mode, u.gateway_payment_key,
 		u.queued_at, u.processing_at, u.completed_at, u.failed_at, u.created_at
 		FROM uploads u WHERE u.user_id = ?`
 	args := []interface{}{userID}
@@ -269,7 +269,7 @@ func (s *TagService) SearchWithSelector(selectorClauses []string, selectorArgs [
 	// Fetch
 	selectSQL := `SELECT DISTINCT u.id, u.uuid, u.user_id, u.token_id, u.filename, u.original_filename, u.file_size, u.content_type, u.visibility, u.status,
 		u.status_detail, u.datamap_address, u.estimated_cost, u.actual_cost, u.error_message, u.temp_path,
-		u.data_map, u.backoff_until, u.backoff_attempt, u.last_quoted_cost,
+		u.data_map, u.backoff_until, u.backoff_attempt, u.last_quoted_cost, u.payment_mode, u.gateway_payment_key,
 		u.queued_at, u.processing_at, u.completed_at, u.failed_at, u.created_at ` +
 		baseSQL + ` ORDER BY u.created_at DESC LIMIT ? OFFSET ?`
 	queryArgs := make([]any, len(args), len(args)+2)

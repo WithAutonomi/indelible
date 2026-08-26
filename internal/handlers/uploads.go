@@ -38,6 +38,10 @@ type uploadResponse struct {
 	DatamapAddress   *string `json:"datamap_address"`
 	EstimatedCost    *string `json:"estimated_cost"`
 	ActualCost       *string `json:"actual_cost"`
+	// Payment provenance (V2-1086): "local" (instance wallet) or "hosted"
+	// (gateway credits) + the gateway's batch key; absent when nothing was paid.
+	PaymentMode       *string `json:"payment_mode,omitempty"`
+	GatewayPaymentKey *string `json:"gateway_payment_key,omitempty"`
 	ErrorMessage     *string `json:"error_message"`
 	BackoffUntil     *string `json:"backoff_until,omitempty"`
 	BackoffAttempt   int     `json:"backoff_attempt,omitempty"`
@@ -69,6 +73,12 @@ func toUploadResponse(u *services.Upload) uploadResponse {
 	}
 	if u.ActualCost.Valid {
 		r.ActualCost = &u.ActualCost.String
+	}
+	if u.PaymentMode.Valid {
+		r.PaymentMode = &u.PaymentMode.String
+	}
+	if u.GatewayPaymentKey.Valid {
+		r.GatewayPaymentKey = &u.GatewayPaymentKey.String
 	}
 	if u.ErrorMessage.Valid {
 		r.ErrorMessage = &u.ErrorMessage.String

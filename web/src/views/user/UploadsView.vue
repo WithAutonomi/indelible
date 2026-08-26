@@ -954,6 +954,15 @@ watch(() => route.query.focus, (f, old) => {
             <div class="flex justify-between gap-3"><dt class="text-surface-500">Estimated</dt><dd>{{ detail.estimated_cost || '—' }}</dd></div>
             <div class="flex justify-between gap-3"><dt class="text-surface-500">Actual</dt><dd>{{ detail.actual_cost || '—' }}</dd></div>
             <div v-if="detail.last_quoted_cost" class="flex justify-between gap-3"><dt class="text-surface-500">Last quoted</dt><dd>{{ detail.last_quoted_cost }}</dd></div>
+            <div v-if="detail.payment_mode" class="flex justify-between gap-3">
+              <dt class="text-surface-500">Paid via</dt>
+              <dd><Tag :value="detail.payment_mode === 'hosted' ? 'Hosted gateway credits' : 'Wallet (local)'"
+                :severity="detail.payment_mode === 'hosted' ? 'warn' : 'info'" /></dd>
+            </div>
+            <div v-if="detail.gateway_payment_key" class="flex justify-between gap-3">
+              <dt class="text-surface-500">Gateway batch</dt>
+              <dd><code class="bg-surface-100 px-2 py-1 rounded font-mono text-xs break-all" :title="detail.gateway_payment_key">{{ detail.gateway_payment_key.substring(0, 12) }}…</code></dd>
+            </div>
           </dl>
         </section>
 

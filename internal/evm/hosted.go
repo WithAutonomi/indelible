@@ -52,6 +52,9 @@ type hostedPayResponse struct {
 	TxHashes    map[string]string `json:"tx_hashes"`
 	TotalAmount string            `json:"total_amount"`
 	Error       string            `json:"error"`
+	// PaymentKey is the gateway's batch idempotency key — persisted on the
+	// upload as its provenance join to the gateway ledger (V2-1086).
+	PaymentKey string `json:"payment_key"`
 }
 
 // PayForQuotes submits the batch to the gateway and returns the
@@ -68,7 +71,7 @@ func (h *HostedPayer) PayForQuotes(
 	signedQuotes []antd.SignedQuoteEntry,
 	tokenAddress string,
 	dataPaymentsAddress string,
-) (map[string]string, error) {
+) (map[string]string, string, error) {
 	body, err := json.Marshal(hostedPayRequest{
 		AccountID:           "indelible-poc",
 		PaymentType:         "wave_batch",
@@ -78,43 +81,70 @@ func (h *HostedPayer) PayForQuotes(
 		SignedQuotes:        signedQuotes,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("encoding /pay request: %w", err)
+		return nil, "", fmt.Errorf("encoding /pay request: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.gatewayURL+"/pay", bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+h.apiKey)
 
 	resp, err := h.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("payment gateway unreachable: %w", err)
+		return nil, "", fmt.Errorf("payment gateway unreachable: %w", err)
 	}
 	defer resp.Body.Close()
 
 	var payResp hostedPayResponse
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err := json.Unmarshal(raw, &payResp); err != nil {
-		return nil, fmt.Errorf("payment gateway returned %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+		return nil, "", fmt.Errorf("payment gateway returned %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
 
 	switch {
 	case resp.StatusCode == http.StatusOK && (payResp.Status == "paid" || payResp.Status == "nothing_to_pay"):
-		return payResp.TxHashes, nil
+		return payResp.TxHashes, payResp.PaymentKey, nil
 	case resp.StatusCode == http.StatusAccepted && payResp.Status == "unconfirmed":
 		// Broadcast but unconfirmed on the gateway side: must map onto the
 		// same typed error as a local confirmation timeout so classifyFailure
 		// preserves the upload rather than re-paying.
-		return nil, fmt.Errorf("%w (gateway tx %s)", ErrConfirmationTimeout, payResp.PayTxHash)
+		return nil, "", fmt.Errorf("%w (gateway tx %s)", ErrConfirmationTimeout, payResp.PayTxHash)
 	default:
 		msg := payResp.Error
 		if msg == "" {
 			msg = strings.TrimSpace(string(raw))
 		}
-		return nil, fmt.Errorf("payment gateway /pay failed (%d, %s): %s", resp.StatusCode, payResp.Status, msg)
+		return nil, "", fmt.Errorf("payment gateway /pay failed (%d, %s): %s", resp.StatusCode, payResp.Status, msg)
 	}
+}
+
+// AccountBalance returns the tenant's remaining gateway credit balance in
+// atto (GET /account) — the meaningful "balance after" for hosted payments,
+// where neither the wallet record nor the treasury is the payer's account.
+func (h *HostedPayer) AccountBalance(ctx context.Context) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, h.gatewayURL+"/account", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+h.apiKey)
+	resp, err := h.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("payment gateway unreachable: %w", err)
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Balance string `json:"balance"`
+		Error   string `json:"error"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out); err != nil {
+		return "", fmt.Errorf("decoding /account response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("payment gateway /account failed (%d): %s", resp.StatusCode, out.Error)
+	}
+	return out.Balance, nil
 }
 
 // PayForMerkleTree is not supported by the gateway PoC (merkle hosted support

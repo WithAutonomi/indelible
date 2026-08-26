@@ -114,7 +114,10 @@ func estimatedUploadCost(prepared *antd.PrepareUploadResult) *big.Int {
 // (V2-926) — the hosted gateway verifies them before paying; local signing
 // ignores them.
 type payer interface {
-	PayForQuotes(ctx context.Context, privateKeyHex string, payments []antd.PaymentInfo, signedQuotes []antd.SignedQuoteEntry, tokenAddress, dataPaymentsAddress string) (map[string]string, error)
+	// PayForQuotes additionally returns the settling party's payment
+	// reference — the gateway's batch idempotency key for hosted payments,
+	// "" for local signing — stamped on the upload as provenance (V2-1086).
+	PayForQuotes(ctx context.Context, privateKeyHex string, payments []antd.PaymentInfo, signedQuotes []antd.SignedQuoteEntry, tokenAddress, dataPaymentsAddress string) (map[string]string, string, error)
 	PayForMerkleTree(ctx context.Context, privateKeyHex string, depth int, poolCommitments []antd.PoolCommitmentEntry, merklePaymentTimestamp uint64, tokenAddress, merklePaymentsAddress string) (winnerPoolHash, totalAmount string, err error)
 	GetBalances(ctx context.Context, walletAddress, tokenAddress string) (string, string, error)
 	SetConfirmationTimeout(d time.Duration)
@@ -126,8 +129,9 @@ type payer interface {
 // signature untouched (migrate.EvmPayer and the audit-anchor worker use it).
 type localPayer struct{ *evm.Signer }
 
-func (l localPayer) PayForQuotes(ctx context.Context, privateKeyHex string, payments []antd.PaymentInfo, _ []antd.SignedQuoteEntry, tokenAddress, dataPaymentsAddress string) (map[string]string, error) {
-	return l.Signer.PayForQuotes(ctx, privateKeyHex, payments, tokenAddress, dataPaymentsAddress)
+func (l localPayer) PayForQuotes(ctx context.Context, privateKeyHex string, payments []antd.PaymentInfo, _ []antd.SignedQuoteEntry, tokenAddress, dataPaymentsAddress string) (map[string]string, string, error) {
+	hashes, err := l.Signer.PayForQuotes(ctx, privateKeyHex, payments, tokenAddress, dataPaymentsAddress)
+	return hashes, "", err
 }
 
 // UploadWorker processes queued file uploads in the background.
@@ -528,7 +532,7 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 
 		// Record the confirmed spend BEFORE finalize, so a finalize failure still
 		// leaves an accounting record rather than losing the payment (V2-426).
-		w.recordPayment(ctx, wallet, upload, tokenAddr, paidAmount, txHash)
+		w.recordPayment(ctx, wallet, upload, tokenAddr, paidAmount, txHash, "")
 
 		// Phase 3: Finalize merkle upload. A failure here means money is already
 		// spent; re-running would submit a second merkle payment (not provably
@@ -543,9 +547,10 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		// every chunk is already on-network (content-addressed dedup) — there's
 		// nothing to pay, so skip signing an empty batch and finalize directly.
 		var txHashes map[string]string
+		var gatewayKey string
 		paymentMade := false
 		if len(prepared.Payments) > 0 {
-			txHashes, err = w.evmSigner.PayForQuotes(ctx, walletKey, prepared.Payments, prepared.SignedQuotes, tokenAddr, prepared.PaymentVaultAddress)
+			txHashes, gatewayKey, err = w.evmSigner.PayForQuotes(ctx, walletKey, prepared.Payments, prepared.SignedQuotes, tokenAddr, prepared.PaymentVaultAddress)
 			if err != nil {
 				return fmt.Errorf("EVM payment failed: %w", err)
 			}
@@ -563,7 +568,7 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		// Record the confirmed spend BEFORE finalize (V2-426). Only when a payment
 		// actually happened — a dedup re-Prepare pays nothing.
 		if paymentMade {
-			w.recordPayment(ctx, wallet, upload, tokenAddr, paidAmount, txHash)
+			w.recordPayment(ctx, wallet, upload, tokenAddr, paidAmount, txHash, gatewayKey)
 		}
 
 		// Phase 3: Finalize wave-batch upload. Retrying re-Prepares at zero cost
@@ -634,7 +639,37 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 // still leaves a queryable accounting record rather than losing the spend. Called
 // exactly once per real payment (a dedup re-Prepare pays nothing, so retries do
 // not double-record).
-func (w *UploadWorker) recordPayment(ctx context.Context, wallet *services.Wallet, upload *services.Upload, tokenAddr, paidAmount, txHash string) {
+func (w *UploadWorker) recordPayment(ctx context.Context, wallet *services.Wallet, upload *services.Upload, tokenAddr, paidAmount, txHash, gatewayKey string) {
+	// Provenance stamp (V2-1086): recorded with the payment so "how was this
+	// upload paid" survives instance-level payment_mode changes.
+	mode := "local"
+	if w.cfg.PaymentMode == "hosted" {
+		mode = "hosted"
+	}
+	if err := w.uploadSvc.SetPaymentProvenance(upload.ID, mode, gatewayKey); err != nil {
+		slog.Warn("failed to stamp payment provenance", "error", err)
+	}
+
+	if mode == "hosted" {
+		// The wallet record did NOT pay — the gateway's treasury did, debiting
+		// the tenant's credits. A distinct tx_type keeps the transactions view
+		// honest, balance_after is the remaining gateway credits, and the
+		// wallet record's cached balances are left alone (they'd otherwise be
+		// overwritten with the gateway treasury's numbers).
+		creditBal := ""
+		if ab, ok := w.evmSigner.(interface {
+			AccountBalance(context.Context) (string, error)
+		}); ok {
+			if bal, err := ab.AccountBalance(ctx); err == nil {
+				creditBal = bal
+			} else {
+				slog.Warn("failed to query gateway credit balance", "error", err)
+			}
+		}
+		_, _ = w.txnSvc.Record(wallet.ID, &upload.ID, "hosted_payment", paidAmount, creditBal, txHash)
+		return
+	}
+
 	if tokenBal, gasBal, err := w.evmSigner.GetBalances(ctx, wallet.Address, tokenAddr); err == nil {
 		_ = w.walletSvc.UpdateBalance(wallet.ID, tokenBal, gasBal)
 		_, _ = w.txnSvc.Record(wallet.ID, &upload.ID, "upload", paidAmount, tokenBal, txHash)

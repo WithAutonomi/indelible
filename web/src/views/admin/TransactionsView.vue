@@ -234,7 +234,8 @@ onMounted(async () => {
           </Column>
           <Column field="tx_type" header="Type">
             <template #body="{ data }">
-              <Tag :value="data.tx_type" :severity="data.tx_type === 'refund' ? 'success' : 'info'" />
+              <Tag :value="data.tx_type === 'hosted_payment' ? 'hosted gateway' : data.tx_type"
+                :severity="data.tx_type === 'refund' ? 'success' : data.tx_type === 'hosted_payment' ? 'warn' : 'info'" />
             </template>
           </Column>
           <Column field="amount" header="Amount (ANT)">

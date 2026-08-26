@@ -251,7 +251,7 @@ func (s *CollectionService) ListFiles(collectionID int64, limit, offset int) ([]
 	rows, err := s.db.Query(
 		`SELECT u.id, u.uuid, u.user_id, u.token_id, u.filename, u.original_filename, u.file_size, u.content_type, u.visibility, u.status,
 		        u.status_detail, u.datamap_address, u.estimated_cost, u.actual_cost, u.error_message, u.temp_path,
-		        u.data_map, u.backoff_until, u.backoff_attempt, u.last_quoted_cost,
+		        u.data_map, u.backoff_until, u.backoff_attempt, u.last_quoted_cost, u.payment_mode, u.gateway_payment_key,
 		        u.queued_at, u.processing_at, u.completed_at, u.failed_at, u.created_at
 		 FROM uploads u
 		 INNER JOIN collection_files cf ON u.id = cf.upload_id

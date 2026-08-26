@@ -12,6 +12,8 @@ export interface Upload {
   datamap_address?: string
   estimated_cost?: string
   actual_cost?: string
+  payment_mode?: 'local' | 'hosted'
+  gateway_payment_key?: string
   error_message?: string
   backoff_until?: string
   backoff_attempt: number
