@@ -46,6 +46,7 @@ const walletOptions = ref<{ label: string; value: number | null }[]>([{ label: '
 const typeOptions = [
   { label: 'All types', value: null },
   { label: 'Upload (payment)', value: 'upload' },
+  { label: 'Hosted gateway (credits)', value: 'hosted_payment' },
   { label: 'Refund', value: 'refund' },
 ]
 
