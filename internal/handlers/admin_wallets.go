@@ -72,7 +72,18 @@ func AdminListWallets(db *database.DB, cfg *config.Config) http.HandlerFunc {
 			resp = append(resp, toWalletResponse(wl))
 		}
 
-		jsonResponse(w, http.StatusOK, map[string]any{"wallets": resp})
+		// Payment mode rides along so the wallet screen can state whether
+		// these wallets actually pay for uploads (hosted mode: they don't —
+		// the gateway settles from prepaid credits, V2-1086/V2-930).
+		mode := "local"
+		if cfg.PaymentMode == "hosted" {
+			mode = "hosted"
+		}
+		jsonResponse(w, http.StatusOK, map[string]any{
+			"wallets":             resp,
+			"payment_mode":        mode,
+			"payment_gateway_url": cfg.PaymentGatewayURL,
+		})
 	}
 }
 

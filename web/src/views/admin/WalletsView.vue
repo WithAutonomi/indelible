@@ -25,11 +25,16 @@ const newName = ref('')
 const newPrivateKey = ref('')
 const creating = ref(false)
 
+const paymentMode = ref('local')
+const gatewayUrl = ref('')
+
 async function fetchWallets() {
   loading.value = true
   try {
     const res = await api.get('/api/v2/admin/wallets')
     wallets.value = res.data.wallets || []
+    paymentMode.value = res.data.payment_mode || 'local'
+    gatewayUrl.value = res.data.payment_gateway_url || ''
   } catch {
     // ignore
   } finally {
@@ -153,6 +158,14 @@ onMounted(() => {
       <h1 class="text-2xl font-bold">Wallets</h1>
       <Button icon="pi pi-plus" label="Add Wallet" @click="showCreate = !showCreate" />
     </div>
+
+    <!-- Hosted payment mode: these wallets don't pay for uploads (V2-1086) -->
+    <Message v-if="paymentMode === 'hosted'" severity="warn" :closable="false" class="mb-6">
+      <div>
+        <p class="font-medium">Hosted payment mode — uploads are paid by the payment gateway, not these wallets</p>
+        <p class="text-sm">This instance settles upload payments through the payment gateway<span v-if="gatewayUrl"> at <code>{{ gatewayUrl }}</code></span>, funded by prepaid credits. Wallet balances shown below do not fund uploads and do not reflect the remaining credit balance.</p>
+      </div>
+    </Message>
 
     <!-- No wallet setup prompt -->
     <Message v-if="!loading && wallets.length === 0 && !showCreate" severity="warn" :closable="false" class="mb-6">
