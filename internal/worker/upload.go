@@ -578,7 +578,12 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		}
 
 		// Phase 3: Finalize wave-batch upload. Retrying re-Prepares at zero cost
-		// (dedup), so a finalize failure is safe to retry.
+		// (dedup), so a finalize failure is safe to retry. antd requires
+		// tx_hashes as an empty object — never null — when prepare reported no
+		// payments (full dedup), and a nil Go map marshals to null.
+		if txHashes == nil {
+			txHashes = map[string]string{}
+		}
 		result, err = w.antdClient.FinalizeUpload(ctx, prepared.UploadID, txHashes, false)
 		if err != nil {
 			return fmt.Errorf("Failed to finalize upload: %w", errors.Join(errFinalizeFailed, err))
