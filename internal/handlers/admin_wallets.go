@@ -1,12 +1,14 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/go-chi/chi/v5"
@@ -79,11 +81,22 @@ func AdminListWallets(db *database.DB, cfg *config.Config) http.HandlerFunc {
 		if cfg.PaymentMode == "hosted" {
 			mode = "hosted"
 		}
-		jsonResponse(w, http.StatusOK, map[string]any{
+		out := map[string]any{
 			"wallets":             resp,
 			"payment_mode":        mode,
 			"payment_gateway_url": cfg.PaymentGatewayURL,
-		})
+		}
+		if mode == "hosted" && cfg.PaymentGatewayURL != "" {
+			// Remaining credits, best-effort: an unreachable gateway must
+			// not break the wallets screen — the field is simply absent.
+			balCtx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+			defer cancel()
+			payer := evm.NewHostedPayer(cfg.PaymentGatewayURL, cfg.PaymentGatewayAPIKey)
+			if bal, err := payer.AccountBalance(balCtx); err == nil {
+				out["gateway_credit_atto"] = bal
+			}
+		}
+		jsonResponse(w, http.StatusOK, out)
 	}
 }
 

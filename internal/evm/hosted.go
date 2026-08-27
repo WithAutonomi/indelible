@@ -111,6 +111,12 @@ func (h *HostedPayer) PayForQuotes(
 		// same typed error as a local confirmation timeout so classifyFailure
 		// preserves the upload rather than re-paying.
 		return nil, "", fmt.Errorf("%w (gateway tx %s)", ErrConfirmationTimeout, payResp.PayTxHash)
+	case payResp.Status == "insufficient_credits":
+		// The one refusal an operator fixes themselves: say what it costs
+		// and what to do, in ANT, not a wrapped error chain (V2-930).
+		return nil, "", fmt.Errorf(
+			"insufficient gateway credits: this upload needs %s ANT — top up the account's credits and retry (retrying is safe, nothing was paid)",
+			attoToANT(payResp.TotalAmount))
 	default:
 		msg := payResp.Error
 		if msg == "" {
@@ -118,6 +124,28 @@ func (h *HostedPayer) PayForQuotes(
 		}
 		return nil, "", fmt.Errorf("payment gateway /pay failed (%d, %s): %s", resp.StatusCode, payResp.Status, msg)
 	}
+}
+
+// attoToANT renders an atto amount (decimal string) as a human ANT figure —
+// integer string math, never floats. Unparseable input passes through.
+func attoToANT(atto string) string {
+	s := strings.TrimSpace(atto)
+	if s == "" || strings.ContainsAny(s, ".-") {
+		return atto
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return atto
+		}
+	}
+	if len(s) <= 18 {
+		s = strings.Repeat("0", 19-len(s)) + s
+	}
+	whole, frac := s[:len(s)-18], strings.TrimRight(s[len(s)-18:], "0")
+	if frac == "" {
+		return whole
+	}
+	return whole + "." + frac
 }
 
 // AccountBalance returns the tenant's remaining gateway credit balance in

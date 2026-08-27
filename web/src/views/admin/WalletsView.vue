@@ -27,6 +27,23 @@ const creating = ref(false)
 
 const paymentMode = ref('local')
 const gatewayUrl = ref('')
+const gatewayCreditAtto = ref<string | null>(null)
+
+// Atto → ANT for display: BigInt string math, no floats.
+function attoToANT(atto: string): string {
+  const s = atto.padStart(19, '0')
+  const whole = s.slice(0, -18)
+  const frac = s.slice(-18).replace(/0+$/, '')
+  return frac ? `${whole}.${frac}` : whole
+}
+
+// Low-credit alarm threshold: 1 ANT (a handful of uploads' headroom).
+const LOW_CREDIT_ATTO = 10n ** 18n
+
+const creditsLow = () => {
+  if (gatewayCreditAtto.value === null) return false
+  try { return BigInt(gatewayCreditAtto.value) < LOW_CREDIT_ATTO } catch { return false }
+}
 
 async function fetchWallets() {
   loading.value = true
@@ -35,6 +52,7 @@ async function fetchWallets() {
     wallets.value = res.data.wallets || []
     paymentMode.value = res.data.payment_mode || 'local'
     gatewayUrl.value = res.data.payment_gateway_url || ''
+    gatewayCreditAtto.value = res.data.gateway_credit_atto ?? null
   } catch {
     // ignore
   } finally {
@@ -159,11 +177,15 @@ onMounted(() => {
       <Button icon="pi pi-plus" label="Add Wallet" @click="showCreate = !showCreate" />
     </div>
 
-    <!-- Hosted payment mode: these wallets don't pay for uploads (V2-1086) -->
-    <Message v-if="paymentMode === 'hosted'" severity="warn" :closable="false" class="mb-6">
+    <!-- Hosted payment mode: these wallets don't pay for uploads (V2-1086/V2-930) -->
+    <Message v-if="paymentMode === 'hosted'" :severity="creditsLow() ? 'error' : 'warn'" :closable="false" class="mb-6">
       <div>
         <p class="font-medium">Hosted payment mode — uploads are paid by the payment gateway, not these wallets</p>
-        <p class="text-sm">This instance settles upload payments through the payment gateway<span v-if="gatewayUrl"> at <code>{{ gatewayUrl }}</code></span>, funded by prepaid credits. Wallet balances shown below do not fund uploads and do not reflect the remaining credit balance.</p>
+        <p v-if="gatewayCreditAtto !== null" class="text-sm font-medium mt-1">
+          Remaining gateway credits: {{ attoToANT(gatewayCreditAtto) }} ANT
+          <span v-if="creditsLow()"> — low balance: uploads will start failing; top up your credits.</span>
+        </p>
+        <p class="text-sm">This instance settles upload payments through the payment gateway<span v-if="gatewayUrl"> at <code>{{ gatewayUrl }}</code></span>, funded by prepaid credits. Wallet balances shown below do not fund uploads.</p>
       </div>
     </Message>
 
