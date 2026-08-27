@@ -3,10 +3,12 @@ package evm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	antd "github.com/WithAutonomi/ant-sdk/antd-go"
 )
@@ -88,5 +90,60 @@ func TestAttoToANT(t *testing.T) {
 		if got := attoToANT(in); got != want {
 			t.Errorf("attoToANT(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// asyncGateway stubs the V2-925 contract: /pay answers 202 with a
+// payment_key; /payments/{key} advances queued → paid across polls.
+func asyncGateway(t *testing.T, terminal string, terminalBody map[string]any) *httptest.Server {
+	t.Helper()
+	polls := 0
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/pay":
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "unconfirmed", "payment_key": "k123",
+				"error": "payment queued for broadcast — poll GET /payments/k123"})
+		case r.URL.Path == "/payments/k123":
+			polls++
+			if polls == 1 {
+				_ = json.NewEncoder(w).Encode(map[string]any{"status": "queued"})
+				return
+			}
+			body := map[string]any{"status": terminal}
+			for k, v := range terminalBody {
+				body[k] = v
+			}
+			_ = json.NewEncoder(w).Encode(body)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+}
+
+func TestHostedAsyncPollToPaid(t *testing.T) {
+	srv := asyncGateway(t, "paid", map[string]any{
+		"pay_tx_hash": "0xdef", "tx_hashes": map[string]string{"0xq1": "0xdef"}})
+	defer srv.Close()
+	h := NewHostedPayer(srv.URL, "pgk_test")
+	h.SetPollWait(30 * time.Second)
+	hashes, key, err := h.PayForQuotes(context.Background(), "", []antd.PaymentInfo{{QuoteHash: "0xq1"}}, nil, "0xt", "0xv")
+	if err != nil || hashes["0xq1"] != "0xdef" || key != "k123" {
+		t.Fatalf("async paid: %v %q %v", hashes, key, err)
+	}
+}
+
+func TestHostedAsyncPollToFailed(t *testing.T) {
+	srv := asyncGateway(t, "failed", map[string]any{"error": "transaction reverted: 0xbad"})
+	defer srv.Close()
+	h := NewHostedPayer(srv.URL, "pgk_test")
+	h.SetPollWait(30 * time.Second)
+	_, _, err := h.PayForQuotes(context.Background(), "", []antd.PaymentInfo{{QuoteHash: "0xq1"}}, nil, "0xt", "0xv")
+	if err == nil || !strings.Contains(err.Error(), "reverted") {
+		t.Fatalf("async failed path: %v", err)
+	}
+	if errors.Is(err, ErrConfirmationTimeout) {
+		t.Fatal("a definitive failure must not map to the preserve path")
 	}
 }

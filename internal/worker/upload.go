@@ -386,15 +386,21 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		return fmt.Errorf("Quota exceeded: %w", err)
 	}
 
-	// Get default wallet — required for external signer payment
-	wallet, err := w.walletSvc.GetDefault()
-	if err != nil {
-		return fmt.Errorf("No wallet configured for payment")
-	}
-
-	walletKey, err := w.walletSvc.DecryptKey(wallet)
-	if err != nil {
-		return fmt.Errorf("Failed to decrypt wallet key")
+	// Local mode signs with the default wallet. Hosted mode needs NO wallet
+	// at all (V2-929): the gateway's treasury signs, so a wallet record is
+	// neither required nor consulted.
+	var wallet *services.Wallet
+	var err error
+	walletKey := ""
+	if w.cfg.PaymentMode != "hosted" {
+		wallet, err = w.walletSvc.GetDefault()
+		if err != nil {
+			return fmt.Errorf("No wallet configured for payment")
+		}
+		walletKey, err = w.walletSvc.DecryptKey(wallet)
+		if err != nil {
+			return fmt.Errorf("Failed to decrypt wallet key")
+		}
 	}
 
 	// Phase 1: Prepare upload — encrypts file, collects network quotes.
@@ -651,11 +657,9 @@ func (w *UploadWorker) recordPayment(ctx context.Context, wallet *services.Walle
 	}
 
 	if mode == "hosted" {
-		// The wallet record did NOT pay — the gateway's treasury did, debiting
-		// the tenant's credits. A distinct tx_type keeps the transactions view
-		// honest, balance_after is the remaining gateway credits, and the
-		// wallet record's cached balances are left alone (they'd otherwise be
-		// overwritten with the gateway treasury's numbers).
+		// No wallet paid — the gateway's treasury did, debiting the tenant's
+		// credits. wallet_id NULL (hosted rows belong to no wallet, V-929),
+		// distinct tx_type, balance_after = remaining gateway credits.
 		creditBal := ""
 		if ab, ok := w.evmSigner.(interface {
 			AccountBalance(context.Context) (string, error)
@@ -666,7 +670,7 @@ func (w *UploadWorker) recordPayment(ctx context.Context, wallet *services.Walle
 				slog.Warn("failed to query gateway credit balance", "error", err)
 			}
 		}
-		_, _ = w.txnSvc.Record(wallet.ID, &upload.ID, "hosted_payment", paidAmount, creditBal, txHash)
+		_, _ = w.txnSvc.Record(0, &upload.ID, "hosted_payment", paidAmount, creditBal, txHash)
 		return
 	}
 

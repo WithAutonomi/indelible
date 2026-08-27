@@ -22,6 +22,9 @@ type HostedPayer struct {
 	gatewayURL string
 	apiKey     string
 	client     *http.Client
+	// pollWait bounds how long a 202-with-payment_key answer is polled via
+	// GET /payments/{key} before falling back to the preserve path.
+	pollWait time.Duration
 }
 
 // NewHostedPayer builds a payer that delegates to the gateway at gatewayURL,
@@ -31,10 +34,14 @@ func NewHostedPayer(gatewayURL, apiKey string) *HostedPayer {
 		gatewayURL: strings.TrimRight(gatewayURL, "/"),
 		apiKey:     apiKey,
 		// No overall timeout: /pay legitimately blocks for the gateway's
-		// on-chain confirmation wait, mirroring the local signer's bound.
-		client: &http.Client{},
+		// sync wait, mirroring the local signer's bound.
+		client:   &http.Client{},
+		pollWait: 5 * time.Minute,
 	}
 }
+
+// SetPollWait overrides the async-completion polling bound.
+func (h *HostedPayer) SetPollWait(d time.Duration) { h.pollWait = d }
 
 type hostedPayRequest struct {
 	AccountID           string                  `json:"account_id"`
@@ -107,9 +114,14 @@ func (h *HostedPayer) PayForQuotes(
 	case resp.StatusCode == http.StatusOK && (payResp.Status == "paid" || payResp.Status == "nothing_to_pay"):
 		return payResp.TxHashes, payResp.PaymentKey, nil
 	case resp.StatusCode == http.StatusAccepted && payResp.Status == "unconfirmed":
-		// Broadcast but unconfirmed on the gateway side: must map onto the
-		// same typed error as a local confirmation timeout so classifyFailure
-		// preserves the upload rather than re-paying.
+		// Async contract (V-925/929): the gateway queued or broadcast the
+		// batch and handed back its payment_key — poll to completion. Only
+		// when polling exhausts (or no key was given) fall back to the
+		// preserve path via the same typed error as a local confirmation
+		// timeout, so classifyFailure never re-pays.
+		if payResp.PaymentKey != "" {
+			return h.pollPayment(ctx, payResp.PaymentKey, payResp.PayTxHash)
+		}
 		return nil, "", fmt.Errorf("%w (gateway tx %s)", ErrConfirmationTimeout, payResp.PayTxHash)
 	case payResp.Status == "insufficient_credits":
 		// The one refusal an operator fixes themselves: say what it costs
@@ -146,6 +158,46 @@ func attoToANT(atto string) string {
 		return whole
 	}
 	return whole + "." + frac
+}
+
+// pollPayment follows an async payment to its terminal state via
+// GET /payments/{key}. Transport errors keep polling (the payment is safe
+// server-side; the gateway may be restarting); the bound falls back to the
+// preserve path, never a re-pay.
+func (h *HostedPayer) pollPayment(ctx context.Context, paymentKey, lastTx string) (map[string]string, string, error) {
+	deadline := time.Now().Add(h.pollWait)
+	for {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, h.gatewayURL+"/payments/"+paymentKey, nil)
+		if err != nil {
+			return nil, "", err
+		}
+		req.Header.Set("Authorization", "Bearer "+h.apiKey)
+		resp, err := h.client.Do(req)
+		if err == nil {
+			var payResp hostedPayResponse
+			decodeErr := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payResp)
+			_ = resp.Body.Close()
+			if decodeErr == nil && resp.StatusCode == http.StatusOK {
+				if payResp.PayTxHash != "" {
+					lastTx = payResp.PayTxHash
+				}
+				switch payResp.Status {
+				case "paid":
+					return payResp.TxHashes, paymentKey, nil
+				case "failed", "rejected":
+					return nil, "", fmt.Errorf("payment gateway reported %s: %s", payResp.Status, payResp.Error)
+				}
+			}
+		}
+		if time.Now().After(deadline) {
+			return nil, "", fmt.Errorf("%w (gateway payment %s, tx %s)", ErrConfirmationTimeout, paymentKey, lastTx)
+		}
+		select {
+		case <-ctx.Done():
+			return nil, "", ctx.Err()
+		case <-time.After(3 * time.Second):
+		}
+	}
 }
 
 // AccountBalance returns the tenant's remaining gateway credit balance in
