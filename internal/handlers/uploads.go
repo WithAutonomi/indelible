@@ -139,11 +139,14 @@ func CreateUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	walletSvc := services.NewWalletService(db, cfg.WalletKeyring())
 
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Pre-flight: reject early if no wallet is configured
-		wallet, err := walletSvc.GetDefault()
-		if err != nil || wallet == nil {
-			jsonErrorWithCode(w, "No wallet configured", "wallet_not_configured", http.StatusServiceUnavailable)
-			return
+		// Pre-flight: reject early if no wallet is configured. Hosted mode
+		// (V2-929) needs no wallet — the payment gateway's treasury signs.
+		if cfg.PaymentMode != "hosted" {
+			wallet, err := walletSvc.GetDefault()
+			if err != nil || wallet == nil {
+				jsonErrorWithCode(w, "No wallet configured", "wallet_not_configured", http.StatusServiceUnavailable)
+				return
+			}
 		}
 
 		// Disk back-pressure: the disk-alert worker sets "uploads_paused" when the

@@ -23,8 +23,15 @@ func WalletStatus(db *database.DB, cfg *config.Config) http.HandlerFunc {
 		wallet, err := walletSvc.GetDefault()
 		hasWallet := err == nil && wallet != nil
 
+		// The UI reads this as "can this instance pay for uploads". Hosted
+		// mode pays via the gateway with no wallet at all (V2-929).
+		mode := "local"
+		if cfg.PaymentMode == "hosted" {
+			mode = "hosted"
+		}
 		jsonResponse(w, http.StatusOK, map[string]any{
-			"has_default_wallet": hasWallet,
+			"has_default_wallet": hasWallet || mode == "hosted",
+			"payment_mode":       mode,
 		})
 	}
 }
