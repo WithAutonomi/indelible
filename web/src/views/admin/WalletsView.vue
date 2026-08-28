@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useConfirm } from 'primevue/useconfirm'
 import { useToast } from 'primevue/usetoast'
 import { api } from '../../api/client'
@@ -16,6 +16,7 @@ import Dialog from 'primevue/dialog'
 import Drawer from 'primevue/drawer'
 
 const route = useRoute()
+const router = useRouter()
 const confirm = useConfirm()
 const toast = useToast()
 const wallets = ref<Wallet[]>([])
@@ -53,6 +54,12 @@ async function fetchWallets() {
     paymentMode.value = res.data.payment_mode || 'local'
     gatewayUrl.value = res.data.payment_gateway_url || ''
     gatewayCreditAtto.value = res.data.gateway_credit_atto ?? null
+    // Hosted mode has no wallets to manage — Billing is the funds surface
+    // (V2-1097); this page only lingers as a redirect for old links.
+    if (paymentMode.value === 'hosted') {
+      router.replace('/admin/billing')
+      return
+    }
   } catch {
     // ignore
   } finally {

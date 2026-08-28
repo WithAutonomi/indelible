@@ -227,6 +227,62 @@ func (h *HostedPayer) AccountBalance(ctx context.Context) (string, error) {
 	return out.Balance, nil
 }
 
+// relay performs one authenticated gateway call for the in-app billing
+// surface (V2-1097) and hands back the gateway's status code + raw JSON so
+// the caller can pass both through unmodified. Only transport-level failure
+// is an error.
+func (h *HostedPayer) relay(ctx context.Context, method, path string, body any) (int, []byte, error) {
+	var rd io.Reader
+	if body != nil {
+		enc, err := json.Marshal(body)
+		if err != nil {
+			return 0, nil, err
+		}
+		rd = bytes.NewReader(enc)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, h.gatewayURL+path, rd)
+	if err != nil {
+		return 0, nil, err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	req.Header.Set("Authorization", "Bearer "+h.apiKey)
+	resp, err := h.client.Do(req)
+	if err != nil {
+		return 0, nil, fmt.Errorf("payment gateway unreachable: %w", err)
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return 0, nil, err
+	}
+	return resp.StatusCode, raw, nil
+}
+
+// TopupCheckout relays a Stripe Checkout creation to the gateway
+// (POST /topup/checkout): the gateway enforces bounds and validates the
+// return URLs; the tenant API key never leaves the server.
+func (h *HostedPayer) TopupCheckout(ctx context.Context, amountUSDCents int64, successURL, cancelURL string) (int, []byte, error) {
+	return h.relay(ctx, http.MethodPost, "/topup/checkout", map[string]any{
+		"amount_usd_cents": amountUSDCents,
+		"success_url":      successURL,
+		"cancel_url":       cancelURL,
+	})
+}
+
+// TopupSync relays the deterministic credit fallback (POST /topup/sync) —
+// used on return from Checkout so credits show without waiting on webhook
+// delivery. Idempotent gateway-side.
+func (h *HostedPayer) TopupSync(ctx context.Context, sessionID string) (int, []byte, error) {
+	return h.relay(ctx, http.MethodPost, "/topup/sync", map[string]any{"session_id": sessionID})
+}
+
+// Topups relays the tenant's credited top-up history (GET /topups).
+func (h *HostedPayer) Topups(ctx context.Context) (int, []byte, error) {
+	return h.relay(ctx, http.MethodGet, "/topups", nil)
+}
+
 // PayForMerkleTree is not supported by the gateway PoC (merkle hosted support
 // is V2-934).
 func (h *HostedPayer) PayForMerkleTree(

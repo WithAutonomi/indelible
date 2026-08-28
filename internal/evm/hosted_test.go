@@ -147,3 +147,64 @@ func TestHostedAsyncPollToFailed(t *testing.T) {
 		t.Fatal("a definitive failure must not map to the preserve path")
 	}
 }
+
+// TestHostedBillingRelays proves the V2-1097 relay methods pass the
+// gateway's status and body through unmodified — success and refusal alike
+// — with the tenant key attached server-side.
+func TestHostedBillingRelays(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer pgk_test" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		switch r.URL.Path {
+		case "/topup/checkout":
+			var req map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			if req["amount_usd_cents"].(float64) == 2500 &&
+				req["success_url"] != "http://app.local/admin/billing?topup={CHECKOUT_SESSION_ID}" {
+				t.Errorf("success_url not relayed: %v", req["success_url"])
+			}
+			if req["amount_usd_cents"].(float64) == 100 { // below gateway bounds
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]any{"error": "amount_usd_cents 100 outside bounds 500–1000000"})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"session_id": "cs_test_1", "url": "https://checkout.stripe.com/pay/cs_test_1", "credit_atto": "71428571428571428571"})
+		case "/topup/sync":
+			_ = json.NewEncoder(w).Encode(map[string]any{"credited": false, "payment_status": "unpaid"})
+		case "/topups":
+			_ = json.NewEncoder(w).Encode(map[string]any{"topups": []map[string]any{{"id": 1, "session_id": "cs_test_1"}}})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	h := NewHostedPayer(srv.URL, "pgk_test")
+
+	status, raw, err := h.TopupCheckout(context.Background(), 2500,
+		"http://app.local/admin/billing?topup={CHECKOUT_SESSION_ID}", "http://app.local/admin/billing?cancelled=1")
+	if err != nil || status != http.StatusOK || !strings.Contains(string(raw), "cs_test_1") {
+		t.Fatalf("checkout relay: status=%d err=%v body=%s", status, err, raw)
+	}
+
+	status, raw, err = h.TopupCheckout(context.Background(), 100, "http://app.local/x", "http://app.local/y")
+	if err != nil || status != http.StatusBadRequest || !strings.Contains(string(raw), "outside bounds") {
+		t.Fatalf("bounds refusal must pass through: status=%d err=%v body=%s", status, err, raw)
+	}
+
+	status, raw, err = h.TopupSync(context.Background(), "cs_test_1")
+	if err != nil || status != http.StatusOK || !strings.Contains(string(raw), `"credited":false`) {
+		t.Fatalf("sync relay: status=%d err=%v body=%s", status, err, raw)
+	}
+
+	status, raw, err = h.Topups(context.Background())
+	if err != nil || status != http.StatusOK || !strings.Contains(string(raw), `"topups"`) {
+		t.Fatalf("topups relay: status=%d err=%v body=%s", status, err, raw)
+	}
+
+	if _, _, err := NewHostedPayer("http://127.0.0.1:1", "pgk_test").Topups(context.Background()); err == nil {
+		t.Fatal("transport failure must surface as an error")
+	}
+}

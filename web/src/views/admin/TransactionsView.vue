@@ -167,6 +167,11 @@ onMounted(async () => {
     const id = Number(w)
     if (!Number.isNaN(id)) walletFilter.value = id
   }
+  // Deep-link from Billing (V2-1097): /admin/transactions?type=hosted_payment
+  const t = route.query.type
+  if (typeof t === 'string' && typeOptions.some((o) => o.value === t)) {
+    typeFilter.value = t
+  }
   fetchTransactions()
 })
 </script>

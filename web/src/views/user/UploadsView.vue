@@ -944,6 +944,13 @@ watch(() => route.query.focus, (f, old) => {
           </dl>
           <div v-if="detail.error_message" class="mt-2 p-2 rounded bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 text-xs break-words">
             {{ detail.error_message }}
+            <!-- Insufficient gateway credits is the one failure the reader can
+                 fix (V2-1097): admins get the door, users get the messenger. -->
+            <template v-if="detail.error_message.includes('insufficient gateway credits')">
+              <router-link v-if="auth.isAdmin" to="/admin/billing"
+                class="block mt-1 font-medium underline">Top up credits →</router-link>
+              <p v-else class="mt-1 font-medium">Ask your administrator to top up the instance's credits, then retry.</p>
+            </template>
           </div>
         </section>
 
