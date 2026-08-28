@@ -11,9 +11,29 @@ import Tag from 'primevue/tag'
 import DatePicker from 'primevue/datepicker'
 import Card from 'primevue/card'
 import { presetRange, PRESET_OPTIONS, type DatePreset } from '../../composables/useDateRangePresets'
+import { approxUSD } from '../../utils/money'
 
 const route = useRoute()
 const toast = useToast()
+
+// Crypto-free display (V2-1100): hosted-gateway rows render in fiat at the
+// gateway's rate (exact ANT in the tooltip); wallet rows stay in ANT.
+const gatewayRate = ref('')
+async function fetchRate() {
+  try {
+    const res = await api.get('/api/v2/system/wallet-status')
+    gatewayRate.value = res.data.gateway_rate_usd_per_ant || ''
+  } catch {
+    // fiat display is best-effort
+  }
+}
+function fmtAmount(data: any, field: 'amount' | 'balance_after'): string {
+  if (data.tx_type === 'hosted_payment') {
+    const usd = approxUSD(data[field], gatewayRate.value)
+    if (usd) return usd
+  }
+  return `${formatBalance(data[field])} ANT`
+}
 
 type Tx = {
   id: number
@@ -160,6 +180,7 @@ async function copyHash(h: string) {
 }
 
 onMounted(async () => {
+  fetchRate()
   await fetchWallets()
   // Deep-link from the wallet drawer: /admin/transactions?wallet=<id>
   const w = route.query.wallet
@@ -244,14 +265,14 @@ onMounted(async () => {
                 :severity="data.tx_type === 'refund' ? 'success' : data.tx_type === 'hosted_payment' ? 'warn' : 'info'" />
             </template>
           </Column>
-          <Column field="amount" header="Amount (ANT)">
+          <Column field="amount" header="Amount">
             <template #body="{ data }">
-              <span class="font-mono text-sm">{{ formatBalance(data.amount) }}</span>
+              <span class="font-mono text-sm" :title="`${formatBalance(data.amount)} ANT`">{{ fmtAmount(data, 'amount') }}</span>
             </template>
           </Column>
-          <Column field="balance_after" header="Balance After (ANT)">
+          <Column field="balance_after" header="Balance After">
             <template #body="{ data }">
-              <span class="font-mono text-sm text-surface-500">{{ formatBalance(data.balance_after) }}</span>
+              <span class="font-mono text-sm text-surface-500" :title="`${formatBalance(data.balance_after)} ANT`">{{ fmtAmount(data, 'balance_after') }}</span>
             </template>
           </Column>
           <Column field="upload_id" header="Upload">

@@ -208,3 +208,43 @@ func TestHostedBillingRelays(t *testing.T) {
 		t.Fatal("transport failure must surface as an error")
 	}
 }
+
+// TestHostedFiatSurface proves the V2-1100 crypto-free plumbing: the 402
+// message speaks fiat when the gateway supplies cents (ANT only as the
+// fallback), and AccountInfo carries the rate.
+func TestHostedFiatSurface(t *testing.T) {
+	cents := int64(0)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/pay":
+			w.WriteHeader(http.StatusPaymentRequired)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"status": "insufficient_credits", "total_amount": "35156250000000000",
+				"total_usd_cents": cents, "tx_hashes": map[string]string{}})
+		case "/account":
+			_ = json.NewEncoder(w).Encode(map[string]any{"account": "acme", "balance": "5", "rate_usd_per_ant": "0.35"})
+		}
+	}))
+	defer srv.Close()
+	h := NewHostedPayer(srv.URL, "pgk_test")
+
+	cents = 2
+	_, _, err := h.PayForQuotes(context.Background(), "", nil, nil, "0xt", "0xv")
+	if err == nil || !strings.Contains(err.Error(), "about $0.02 of storage credit") {
+		t.Fatalf("fiat 402 message wrong: %v", err)
+	}
+	if strings.Contains(err.Error(), "ANT") {
+		t.Fatalf("fiat message must not mention ANT: %v", err)
+	}
+
+	cents = 0 // no rate configured gateway-side → ANT fallback
+	_, _, err = h.PayForQuotes(context.Background(), "", nil, nil, "0xt", "0xv")
+	if err == nil || !strings.Contains(err.Error(), "0.03515625 ANT") {
+		t.Fatalf("ANT fallback message wrong: %v", err)
+	}
+
+	bal, rate, err := h.AccountInfo(context.Background())
+	if err != nil || bal != "5" || rate != "0.35" {
+		t.Fatalf("AccountInfo: %q %q %v", bal, rate, err)
+	}
+}

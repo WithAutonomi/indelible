@@ -5,6 +5,7 @@ import { useConfirm } from 'primevue/useconfirm'
 import { useToast } from 'primevue/usetoast'
 import { api } from '../../api/client'
 import { useAuthStore } from '../../stores/auth'
+import { approxUSD } from '../../utils/money'
 import type { Upload, Collection } from '../../types/api'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
@@ -27,14 +28,30 @@ const router = useRouter()
 const confirm = useConfirm()
 const toast = useToast()
 const noWallet = ref(false)
+// Crypto-free display (V2-1100): in hosted mode, costs render in fiat at
+// the gateway's rate; ANT only when no rate is available.
+const paymentMode = ref('local')
+const gatewayRate = ref('')
 
 async function checkWalletStatus() {
   try {
     const res = await api.get('/api/v2/system/wallet-status')
     noWallet.value = !res.data.has_default_wallet
+    paymentMode.value = res.data.payment_mode || 'local'
+    gatewayRate.value = res.data.gateway_rate_usd_per_ant || ''
   } catch {
     // ignore
   }
+}
+
+// Hosted → "≈ $0.02" (raw value in the tooltip); local → unchanged.
+function fmtCost(atto: string | null | undefined): string {
+  if (!atto) return '—'
+  if (paymentMode.value === 'hosted') {
+    const usd = approxUSD(atto, gatewayRate.value)
+    if (usd) return usd
+  }
+  return atto
 }
 
 const uploads = ref<Upload[]>([])
@@ -958,9 +975,9 @@ watch(() => route.query.focus, (f, old) => {
         <section>
           <h3 class="text-xs font-semibold uppercase text-surface-400 mb-2">Cost</h3>
           <dl class="flex flex-col gap-2">
-            <div class="flex justify-between gap-3"><dt class="text-surface-500">Estimated</dt><dd>{{ detail.estimated_cost || '—' }}</dd></div>
-            <div class="flex justify-between gap-3"><dt class="text-surface-500">Actual</dt><dd>{{ detail.actual_cost || '—' }}</dd></div>
-            <div v-if="detail.last_quoted_cost" class="flex justify-between gap-3"><dt class="text-surface-500">Last quoted</dt><dd>{{ detail.last_quoted_cost }}</dd></div>
+            <div class="flex justify-between gap-3"><dt class="text-surface-500">Estimated</dt><dd :title="detail.estimated_cost || ''">{{ fmtCost(detail.estimated_cost) }}</dd></div>
+            <div class="flex justify-between gap-3"><dt class="text-surface-500">Actual</dt><dd :title="detail.actual_cost || ''">{{ fmtCost(detail.actual_cost) }}</dd></div>
+            <div v-if="detail.last_quoted_cost" class="flex justify-between gap-3"><dt class="text-surface-500">Last quoted</dt><dd :title="detail.last_quoted_cost">{{ fmtCost(detail.last_quoted_cost) }}</dd></div>
             <div v-if="detail.payment_mode" class="flex justify-between gap-3">
               <dt class="text-surface-500">Paid via</dt>
               <dd><Tag :value="detail.payment_mode === 'hosted' ? 'Hosted gateway credits' : 'Wallet (local)'"

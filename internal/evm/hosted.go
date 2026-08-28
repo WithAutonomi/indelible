@@ -58,7 +58,11 @@ type hostedPayResponse struct {
 	PayTxHash   string            `json:"pay_tx_hash"`
 	TxHashes    map[string]string `json:"tx_hashes"`
 	TotalAmount string            `json:"total_amount"`
-	Error       string            `json:"error"`
+	// TotalUSDCents is the batch total in fiat at the gateway's rate
+	// (rounded up), when the gateway has a rate configured — the
+	// crypto-free number user-facing messages prefer (V2-1100).
+	TotalUSDCents int64  `json:"total_usd_cents"`
+	Error         string `json:"error"`
 	// PaymentKey is the gateway's batch idempotency key — persisted on the
 	// upload as its provenance join to the gateway ledger (V2-1086).
 	PaymentKey string `json:"payment_key"`
@@ -125,7 +129,13 @@ func (h *HostedPayer) PayForQuotes(
 		return nil, "", fmt.Errorf("%w (gateway tx %s)", ErrConfirmationTimeout, payResp.PayTxHash)
 	case payResp.Status == "insufficient_credits":
 		// The one refusal an operator fixes themselves: say what it costs
-		// and what to do, in ANT, not a wrapped error chain (V2-930).
+		// and what to do (V2-930) — in fiat when the gateway has a rate
+		// (crypto-free counter, V2-1100), ANT only as the fallback.
+		if payResp.TotalUSDCents > 0 {
+			return nil, "", fmt.Errorf(
+				"insufficient gateway credits: this upload needs about $%d.%02d of storage credit — top up and retry (retrying is safe, nothing was paid)",
+				payResp.TotalUSDCents/100, payResp.TotalUSDCents%100)
+		}
 		return nil, "", fmt.Errorf(
 			"insufficient gateway credits: this upload needs %s ANT — top up the account's credits and retry (retrying is safe, nothing was paid)",
 			attoToANT(payResp.TotalAmount))
@@ -200,31 +210,40 @@ func (h *HostedPayer) pollPayment(ctx context.Context, paymentKey, lastTx string
 	}
 }
 
-// AccountBalance returns the tenant's remaining gateway credit balance in
-// atto (GET /account) — the meaningful "balance after" for hosted payments,
-// where neither the wallet record nor the treasury is the payer's account.
-func (h *HostedPayer) AccountBalance(ctx context.Context) (string, error) {
+// AccountInfo returns the tenant's remaining gateway credit balance in atto
+// plus the gateway's exact USD-per-ANT rate (empty when none configured) —
+// the pair the crypto-free display converts with (V2-1100).
+func (h *HostedPayer) AccountInfo(ctx context.Context) (balance, rateUSDPerANT string, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, h.gatewayURL+"/account", nil)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	req.Header.Set("Authorization", "Bearer "+h.apiKey)
 	resp, err := h.client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("payment gateway unreachable: %w", err)
+		return "", "", fmt.Errorf("payment gateway unreachable: %w", err)
 	}
 	defer resp.Body.Close()
 	var out struct {
 		Balance string `json:"balance"`
+		Rate    string `json:"rate_usd_per_ant"`
 		Error   string `json:"error"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out); err != nil {
-		return "", fmt.Errorf("decoding /account response: %w", err)
+		return "", "", fmt.Errorf("decoding /account response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("payment gateway /account failed (%d): %s", resp.StatusCode, out.Error)
+		return "", "", fmt.Errorf("payment gateway /account failed (%d): %s", resp.StatusCode, out.Error)
 	}
-	return out.Balance, nil
+	return out.Balance, out.Rate, nil
+}
+
+// AccountBalance returns the tenant's remaining gateway credit balance in
+// atto (GET /account) — the meaningful "balance after" for hosted payments,
+// where neither the wallet record nor the treasury is the payer's account.
+func (h *HostedPayer) AccountBalance(ctx context.Context) (string, error) {
+	bal, _, err := h.AccountInfo(ctx)
+	return bal, err
 }
 
 // relay performs one authenticated gateway call for the in-app billing

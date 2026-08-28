@@ -7,6 +7,7 @@ import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useToast } from 'primevue/usetoast'
 import { api } from '../../api/client'
+import { attoToANT, approxUSD, fmtUSD } from '../../utils/money'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import Button from 'primevue/button'
@@ -21,16 +22,11 @@ const toast = useToast()
 const loading = ref(true)
 const gatewayUrl = ref('')
 const creditAtto = ref<string | null>(null)
+// Crypto-free counter (V2-1100): with a gateway rate, everything renders in
+// fiat; the ANT figures live in tooltips (crypto-lite underneath).
+const rate = ref('')
 type Topup = { id: number; session_id: string; amount_usd_cents: number; credit_atto: string; created_at: string }
 const topups = ref<Topup[]>([])
-
-// Atto → ANT for display: BigInt string math, no floats.
-function attoToANT(atto: string): string {
-  const s = atto.padStart(19, '0')
-  const whole = s.slice(0, -18)
-  const frac = s.slice(-18).replace(/0+$/, '')
-  return frac ? `${whole}.${frac}` : whole
-}
 
 const LOW_CREDIT_ATTO = 10n ** 18n // 1 ANT — a handful of uploads' headroom
 const creditsLow = () => {
@@ -38,9 +34,7 @@ const creditsLow = () => {
   try { return BigInt(creditAtto.value) < LOW_CREDIT_ATTO } catch { return false }
 }
 
-function fmtUSD(cents: number): string {
-  return `$${(cents / 100).toFixed(2)}`
-}
+const creditUSD = () => approxUSD(creditAtto.value, rate.value)
 
 async function fetchBilling() {
   loading.value = true
@@ -48,6 +42,7 @@ async function fetchBilling() {
     const res = await api.get('/api/v2/admin/billing')
     gatewayUrl.value = res.data.payment_gateway_url || ''
     creditAtto.value = res.data.gateway_credit_atto ?? null
+    rate.value = res.data.rate_usd_per_ant || ''
     topups.value = res.data.topups || []
   } catch (e: any) {
     if (e.response?.status === 400) {
@@ -98,7 +93,8 @@ async function syncReturn(sessionID: string) {
   try {
     const res = await api.post('/api/v2/admin/billing/topup-sync', { session_id: sessionID })
     if (res.data.credited) {
-      toast.add({ severity: 'success', summary: 'Top-up received', detail: `Credited ${attoToANT(res.data.credit_atto)} ANT`, life: 6000 })
+      const usd = approxUSD(res.data.credit_atto, rate.value)
+      toast.add({ severity: 'success', summary: 'Top-up received', detail: usd ? `${usd.replace('≈ ', '')} of storage credit added` : `Credited ${attoToANT(res.data.credit_atto)} ANT`, life: 6000 })
     } else {
       toast.add({ severity: 'info', summary: 'Payment pending', detail: `Stripe reports ${res.data.payment_status}; credits land when the payment completes.`, life: 6000 })
     }
@@ -114,12 +110,15 @@ onMounted(async () => {
     // Strip the params so refresh doesn't replay the toast.
     router.replace({ path: '/admin/billing' })
   }
+  // First fetch loads the rate so the sync toast can speak fiat; the second
+  // picks up the freshly-credited balance.
+  await fetchBilling()
   if (typeof sessionID === 'string' && sessionID !== '') {
     await syncReturn(sessionID)
+    await fetchBilling()
   } else if (cancelled) {
     toast.add({ severity: 'info', summary: 'Top-up cancelled', detail: 'No payment was taken.', life: 4000 })
   }
-  await fetchBilling()
 })
 </script>
 
@@ -139,11 +138,12 @@ onMounted(async () => {
     </Message>
 
     <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-      <!-- Credits -->
+      <!-- Credits: fiat at the counter, exact ANT in the tooltip -->
       <div class="rounded-lg border border-surface-200 bg-surface-0 p-5">
-        <p class="text-sm text-surface-500 mb-1">Remaining credits</p>
+        <p class="text-sm text-surface-500 mb-1">Remaining storage credit</p>
         <p class="text-3xl font-bold" :class="creditsLow() ? 'text-red-600' : ''">
-          <span v-if="creditAtto !== null">{{ attoToANT(creditAtto) }} <span class="text-base font-medium text-surface-400">ANT</span></span>
+          <span v-if="creditAtto !== null && creditUSD()" :title="`${attoToANT(creditAtto)} ANT`">{{ creditUSD() }}</span>
+          <span v-else-if="creditAtto !== null">{{ attoToANT(creditAtto) }} <span class="text-base font-medium text-surface-400">ANT</span></span>
           <span v-else class="text-surface-400 text-xl">unavailable</span>
         </p>
         <p v-if="creditAtto === null && !loading" class="text-xs text-surface-400 mt-1">The gateway could not be reached; credits are unaffected.</p>
@@ -169,8 +169,8 @@ onMounted(async () => {
     <Dialog v-model:visible="confirmVisible" header="Confirm top-up" modal :style="{ width: '26rem' }">
       <div v-if="pendingSession" class="space-y-2">
         <p>You will be charged <span class="font-semibold">{{ fmtUSD(pendingSession.amount_usd_cents) }}</span>
-          and credited exactly <span class="font-semibold">{{ attoToANT(pendingSession.credit_atto) }} ANT</span>.</p>
-        <p class="text-sm text-surface-500">Payment is handled by Stripe. Credits land automatically once the payment completes.</p>
+          and receive <span class="font-semibold" :title="`exactly ${attoToANT(pendingSession.credit_atto)} ANT`">{{ fmtUSD(pendingSession.amount_usd_cents) }} of storage credit</span>.</p>
+        <p class="text-sm text-surface-500">Payment is handled by Stripe. Credit lands automatically once the payment completes.</p>
       </div>
       <template #footer>
         <Button label="Cancel" severity="secondary" text @click="confirmVisible = false" />
@@ -188,14 +188,9 @@ onMounted(async () => {
           <span class="text-surface-500 whitespace-nowrap">{{ new Date(data.created_at).toLocaleString() }}</span>
         </template>
       </Column>
-      <Column field="amount_usd_cents" header="Paid" sortable>
+      <Column field="amount_usd_cents" header="Credited" sortable>
         <template #body="{ data }">
-          <span class="font-medium">{{ fmtUSD(data.amount_usd_cents) }}</span>
-        </template>
-      </Column>
-      <Column field="credit_atto" header="Credited (ANT)" sortable>
-        <template #body="{ data }">
-          <span class="font-mono">{{ attoToANT(data.credit_atto) }}</span>
+          <span class="font-medium" :title="`${attoToANT(data.credit_atto)} ANT`">{{ fmtUSD(data.amount_usd_cents) }}</span>
         </template>
       </Column>
       <Column field="session_id" header="Reference">
