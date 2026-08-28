@@ -25,6 +25,11 @@ type HostedPayer struct {
 	// pollWait bounds how long a 202-with-payment_key answer is polled via
 	// GET /payments/{key} before falling back to the preserve path.
 	pollWait time.Duration
+	// payAttempts/payRetryWait bound the transport-level resend of POST
+	// /pay (safe: the batch is idempotent gateway-side). Sized to outlast
+	// a gateway restart.
+	payAttempts  int
+	payRetryWait time.Duration
 }
 
 // NewHostedPayer builds a payer that delegates to the gateway at gatewayURL,
@@ -35,8 +40,10 @@ func NewHostedPayer(gatewayURL, apiKey string) *HostedPayer {
 		apiKey:     apiKey,
 		// No overall timeout: /pay legitimately blocks for the gateway's
 		// sync wait, mirroring the local signer's bound.
-		client:   &http.Client{},
-		pollWait: 5 * time.Minute,
+		client:       &http.Client{},
+		pollWait:     5 * time.Minute,
+		payAttempts:  6,
+		payRetryWait: 5 * time.Second,
 	}
 }
 
@@ -95,16 +102,33 @@ func (h *HostedPayer) PayForQuotes(
 		return nil, "", fmt.Errorf("encoding /pay request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.gatewayURL+"/pay", bytes.NewReader(body))
-	if err != nil {
-		return nil, "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+h.apiKey)
-
-	resp, err := h.client.Do(req)
-	if err != nil {
-		return nil, "", fmt.Errorf("payment gateway unreachable: %w", err)
+	// Transport failures are retried: the batch is content-addressed
+	// idempotent gateway-side (one payments record per idempotency key,
+	// ever — V2-924), so resending can never double-pay. This covers the
+	// gateway dying with our request in flight — the killed connection
+	// EOFs, the gateway restarts, and the resend lands on the idempotent
+	// replay path. Without it a crash in the narrow pre-202 window fails
+	// the upload even though the payment itself survives (V2-931 case I).
+	var resp *http.Response
+	for attempt := 1; ; attempt++ {
+		req, rerr := http.NewRequestWithContext(ctx, http.MethodPost, h.gatewayURL+"/pay", bytes.NewReader(body))
+		if rerr != nil {
+			return nil, "", rerr
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+h.apiKey)
+		resp, err = h.client.Do(req)
+		if err == nil {
+			break
+		}
+		if attempt >= h.payAttempts {
+			return nil, "", fmt.Errorf("payment gateway unreachable: %w", err)
+		}
+		select {
+		case <-ctx.Done():
+			return nil, "", ctx.Err()
+		case <-time.After(h.payRetryWait):
+		}
 	}
 	defer resp.Body.Close()
 

@@ -248,3 +248,41 @@ func TestHostedFiatSurface(t *testing.T) {
 		t.Fatalf("AccountInfo: %q %q %v", bal, rate, err)
 	}
 }
+
+// TestHostedPayTransportRetry proves the /pay resend (V2-931 case I root
+// cause): the gateway dying mid-request EOFs the connection; the batch is
+// idempotent gateway-side, so the payer resends and the upload survives the
+// crash window instead of failing on a payment that actually went through.
+func TestHostedPayTransportRetry(t *testing.T) {
+	drops := 2
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if drops > 0 {
+			drops--
+			hj, ok := w.(http.Hijacker)
+			if !ok {
+				t.Fatal("no hijacker")
+			}
+			conn, _, _ := hj.Hijack()
+			_ = conn.Close() // client sees EOF — a killed gateway
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "paid", "pay_tx_hash": "0xabc",
+			"tx_hashes": map[string]string{"0xq1": "0xabc"}, "payment_key": "k9"})
+	}))
+	defer srv.Close()
+	h := NewHostedPayer(srv.URL, "pgk_test")
+	h.payRetryWait = 10 * time.Millisecond
+	hashes, key, err := h.PayForQuotes(context.Background(), "", []antd.PaymentInfo{{QuoteHash: "0xq1"}}, nil, "0xt", "0xv")
+	if err != nil || hashes["0xq1"] != "0xabc" || key != "k9" {
+		t.Fatalf("retry path: %v %v %q", hashes, err, key)
+	}
+
+	// Exhaustion still surfaces as unreachable.
+	dead := NewHostedPayer("http://127.0.0.1:1", "pgk_test")
+	dead.payAttempts, dead.payRetryWait = 2, time.Millisecond
+	_, _, err = dead.PayForQuotes(context.Background(), "", []antd.PaymentInfo{{QuoteHash: "0xq1"}}, nil, "0xt", "0xv")
+	if err == nil || !strings.Contains(err.Error(), "unreachable") {
+		t.Fatalf("exhaustion must report unreachable: %v", err)
+	}
+}
