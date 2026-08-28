@@ -326,6 +326,13 @@ func (h *HostedPayer) Topups(ctx context.Context) (int, []byte, error) {
 	return h.relay(ctx, http.MethodGet, "/topups", nil)
 }
 
+// Credits relays the tenant's full credit history (GET /credits) — card
+// top-ups and invoice-path grants alike, so the Billing screen answers
+// "where did this credit come from" for every funding path.
+func (h *HostedPayer) Credits(ctx context.Context) (int, []byte, error) {
+	return h.relay(ctx, http.MethodGet, "/credits", nil)
+}
+
 // PayForMerkleTree is not supported by the gateway PoC (merkle hosted support
 // is V2-934).
 func (h *HostedPayer) PayForMerkleTree(

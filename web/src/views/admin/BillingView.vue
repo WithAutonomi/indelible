@@ -25,8 +25,15 @@ const creditAtto = ref<string | null>(null)
 // Crypto-free counter (V2-1100): with a gateway rate, everything renders in
 // fiat; the ANT figures live in tooltips (crypto-lite underneath).
 const rate = ref('')
-type Topup = { id: number; session_id: string; amount_usd_cents: number; credit_atto: string; created_at: string }
-const topups = ref<Topup[]>([])
+type Credit = { id: number; source: 'card' | 'grant'; amount_atto: string; amount_usd_cents: number; note: string; session_id: string; created_at: string }
+const credits = ref<Credit[]>([])
+
+// Card rows carry their exact locked USD; grants convert at the current
+// rate (≈) with the ANT fallback when no rate is available.
+function creditAmount(c: Credit): string {
+  if (c.source === 'card' && c.amount_usd_cents > 0) return fmtUSD(c.amount_usd_cents)
+  return approxUSD(c.amount_atto, rate.value) ?? `${attoToANT(c.amount_atto)} ANT`
+}
 
 const LOW_CREDIT_ATTO = 10n ** 18n // 1 ANT — a handful of uploads' headroom
 const creditsLow = () => {
@@ -43,7 +50,7 @@ async function fetchBilling() {
     gatewayUrl.value = res.data.payment_gateway_url || ''
     creditAtto.value = res.data.gateway_credit_atto ?? null
     rate.value = res.data.rate_usd_per_ant || ''
-    topups.value = res.data.topups || []
+    credits.value = res.data.credits || []
   } catch (e: any) {
     if (e.response?.status === 400) {
       // Not in hosted mode — billing has no meaning; Wallets is the home.
@@ -178,11 +185,11 @@ onMounted(async () => {
       </template>
     </Dialog>
 
-    <!-- Top-up history -->
-    <h2 class="text-lg font-semibold mb-3">Top-up history</h2>
-    <DataTable :value="topups" :loading="loading" stripedRows class="rounded-lg border border-surface-200 mb-4"
+    <!-- Credit history: every funding path — card top-ups and invoice grants -->
+    <h2 class="text-lg font-semibold mb-3">Credit history</h2>
+    <DataTable :value="credits" :loading="loading" stripedRows class="rounded-lg border border-surface-200 mb-4"
       :pt="{ root: { class: 'bg-surface-0' } }">
-      <template #empty>No card top-ups yet.</template>
+      <template #empty>No credit has been added yet.</template>
       <Column field="created_at" header="Time" sortable>
         <template #body="{ data }">
           <span class="text-surface-500 whitespace-nowrap">{{ new Date(data.created_at).toLocaleString() }}</span>
@@ -190,12 +197,25 @@ onMounted(async () => {
       </Column>
       <Column field="amount_usd_cents" header="Credited" sortable>
         <template #body="{ data }">
-          <span class="font-medium" :title="`${attoToANT(data.credit_atto)} ANT`">{{ fmtUSD(data.amount_usd_cents) }}</span>
+          <span class="font-medium" :title="`${attoToANT(data.amount_atto)} ANT`">{{ creditAmount(data) }}</span>
+        </template>
+      </Column>
+      <Column field="source" header="Source">
+        <template #body="{ data }">
+          <span class="inline-flex items-center gap-2">
+            <span class="text-xs font-medium px-2 py-0.5 rounded"
+              :class="data.source === 'card' ? 'bg-primary-100 text-primary-700' : 'bg-surface-100 text-surface-600'">
+              {{ data.source === 'card' ? 'Card' : 'Invoice / grant' }}
+            </span>
+            <!-- card rows' notes just repeat the session reference -->
+            <span v-if="data.note && data.source !== 'card'" class="text-xs text-surface-400">{{ data.note }}</span>
+          </span>
         </template>
       </Column>
       <Column field="session_id" header="Reference">
         <template #body="{ data }">
-          <code class="text-xs text-surface-400" :title="data.session_id">{{ data.session_id.slice(0, 18) }}…</code>
+          <code v-if="data.session_id" class="text-xs text-surface-400" :title="data.session_id">{{ data.session_id.slice(0, 18) }}…</code>
+          <span v-else class="text-xs text-surface-300">—</span>
         </template>
       </Column>
     </DataTable>

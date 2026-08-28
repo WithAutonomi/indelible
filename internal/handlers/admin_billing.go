@@ -66,12 +66,12 @@ func AdminBillingSummary(db *database.DB, cfg *config.Config) http.HandlerFunc {
 				out["rate_usd_per_ant"] = rate
 			}
 		}
-		if status, raw, err := payer.Topups(ctx); err == nil && status == http.StatusOK {
-			var t struct {
-				Topups json.RawMessage `json:"topups"`
+		if status, raw, err := payer.Credits(ctx); err == nil && status == http.StatusOK {
+			var c struct {
+				Credits json.RawMessage `json:"credits"`
 			}
-			if json.Unmarshal(raw, &t) == nil && t.Topups != nil {
-				out["topups"] = t.Topups
+			if json.Unmarshal(raw, &c) == nil && c.Credits != nil {
+				out["credits"] = c.Credits
 			}
 		}
 		jsonResponse(w, http.StatusOK, out)

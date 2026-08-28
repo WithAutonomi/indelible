@@ -176,6 +176,10 @@ func TestHostedBillingRelays(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"credited": false, "payment_status": "unpaid"})
 		case "/topups":
 			_ = json.NewEncoder(w).Encode(map[string]any{"topups": []map[string]any{{"id": 1, "session_id": "cs_test_1"}}})
+		case "/credits":
+			_ = json.NewEncoder(w).Encode(map[string]any{"credits": []map[string]any{
+				{"id": 2, "source": "card", "amount_usd_cents": 2500},
+				{"id": 1, "source": "grant", "note": "invoice #77"}}})
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -202,6 +206,11 @@ func TestHostedBillingRelays(t *testing.T) {
 	status, raw, err = h.Topups(context.Background())
 	if err != nil || status != http.StatusOK || !strings.Contains(string(raw), `"topups"`) {
 		t.Fatalf("topups relay: status=%d err=%v body=%s", status, err, raw)
+	}
+
+	status, raw, err = h.Credits(context.Background())
+	if err != nil || status != http.StatusOK || !strings.Contains(string(raw), `"source":"grant"`) {
+		t.Fatalf("credits relay: status=%d err=%v body=%s", status, err, raw)
 	}
 
 	if _, _, err := NewHostedPayer("http://127.0.0.1:1", "pgk_test").Topups(context.Background()); err == nil {
