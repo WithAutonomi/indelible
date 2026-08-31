@@ -42,6 +42,9 @@ type uploadResponse struct {
 	// (gateway credits) + the gateway's batch key; absent when nothing was paid.
 	PaymentMode       *string `json:"payment_mode,omitempty"`
 	GatewayPaymentKey *string `json:"gateway_payment_key,omitempty"`
+	// GatewayFeeAtto itemizes the gateway's per-batch network fee out of the
+	// gross actual_cost (V2-1098); absent when no fee was charged.
+	GatewayFeeAtto *string `json:"gateway_fee_atto,omitempty"`
 	ErrorMessage     *string `json:"error_message"`
 	BackoffUntil     *string `json:"backoff_until,omitempty"`
 	BackoffAttempt   int     `json:"backoff_attempt,omitempty"`
@@ -79,6 +82,9 @@ func toUploadResponse(u *services.Upload) uploadResponse {
 	}
 	if u.GatewayPaymentKey.Valid {
 		r.GatewayPaymentKey = &u.GatewayPaymentKey.String
+	}
+	if u.GatewayFeeAtto.Valid {
+		r.GatewayFeeAtto = &u.GatewayFeeAtto.String
 	}
 	if u.ErrorMessage.Valid {
 		r.ErrorMessage = &u.ErrorMessage.String

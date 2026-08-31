@@ -49,8 +49,8 @@ func TestHostedPayForQuotesPaid(t *testing.T) {
 
 func TestHostedInsufficientCreditsIsHumanReadable(t *testing.T) {
 	srv := stubGateway(t, http.StatusPaymentRequired, map[string]any{
-		"status": "insufficient_credits",
-		"error":  "insufficient credits: balance 0 < total 35156250000000000",
+		"status":       "insufficient_credits",
+		"error":        "insufficient credits: balance 0 < total 35156250000000000",
 		"total_amount": "35156250000000000",
 	})
 	defer srv.Close()
@@ -68,6 +68,90 @@ func TestHostedInsufficientCreditsIsHumanReadable(t *testing.T) {
 	}
 }
 
+func TestHostedPaymentCostFromPaidResponse(t *testing.T) {
+	srv := stubGateway(t, http.StatusOK, map[string]any{
+		"status": "paid", "pay_tx_hash": "0xabc",
+		"tx_hashes":     map[string]string{"0xq1": "0xabc"},
+		"payment_key":   "deadbeef",
+		"total_amount":  "35156250000000000",
+		"fee_amount":    "5000000000000000",
+		"total_debited": "40156250000000000",
+	})
+	defer srv.Close()
+	h := NewHostedPayer(srv.URL, "pgk_test")
+	if _, _, err := h.PayForQuotes(context.Background(), "", []antd.PaymentInfo{{QuoteHash: "0xq1"}}, nil, "0xt", "0xv"); err != nil {
+		t.Fatal(err)
+	}
+	c, ok := h.PaymentCost("deadbeef")
+	if !ok || c.FeeAtto != "5000000000000000" || c.TotalDebited != "40156250000000000" {
+		t.Fatalf("payment cost: %+v ok=%v", c, ok)
+	}
+	// Pop semantics: collected once, then gone.
+	if _, ok := h.PaymentCost("deadbeef"); ok {
+		t.Fatal("cost must be popped on read")
+	}
+}
+
+func TestHostedAsyncPollCarriesFee(t *testing.T) {
+	srv := asyncGateway(t, "paid", map[string]any{
+		"pay_tx_hash": "0xdef", "tx_hashes": map[string]string{"0xq1": "0xdef"},
+		"total_amount": "35156250000000000", "fee_amount": "5000000000000000",
+		"total_debited": "40156250000000000"})
+	defer srv.Close()
+	h := NewHostedPayer(srv.URL, "pgk_test")
+	h.SetPollWait(30 * time.Second)
+	if _, _, err := h.PayForQuotes(context.Background(), "", []antd.PaymentInfo{{QuoteHash: "0xq1"}}, nil, "0xt", "0xv"); err != nil {
+		t.Fatal(err)
+	}
+	c, ok := h.PaymentCost("k123")
+	if !ok || c.TotalDebited != "40156250000000000" {
+		t.Fatalf("poll path lost the fee itemization: %+v ok=%v", c, ok)
+	}
+}
+
+func TestHostedInsufficientCreditsNamesBothParts(t *testing.T) {
+	// Fiat form: gross + itemized fee, still no atto/ANT leak.
+	srv := stubGateway(t, http.StatusPaymentRequired, map[string]any{
+		"status":          "insufficient_credits",
+		"error":           "insufficient credits: balance 0 < total 35156250000000000 + 5000000000000000 network fee",
+		"total_amount":    "35156250000000000",
+		"fee_amount":      "5000000000000000",
+		"total_debited":   "40156250000000000",
+		"total_usd_cents": 2,
+		"fee_usd_cents":   1,
+	})
+	defer srv.Close()
+	h := NewHostedPayer(srv.URL, "pgk_test")
+	_, _, err := h.PayForQuotes(context.Background(), "", []antd.PaymentInfo{{QuoteHash: "0xq1"}}, nil, "0xt", "0xv")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "$0.02") || !strings.Contains(msg, "$0.01 network fee") {
+		t.Fatalf("fiat message does not name both parts: %q", msg)
+	}
+	if strings.Contains(msg, " ANT") || strings.Contains(msg, "atto") {
+		t.Fatalf("crypto leaked into the fiat message: %q", msg)
+	}
+
+	// ANT fallback (no rate): both parts in ANT.
+	srv2 := stubGateway(t, http.StatusPaymentRequired, map[string]any{
+		"status":        "insufficient_credits",
+		"total_amount":  "35156250000000000",
+		"fee_amount":    "5000000000000000",
+		"total_debited": "40156250000000000",
+	})
+	defer srv2.Close()
+	h2 := NewHostedPayer(srv2.URL, "pgk_test")
+	_, _, err = h2.PayForQuotes(context.Background(), "", []antd.PaymentInfo{{QuoteHash: "0xq1"}}, nil, "0xt", "0xv")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if msg := err.Error(); !strings.Contains(msg, "0.03515625 ANT") || !strings.Contains(msg, "0.005 ANT network fee") {
+		t.Fatalf("ANT fallback does not name both parts: %q", msg)
+	}
+}
+
 func TestHostedAccountBalance(t *testing.T) {
 	srv := stubGateway(t, http.StatusOK, nil)
 	defer srv.Close()
@@ -80,12 +164,12 @@ func TestHostedAccountBalance(t *testing.T) {
 
 func TestAttoToANT(t *testing.T) {
 	for in, want := range map[string]string{
-		"35156250000000000":     "0.03515625",
-		"71358258928571428571":  "71.358258928571428571",
-		"1000000000000000000":   "1",
-		"0":                     "0",
-		"":                      "",
-		"not-a-number":          "not-a-number",
+		"35156250000000000":    "0.03515625",
+		"71358258928571428571": "71.358258928571428571",
+		"1000000000000000000":  "1",
+		"0":                    "0",
+		"":                     "",
+		"not-a-number":         "not-a-number",
 	} {
 		if got := attoToANT(in); got != want {
 			t.Errorf("attoToANT(%q) = %q, want %q", in, got, want)

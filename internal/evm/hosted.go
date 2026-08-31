@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	antd "github.com/WithAutonomi/ant-sdk/antd-go"
@@ -30,6 +31,19 @@ type HostedPayer struct {
 	// a gateway restart.
 	payAttempts  int
 	payRetryWait time.Duration
+	// costs holds each paid batch's fee itemization keyed by payment_key
+	// until the worker collects it via PaymentCost (V2-1098) — the payer
+	// interface returns only the tx map, and one HostedPayer serves
+	// concurrent uploads, so a "last payment" field would race.
+	costsMu sync.Mutex
+	costs   map[string]PaymentCost
+}
+
+// PaymentCost is a paid batch's fee itemization: what the gateway debited
+// beyond the batch total (V2-1098).
+type PaymentCost struct {
+	FeeAtto      string // the network fee, atto
+	TotalDebited string // batch total + fee — the gross debit
 }
 
 // NewHostedPayer builds a payer that delegates to the gateway at gatewayURL,
@@ -50,6 +64,32 @@ func NewHostedPayer(gatewayURL, apiKey string) *HostedPayer {
 // SetPollWait overrides the async-completion polling bound.
 func (h *HostedPayer) SetPollWait(d time.Duration) { h.pollWait = d }
 
+// rememberCost stashes a paid response's fee itemization for the worker.
+func (h *HostedPayer) rememberCost(paymentKey string, resp *hostedPayResponse) {
+	if paymentKey == "" || resp.FeeAmount == "" || resp.TotalDebited == "" {
+		return
+	}
+	h.costsMu.Lock()
+	defer h.costsMu.Unlock()
+	if h.costs == nil {
+		h.costs = map[string]PaymentCost{}
+	}
+	h.costs[paymentKey] = PaymentCost{FeeAtto: resp.FeeAmount, TotalDebited: resp.TotalDebited}
+}
+
+// PaymentCost pops the fee itemization for a payment key, if the gateway
+// reported one — the worker records the GROSS spend on the upload and its
+// transaction so the customer's books match the gateway ledger (V2-1098).
+func (h *HostedPayer) PaymentCost(paymentKey string) (PaymentCost, bool) {
+	h.costsMu.Lock()
+	defer h.costsMu.Unlock()
+	c, ok := h.costs[paymentKey]
+	if ok {
+		delete(h.costs, paymentKey)
+	}
+	return c, ok
+}
+
 type hostedPayRequest struct {
 	AccountID           string                  `json:"account_id"`
 	PaymentType         string                  `json:"payment_type,omitempty"`
@@ -65,11 +105,19 @@ type hostedPayResponse struct {
 	PayTxHash   string            `json:"pay_tx_hash"`
 	TxHashes    map[string]string `json:"tx_hashes"`
 	TotalAmount string            `json:"total_amount"`
-	// TotalUSDCents is the batch total in fiat at the gateway's rate
-	// (rounded up), when the gateway has a rate configured — the
-	// crypto-free number user-facing messages prefer (V2-1100).
-	TotalUSDCents int64  `json:"total_usd_cents"`
-	Error         string `json:"error"`
+	// TotalUSDCents is the GROSS debit (batch total + network fee) in fiat
+	// at the gateway's rate (rounded up), when the gateway has a rate
+	// configured — the crypto-free number user-facing messages prefer
+	// (V2-1100); gross so "top up $X" always suffices (V2-1098).
+	TotalUSDCents int64 `json:"total_usd_cents"`
+	// FeeAmount/TotalDebited itemize the gateway's per-batch network fee
+	// (V2-1098): fee in atto and total_amount + fee — what the account was
+	// actually debited. Empty when the gateway charges no fee.
+	FeeAmount    string `json:"fee_amount"`
+	TotalDebited string `json:"total_debited"`
+	// FeeUSDCents is the fee alone in fiat (rounded up), rate permitting.
+	FeeUSDCents int64  `json:"fee_usd_cents"`
+	Error       string `json:"error"`
 	// PaymentKey is the gateway's batch idempotency key — persisted on the
 	// upload as its provenance join to the gateway ledger (V2-1086).
 	PaymentKey string `json:"payment_key"`
@@ -140,6 +188,7 @@ func (h *HostedPayer) PayForQuotes(
 
 	switch {
 	case resp.StatusCode == http.StatusOK && (payResp.Status == "paid" || payResp.Status == "nothing_to_pay"):
+		h.rememberCost(payResp.PaymentKey, &payResp)
 		return payResp.TxHashes, payResp.PaymentKey, nil
 	case resp.StatusCode == http.StatusAccepted && payResp.Status == "unconfirmed":
 		// Async contract (V-925/929): the gateway queued or broadcast the
@@ -154,11 +203,23 @@ func (h *HostedPayer) PayForQuotes(
 	case payResp.Status == "insufficient_credits":
 		// The one refusal an operator fixes themselves: say what it costs
 		// and what to do (V2-930) — in fiat when the gateway has a rate
-		// (crypto-free counter, V2-1100), ANT only as the fallback.
+		// (crypto-free counter, V2-1100), ANT only as the fallback. Both
+		// parts named when the gateway charges a network fee (V2-1098).
 		if payResp.TotalUSDCents > 0 {
+			if payResp.FeeUSDCents > 0 {
+				return nil, "", fmt.Errorf(
+					"insufficient gateway credits: this upload needs about $%d.%02d of storage credit (including a $%d.%02d network fee) — top up and retry (retrying is safe, nothing was paid)",
+					payResp.TotalUSDCents/100, payResp.TotalUSDCents%100,
+					payResp.FeeUSDCents/100, payResp.FeeUSDCents%100)
+			}
 			return nil, "", fmt.Errorf(
 				"insufficient gateway credits: this upload needs about $%d.%02d of storage credit — top up and retry (retrying is safe, nothing was paid)",
 				payResp.TotalUSDCents/100, payResp.TotalUSDCents%100)
+		}
+		if payResp.FeeAmount != "" {
+			return nil, "", fmt.Errorf(
+				"insufficient gateway credits: this upload needs %s ANT + %s ANT network fee — top up the account's credits and retry (retrying is safe, nothing was paid)",
+				attoToANT(payResp.TotalAmount), attoToANT(payResp.FeeAmount))
 		}
 		return nil, "", fmt.Errorf(
 			"insufficient gateway credits: this upload needs %s ANT — top up the account's credits and retry (retrying is safe, nothing was paid)",
@@ -217,6 +278,7 @@ func (h *HostedPayer) pollPayment(ctx context.Context, paymentKey, lastTx string
 				}
 				switch payResp.Status {
 				case "paid":
+					h.rememberCost(paymentKey, &payResp)
 					return payResp.TxHashes, paymentKey, nil
 				case "failed", "rejected":
 					return nil, "", fmt.Errorf("payment gateway reported %s: %s", payResp.Status, payResp.Error)

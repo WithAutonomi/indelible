@@ -977,6 +977,11 @@ watch(() => route.query.focus, (f, old) => {
           <dl class="flex flex-col gap-2">
             <div class="flex justify-between gap-3"><dt class="text-surface-500">Estimated</dt><dd :title="detail.estimated_cost || ''">{{ fmtCost(detail.estimated_cost) }}</dd></div>
             <div class="flex justify-between gap-3"><dt class="text-surface-500">Actual</dt><dd :title="detail.actual_cost || ''">{{ fmtCost(detail.actual_cost) }}</dd></div>
+            <!-- The gateway's per-batch network fee (V2-1098), already included in the actual cost above. -->
+            <div v-if="detail.gateway_fee_atto" class="flex justify-between gap-3">
+              <dt class="text-surface-500">Network fee</dt>
+              <dd :title="detail.gateway_fee_atto">{{ fmtCost(detail.gateway_fee_atto) }} <span class="text-surface-400 text-xs">included</span></dd>
+            </div>
             <div v-if="detail.last_quoted_cost" class="flex justify-between gap-3"><dt class="text-surface-500">Last quoted</dt><dd :title="detail.last_quoted_cost">{{ fmtCost(detail.last_quoted_cost) }}</dd></div>
             <div v-if="detail.payment_mode" class="flex justify-between gap-3">
               <dt class="text-surface-500">Paid via</dt>

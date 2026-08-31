@@ -538,7 +538,7 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 
 		// Record the confirmed spend BEFORE finalize, so a finalize failure still
 		// leaves an accounting record rather than losing the payment (V2-426).
-		w.recordPayment(ctx, wallet, upload, tokenAddr, paidAmount, txHash, "")
+		w.recordPayment(ctx, wallet, upload, tokenAddr, paidAmount, txHash, "", "")
 
 		// Phase 3: Finalize merkle upload. A failure here means money is already
 		// spent; re-running would submit a second merkle payment (not provably
@@ -572,9 +572,21 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		}
 
 		// Record the confirmed spend BEFORE finalize (V2-426). Only when a payment
-		// actually happened — a dedup re-Prepare pays nothing.
+		// actually happened — a dedup re-Prepare pays nothing. Hosted mode: the
+		// gateway may charge a per-batch network fee (V2-1098) — the customer's
+		// books record the GROSS debit (what the credits actually dropped by),
+		// with the fee itemized on the upload.
+		feeAtto := ""
 		if paymentMade {
-			w.recordPayment(ctx, wallet, upload, tokenAddr, paidAmount, txHash, gatewayKey)
+			if pc, ok := w.evmSigner.(interface {
+				PaymentCost(string) (evm.PaymentCost, bool)
+			}); ok && gatewayKey != "" {
+				if c, ok := pc.PaymentCost(gatewayKey); ok {
+					paidAmount = c.TotalDebited
+					feeAtto = c.FeeAtto
+				}
+			}
+			w.recordPayment(ctx, wallet, upload, tokenAddr, paidAmount, txHash, gatewayKey, feeAtto)
 		}
 
 		// Phase 3: Finalize wave-batch upload. Retrying re-Prepares at zero cost
@@ -650,14 +662,15 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 // still leaves a queryable accounting record rather than losing the spend. Called
 // exactly once per real payment (a dedup re-Prepare pays nothing, so retries do
 // not double-record).
-func (w *UploadWorker) recordPayment(ctx context.Context, wallet *services.Wallet, upload *services.Upload, tokenAddr, paidAmount, txHash, gatewayKey string) {
+func (w *UploadWorker) recordPayment(ctx context.Context, wallet *services.Wallet, upload *services.Upload, tokenAddr, paidAmount, txHash, gatewayKey, feeAtto string) {
 	// Provenance stamp (V2-1086): recorded with the payment so "how was this
-	// upload paid" survives instance-level payment_mode changes.
+	// upload paid" survives instance-level payment_mode changes. feeAtto is
+	// the gateway's per-batch network fee when one was charged (V2-1098).
 	mode := "local"
 	if w.cfg.PaymentMode == "hosted" {
 		mode = "hosted"
 	}
-	if err := w.uploadSvc.SetPaymentProvenance(upload.ID, mode, gatewayKey); err != nil {
+	if err := w.uploadSvc.SetPaymentProvenance(upload.ID, mode, gatewayKey, feeAtto); err != nil {
 		slog.Warn("failed to stamp payment provenance", "error", err)
 	}
 

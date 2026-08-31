@@ -14,6 +14,8 @@ export interface Upload {
   actual_cost?: string
   payment_mode?: 'local' | 'hosted'
   gateway_payment_key?: string
+  /** Gateway per-batch network fee in atto (V2-1098), included in actual_cost. */
+  gateway_fee_atto?: string
   error_message?: string
   backoff_until?: string
   backoff_attempt: number
