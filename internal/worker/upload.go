@@ -107,6 +107,21 @@ func estimatedUploadCost(prepared *antd.PrepareUploadResult) *big.Int {
 	return new(big.Int)
 }
 
+// grossUploadCost is the ceiling's comparison basis (V2-1113): the net quote
+// (estimatedUploadCost) plus, when a per-batch fee applies, one fee for the
+// single gateway batch a prepared wave upload settles as — the same GROSS
+// basis the gateway actually debits and 402s on (V2-1098), so a configured
+// max_gas_fee refuses BEFORE spending exactly when the gateway would charge
+// past it. A full-dedup prepare (no payments) sends no batch and pays no fee.
+// feePerBatch nil means no fee applies (local mode, or fee unknown → zero).
+func grossUploadCost(prepared *antd.PrepareUploadResult, feePerBatch *big.Int) *big.Int {
+	cost := estimatedUploadCost(prepared)
+	if feePerBatch != nil && feePerBatch.Sign() > 0 && len(prepared.Payments) > 0 {
+		cost.Add(cost, feePerBatch)
+	}
+	return cost
+}
+
 // payer is the payment seam: either the local EVM signer or the hosted
 // gateway client (payment_mode=hosted, V2-929 PoC). Both settle a prepared
 // batch and answer balance queries; the worker never sees the difference.
@@ -426,14 +441,38 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		return fmt.Errorf("Failed to prepare upload: %w", err)
 	}
 
+	// Hosted mode needs the gateway client BEFORE the cost ceiling: the
+	// gateway debits GROSS — batch total + per-batch network fee (V2-1098) —
+	// so the ceiling compares that same basis (V2-1113) and must ask the
+	// gateway what the fee is. The ensure-payer block further down is a no-op
+	// once this has run.
+	if w.cfg.PaymentMode == "hosted" {
+		if w.cfg.PaymentGatewayURL == "" {
+			return fmt.Errorf("payment_mode=hosted requires payment_gateway_url")
+		}
+		if w.evmSigner == nil {
+			w.evmSigner = evm.NewHostedPayer(w.cfg.PaymentGatewayURL, w.cfg.PaymentGatewayAPIKey)
+		}
+	}
+
 	// Cost ceiling — applies to wave-batch AND merkle. Wave cost is known upfront
 	// (prepared.TotalAmount); merkle cost is the most the contract could charge
-	// (one winning candidate per pool). Either exceeding max_gas_fee backs off to
-	// a cheaper window rather than paying uncapped. Compared as big.Int so large
-	// atto-token amounts don't overflow.
+	// (one winning candidate per pool). Hosted mode compares gross — quote plus
+	// the gateway's per-batch network fee (V2-1113) — matching the actual debit
+	// and the gateway's own 402 threshold. Either exceeding max_gas_fee backs off
+	// to a cheaper window rather than paying uncapped. Compared as big.Int so
+	// large atto-token amounts don't overflow.
 	if maxFeeStr, err := w.settingsSvc.Get("max_gas_fee"); err == nil {
 		if maxFee, ok := new(big.Int).SetString(strings.TrimSpace(maxFeeStr), 10); ok && maxFee.Sign() > 0 {
-			estCost := estimatedUploadCost(prepared)
+			var feePerBatch *big.Int
+			if w.cfg.PaymentMode == "hosted" {
+				if fp, ok := w.evmSigner.(interface {
+					FeePerBatch(context.Context) *big.Int
+				}); ok {
+					feePerBatch = fp.FeePerBatch(ctx)
+				}
+			}
+			estCost := grossUploadCost(prepared, feePerBatch)
 			if estCost.Cmp(maxFee) > 0 {
 				attempt := upload.BackoffAttempt + 1
 				if attempt > maxGasBackoffAttempts {
@@ -485,16 +524,9 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 	}
 
 	// Ensure the payer is connected. Hosted mode (V2-929 PoC) delegates
-	// signing to the payment gateway; otherwise connect the local EVM signer
-	// to the resolved URL.
-	if w.cfg.PaymentMode == "hosted" {
-		if w.cfg.PaymentGatewayURL == "" {
-			return fmt.Errorf("payment_mode=hosted requires payment_gateway_url")
-		}
-		if w.evmSigner == nil {
-			w.evmSigner = evm.NewHostedPayer(w.cfg.PaymentGatewayURL, w.cfg.PaymentGatewayAPIKey)
-		}
-	} else if w.evmSigner == nil || w.evmSigner.RPCUrl() != rpcURL {
+	// signing to the payment gateway and was ensured above, before the cost
+	// ceiling; otherwise connect the local EVM signer to the resolved URL.
+	if w.cfg.PaymentMode != "hosted" && (w.evmSigner == nil || w.evmSigner.RPCUrl() != rpcURL) {
 		signer, err := evm.NewSigner(rpcURL)
 		if err != nil {
 			return fmt.Errorf("Failed to connect to EVM RPC: %w", err)

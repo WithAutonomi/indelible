@@ -70,3 +70,50 @@ export function approxUSD(atto: string | null | undefined, rate: string | null |
   if (cents === null) return null
   return `≈ ${fmtUSD(cents)}`
 }
+
+/**
+ * Gross pre-upload estimate (V2-1113): batch total + fee × batches, exact
+ * BigInt atto in/out — the basis the gateway actually debits (V2-1098).
+ * Unusable cost passes through unchanged; unusable/zero fee adds nothing.
+ */
+export function grossEstimateAtto(
+  costAtto: string,
+  feeAtto: string | null | undefined,
+  batches: number = 1,
+): string {
+  let cost: bigint
+  try {
+    cost = BigInt(costAtto)
+  } catch {
+    return costAtto
+  }
+  let fee = 0n
+  try {
+    fee = BigInt(feeAtto || '0')
+  } catch {
+    fee = 0n
+  }
+  if (fee <= 0n || batches <= 0) return cost.toString()
+  return (cost + fee * BigInt(batches)).toString()
+}
+
+/**
+ * Display form of the gateway's per-batch network fee (V2-1113): "≈ $0.01"
+ * at a rate, "0.005 ANT" without one, null when the fee is unknown or zero —
+ * caller hides the note. Marked per batch by the caller; every upload settles
+ * as one gateway batch, so per upload reads the same.
+ */
+export function fmtFeePerBatch(
+  feeAtto: string | null | undefined,
+  rate: string | null | undefined,
+): string | null {
+  if (!feeAtto) return null
+  let v: bigint
+  try {
+    v = BigInt(feeAtto)
+  } catch {
+    return null
+  }
+  if (v <= 0n) return null
+  return approxUSD(feeAtto, rate) ?? `${attoToANT(feeAtto)} ANT`
+}

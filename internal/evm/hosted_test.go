@@ -336,9 +336,84 @@ func TestHostedFiatSurface(t *testing.T) {
 		t.Fatalf("ANT fallback message wrong: %v", err)
 	}
 
-	bal, rate, err := h.AccountInfo(context.Background())
+	bal, rate, fee, err := h.AccountInfo(context.Background())
 	if err != nil || bal != "5" || rate != "0.35" {
 		t.Fatalf("AccountInfo: %q %q %v", bal, rate, err)
+	}
+	// Older gateway without fee_per_batch_atto: tolerated as empty, no error.
+	if fee != "" {
+		t.Fatalf("absent fee must relay as empty, got %q", fee)
+	}
+}
+
+// TestHostedFeePerBatchRelay proves the V2-1113 fee relay: AccountInfo
+// carries fee_per_batch_atto and FeePerBatch turns it into an exact big.Int
+// — present, absent (older gateway), and zero all tolerated without error.
+func TestHostedFeePerBatchRelay(t *testing.T) {
+	for name, tc := range map[string]struct {
+		account map[string]any
+		want    string
+	}{
+		"fee present": {map[string]any{"account": "acme", "balance": "5",
+			"rate_usd_per_ant": "0.35", "fee_per_batch_atto": "5000000000000000"}, "5000000000000000"},
+		"fee absent (older gateway)": {map[string]any{"account": "acme", "balance": "5",
+			"rate_usd_per_ant": "0.35"}, "0"},
+		"fee zero": {map[string]any{"account": "acme", "balance": "5",
+			"fee_per_batch_atto": "0"}, "0"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewEncoder(w).Encode(tc.account)
+			}))
+			defer srv.Close()
+			h := NewHostedPayer(srv.URL, "pgk_test")
+			if got := h.FeePerBatch(context.Background()); got.String() != tc.want {
+				t.Errorf("FeePerBatch = %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestHostedFeePerBatchCache proves the fee lookup's cache discipline: one
+// gateway call per TTL window, a mid-window fee change invisible until the
+// window rolls, and an unreachable gateway serving the last known value
+// rather than erroring or zeroing (a stale fee beats a wrongly-net ceiling).
+func TestHostedFeePerBatchCache(t *testing.T) {
+	calls := 0
+	fee := "5000000000000000"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		_ = json.NewEncoder(w).Encode(map[string]any{"balance": "5", "fee_per_batch_atto": fee})
+	}))
+	defer srv.Close()
+	h := NewHostedPayer(srv.URL, "pgk_test")
+
+	if got := h.FeePerBatch(context.Background()); got.String() != "5000000000000000" {
+		t.Fatalf("first fetch: %s", got)
+	}
+	fee = "9000000000000000"
+	if got := h.FeePerBatch(context.Background()); got.String() != "5000000000000000" {
+		t.Fatalf("within TTL the cached fee must serve, got %s", got)
+	}
+	if calls != 1 {
+		t.Fatalf("gateway asked %d times within one TTL, want 1", calls)
+	}
+
+	h.feeTTL = 0 // expire the window
+	if got := h.FeePerBatch(context.Background()); got.String() != "9000000000000000" {
+		t.Fatalf("expired window must refetch, got %s", got)
+	}
+
+	// Gateway gone: the last known value keeps serving.
+	srv.Close()
+	if got := h.FeePerBatch(context.Background()); got.String() != "9000000000000000" {
+		t.Fatalf("unreachable gateway must serve last known fee, got %s", got)
+	}
+
+	// Never fetched successfully at all → zero, still no error path.
+	dead := NewHostedPayer("http://127.0.0.1:1", "pgk_test")
+	if got := dead.FeePerBatch(context.Background()); got.Sign() != 0 {
+		t.Fatalf("unknown fee must count as zero, got %s", got)
 	}
 }
 

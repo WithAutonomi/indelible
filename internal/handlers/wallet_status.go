@@ -12,33 +12,36 @@ import (
 	"github.com/WithAutonomi/indelible/internal/services"
 )
 
-// gatewayRateCache memoizes the gateway's USD-per-ANT rate for the
-// crypto-free display (V2-1100): every authenticated view reads
-// wallet-status, so the gateway is asked at most once per minute.
-var gatewayRateCache struct {
+// gatewayPricingCache memoizes the gateway's USD-per-ANT rate (crypto-free
+// display, V2-1100) and per-batch network fee (fee-aware estimates, V2-1113):
+// every authenticated view reads wallet-status, so the gateway is asked at
+// most once per minute.
+var gatewayPricingCache struct {
 	sync.Mutex
 	rate    string
+	fee     string
 	fetched time.Time
 }
 
-func cachedGatewayRate(ctx context.Context, cfg *config.Config) string {
-	gatewayRateCache.Lock()
-	defer gatewayRateCache.Unlock()
-	if time.Since(gatewayRateCache.fetched) < time.Minute {
-		return gatewayRateCache.rate
+func cachedGatewayPricing(ctx context.Context, cfg *config.Config) (rate, feePerBatchAtto string) {
+	gatewayPricingCache.Lock()
+	defer gatewayPricingCache.Unlock()
+	if time.Since(gatewayPricingCache.fetched) < time.Minute {
+		return gatewayPricingCache.rate, gatewayPricingCache.fee
 	}
 	rateCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	payer := evm.NewHostedPayer(cfg.PaymentGatewayURL, cfg.PaymentGatewayAPIKey)
-	_, rate, err := payer.AccountInfo(rateCtx)
+	_, rate, fee, err := payer.AccountInfo(rateCtx)
 	if err != nil {
-		// Best-effort display data: keep serving the stale value and try
+		// Best-effort display data: keep serving the stale values and try
 		// again after the normal interval.
-		gatewayRateCache.fetched = time.Now()
-		return gatewayRateCache.rate
+		gatewayPricingCache.fetched = time.Now()
+		return gatewayPricingCache.rate, gatewayPricingCache.fee
 	}
-	gatewayRateCache.rate, gatewayRateCache.fetched = rate, time.Now()
-	return rate
+	gatewayPricingCache.rate, gatewayPricingCache.fee = rate, fee
+	gatewayPricingCache.fetched = time.Now()
+	return rate, fee
 }
 
 // WalletStatus godoc
@@ -70,8 +73,16 @@ func WalletStatus(db *database.DB, cfg *config.Config) http.HandlerFunc {
 		// every view can render costs and balances in fiat. Best-effort and
 		// cached — absent when the gateway has no rate or is unreachable.
 		if mode == "hosted" && cfg.PaymentGatewayURL != "" {
-			if rate := cachedGatewayRate(r.Context(), cfg); rate != "" {
+			rate, fee := cachedGatewayPricing(r.Context(), cfg)
+			if rate != "" {
 				out["gateway_rate_usd_per_ant"] = rate
+			}
+			// Fee-aware estimates (V2-1113): the per-batch network fee the
+			// gateway adds to every settled batch (V2-1098). The web app folds
+			// it into pre-upload estimates so they match the gross debit.
+			// Absent when the gateway charges none or predates the field.
+			if fee != "" {
+				out["gateway_fee_per_batch_atto"] = fee
 			}
 		}
 		jsonResponse(w, http.StatusOK, out)

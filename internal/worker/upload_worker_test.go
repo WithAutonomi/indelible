@@ -3,6 +3,7 @@ package worker
 import (
 	"errors"
 	"fmt"
+	"math/big"
 	"os"
 	"path/filepath"
 	"testing"
@@ -433,6 +434,57 @@ func TestEstimatedUploadCost_Merkle(t *testing.T) {
 	}
 	if got := estimatedUploadCost(p); got.String() != "79" { // 70 + 9
 		t.Errorf("merkle cost = %s, want 79", got)
+	}
+}
+
+// --- grossUploadCost (V2-1113 fee-aware ceiling basis) ---
+
+func TestGrossUploadCost_HostedAddsOneFeePerBatch(t *testing.T) {
+	// One prepared wave upload settles as exactly one gateway batch, so the
+	// gross basis is quote + one fee — exact atto, no floats.
+	p := &antd.PrepareUploadResult{PaymentType: "wave_batch",
+		TotalAmount: "35156250000000000",
+		Payments:    []antd.PaymentInfo{{QuoteHash: "0xq1"}, {QuoteHash: "0xq2"}}}
+	fee := big.NewInt(0)
+	fee.SetString("5000000000000000", 10)
+	if got := grossUploadCost(p, fee); got.String() != "40156250000000000" {
+		t.Errorf("gross = %s, want 40156250000000000", got)
+	}
+	// The fee is per batch, not per payment: two payments, still one fee.
+}
+
+func TestGrossUploadCost_NilFeeIsNet(t *testing.T) {
+	// Local mode (or unknown fee) passes nil → the V2-431 net basis, unchanged.
+	p := &antd.PrepareUploadResult{PaymentType: "wave_batch",
+		TotalAmount: "12345", Payments: []antd.PaymentInfo{{QuoteHash: "0xq1"}}}
+	if got := grossUploadCost(p, nil); got.String() != "12345" {
+		t.Errorf("nil fee = %s, want net 12345", got)
+	}
+	if got := grossUploadCost(p, new(big.Int)); got.String() != "12345" {
+		t.Errorf("zero fee = %s, want net 12345", got)
+	}
+}
+
+func TestGrossUploadCost_FullDedupPaysNoFee(t *testing.T) {
+	// No payments → no gateway batch is sent → no fee, even in hosted mode.
+	p := &antd.PrepareUploadResult{PaymentType: "wave_batch", TotalAmount: "0"}
+	if got := grossUploadCost(p, big.NewInt(5)); got.Sign() != 0 {
+		t.Errorf("dedup gross = %s, want 0", got)
+	}
+}
+
+func TestGrossUploadCost_CeilingComparesGross(t *testing.T) {
+	// The V2-1113 point: a quote under the ceiling whose GROSS crosses it
+	// must compare over — matching the gateway's own 402 threshold — while
+	// the same numbers in local mode (no fee) stay under.
+	p := &antd.PrepareUploadResult{PaymentType: "wave_batch",
+		TotalAmount: "100", Payments: []antd.PaymentInfo{{QuoteHash: "0xq1"}}}
+	maxFee := big.NewInt(105)
+	if grossUploadCost(p, nil).Cmp(maxFee) > 0 {
+		t.Error("net 100 must pass a 105 ceiling")
+	}
+	if grossUploadCost(p, big.NewInt(10)).Cmp(maxFee) <= 0 {
+		t.Error("gross 110 must refuse a 105 ceiling before spending")
 	}
 }
 

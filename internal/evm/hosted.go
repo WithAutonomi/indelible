@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"strings"
 	"sync"
@@ -37,6 +38,14 @@ type HostedPayer struct {
 	// concurrent uploads, so a "last payment" field would race.
 	costsMu sync.Mutex
 	costs   map[string]PaymentCost
+	// fee* memoize the gateway's per-batch network fee for the pre-spend
+	// gross estimate/ceiling (V2-1113) — the worker asks per upload, the
+	// gateway at most once per feeTTL (the wallet-status rate cadence,
+	// V2-1100). feeCached nil means never fetched successfully.
+	feeMu      sync.Mutex
+	feeCached  *big.Int
+	feeFetched time.Time
+	feeTTL     time.Duration
 }
 
 // PaymentCost is a paid batch's fee itemization: what the gateway debited
@@ -58,6 +67,7 @@ func NewHostedPayer(gatewayURL, apiKey string) *HostedPayer {
 		pollWait:     5 * time.Minute,
 		payAttempts:  6,
 		payRetryWait: 5 * time.Second,
+		feeTTL:       time.Minute,
 	}
 }
 
@@ -297,39 +307,73 @@ func (h *HostedPayer) pollPayment(ctx context.Context, paymentKey, lastTx string
 }
 
 // AccountInfo returns the tenant's remaining gateway credit balance in atto
-// plus the gateway's exact USD-per-ANT rate (empty when none configured) —
-// the pair the crypto-free display converts with (V2-1100).
-func (h *HostedPayer) AccountInfo(ctx context.Context) (balance, rateUSDPerANT string, err error) {
+// plus the gateway's exact USD-per-ANT rate and per-batch network fee in
+// atto (each empty when none configured, or when an older gateway predates
+// the field) — the trio the crypto-free display converts with (V2-1100) and
+// fee-aware estimates add with (V2-1113).
+func (h *HostedPayer) AccountInfo(ctx context.Context) (balance, rateUSDPerANT, feePerBatchAtto string, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, h.gatewayURL+"/account", nil)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	req.Header.Set("Authorization", "Bearer "+h.apiKey)
 	resp, err := h.client.Do(req)
 	if err != nil {
-		return "", "", fmt.Errorf("payment gateway unreachable: %w", err)
+		return "", "", "", fmt.Errorf("payment gateway unreachable: %w", err)
 	}
 	defer resp.Body.Close()
 	var out struct {
 		Balance string `json:"balance"`
 		Rate    string `json:"rate_usd_per_ant"`
+		Fee     string `json:"fee_per_batch_atto"`
 		Error   string `json:"error"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out); err != nil {
-		return "", "", fmt.Errorf("decoding /account response: %w", err)
+		return "", "", "", fmt.Errorf("decoding /account response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", "", fmt.Errorf("payment gateway /account failed (%d): %s", resp.StatusCode, out.Error)
+		return "", "", "", fmt.Errorf("payment gateway /account failed (%d): %s", resp.StatusCode, out.Error)
 	}
-	return out.Balance, out.Rate, nil
+	return out.Balance, out.Rate, out.Fee, nil
 }
 
 // AccountBalance returns the tenant's remaining gateway credit balance in
 // atto (GET /account) — the meaningful "balance after" for hosted payments,
 // where neither the wallet record nor the treasury is the payer's account.
 func (h *HostedPayer) AccountBalance(ctx context.Context) (string, error) {
-	bal, _, err := h.AccountInfo(ctx)
+	bal, _, _, err := h.AccountInfo(ctx)
 	return bal, err
+}
+
+// FeePerBatch returns the gateway's per-batch network fee in atto — the
+// V2-1098 surcharge every settled batch adds to the debit — so pre-spend
+// surfaces can quote and gate on the same GROSS basis the gateway actually
+// charges (V2-1113). Cached for feeTTL; while the gateway is unreachable the
+// last known value keeps serving (fee changes are rare, refusing uploads over
+// a stale fee lookup would be worse), and a gateway that reports no fee —
+// none configured, or an older gateway without the field — counts as zero.
+// Never an error: the fee is a pre-spend refinement, not a payment step.
+func (h *HostedPayer) FeePerBatch(ctx context.Context) *big.Int {
+	h.feeMu.Lock()
+	defer h.feeMu.Unlock()
+	if h.feeFetched.IsZero() || time.Since(h.feeFetched) >= h.feeTTL {
+		feeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		_, _, fee, err := h.AccountInfo(feeCtx)
+		cancel()
+		if err == nil {
+			if v, ok := new(big.Int).SetString(strings.TrimSpace(fee), 10); ok && v.Sign() > 0 {
+				h.feeCached = v
+			} else {
+				h.feeCached = new(big.Int) // absent/zero/junk → no fee
+			}
+		}
+		// Set even on error: retry after the normal interval, not per call.
+		h.feeFetched = time.Now()
+	}
+	if h.feeCached == nil {
+		return new(big.Int)
+	}
+	return new(big.Int).Set(h.feeCached)
 }
 
 // relay performs one authenticated gateway call for the in-app billing

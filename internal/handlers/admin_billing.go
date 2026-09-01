@@ -59,11 +59,16 @@ func AdminBillingSummary(db *database.DB, cfg *config.Config) http.HandlerFunc {
 		defer cancel()
 		// Credits and history are best-effort separately: a gateway hiccup
 		// on one must not blank the other.
-		if bal, rate, err := payer.AccountInfo(ctx); err == nil {
+		if bal, rate, fee, err := payer.AccountInfo(ctx); err == nil {
 			out["gateway_credit_atto"] = bal
 			// Exact USD-per-ANT rate for fiat display (V2-1100).
 			if rate != "" {
 				out["rate_usd_per_ant"] = rate
+			}
+			// Per-batch network fee (V2-1098), relayed for fee-aware
+			// estimates and billing transparency (V2-1113).
+			if fee != "" {
+				out["fee_per_batch_atto"] = fee
 			}
 		}
 		if status, raw, err := payer.Credits(ctx); err == nil && status == http.StatusOK {
