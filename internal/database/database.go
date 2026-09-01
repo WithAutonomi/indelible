@@ -44,15 +44,15 @@ func Open(dbURL string) (*DB, error) {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}
 
-	// SQLite pragmas for performance. (foreign_keys is set per-connection via the
-	// DSN in parseURL — see the note there; a one-shot Exec would only cover one
-	// pooled connection.)
+	// journal_mode=WAL is database-persistent, so a one-shot Exec is enough (and
+	// doubles as the SQLITE_CANTOPEN probe for sqliteOpenError). busy_timeout and
+	// synchronous are *connection-level* and live in the DSN via parseURL — an
+	// Exec here would cover exactly one pooled connection, leaving the rest with
+	// busy_timeout=0: concurrent finalizes then fail SQLITE_BUSY the moment two
+	// uploads complete in the same instant (first seen when V2-1112 coalescing
+	// made three payments settle in one tx).
 	if driver == "sqlite" {
-		if _, err := db.Exec(`
-			PRAGMA journal_mode=WAL;
-			PRAGMA busy_timeout=5000;
-			PRAGMA synchronous=NORMAL;
-		`); err != nil {
+		if _, err := db.Exec(`PRAGMA journal_mode=WAL;`); err != nil {
 			db.Close()
 			return nil, sqliteOpenError(err, dsn)
 		}
@@ -130,15 +130,17 @@ func parseURL(dbURL string) (driver, dsn string, err error) {
 			id := memDBCounter.Add(1)
 			dsn = fmt.Sprintf("file:memdb%d?mode=memory&cache=shared", id)
 		}
-		// foreign_keys is a *connection-level* pragma in SQLite — setting it once
-		// after Open only covers a single pooled connection, leaving ON DELETE
-		// CASCADE / FK enforcement unreliable on the rest. modernc.org/sqlite
-		// applies _pragma params on every connection it opens, so set it here.
+		// foreign_keys, busy_timeout and synchronous are *connection-level*
+		// pragmas in SQLite — setting them once after Open only covers a single
+		// pooled connection (FK enforcement unreliable, busy_timeout=0 →
+		// SQLITE_BUSY under concurrent writers on the rest of the pool).
+		// modernc.org/sqlite applies _pragma params on every connection it
+		// opens, so set them here.
 		sep := "?"
 		if strings.Contains(dsn, "?") {
 			sep = "&"
 		}
-		dsn += sep + "_pragma=foreign_keys(1)"
+		dsn += sep + "_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)"
 		return "sqlite", dsn, nil
 	case strings.HasPrefix(dbURL, "postgres://"), strings.HasPrefix(dbURL, "postgresql://"):
 		return "postgres", dbURL, nil
