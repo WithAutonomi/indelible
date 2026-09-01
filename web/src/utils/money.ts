@@ -98,6 +98,59 @@ export function grossEstimateAtto(
 }
 
 /**
+ * The gateway's cost-per-GB estimate basis (V2-1114), relayed verbatim so
+ * this UI hardcodes no methodology numbers — the tooltip renders whatever
+ * the gateway actually computed with.
+ */
+export type CostPerGBBasis = {
+  median_paid_per_quote_atto: string
+  sample_quotes: number
+  window: string
+  chunks_per_gb: number
+  batches_per_gb: number
+}
+
+/**
+ * "≈ N GB remaining at current prices" (V2-1114): balance ÷ cost-per-GB to
+ * one decimal, FLOORED — a capacity line must never promise more than the
+ * credits cover. Exact BigInt math (tenths = balance × 10 / cost). Null when
+ * either input is missing, unusable, or non-positive — the caller hides the
+ * line entirely (absent means "not enough data yet", never zero GB).
+ */
+export function gbRemaining(
+  balanceAtto: string | null | undefined,
+  costPerGBAtto: string | null | undefined,
+): string | null {
+  if (!balanceAtto || !costPerGBAtto) return null
+  let bal: bigint, cost: bigint
+  try {
+    bal = BigInt(balanceAtto)
+    cost = BigInt(costPerGBAtto)
+  } catch {
+    return null
+  }
+  if (cost <= 0n || bal < 0n) return null
+  const tenths = (bal * 10n) / cost
+  return `${tenths / 10n}.${tenths % 10n}`
+}
+
+/**
+ * Methodology tooltip for the capacity line (V2-1114), built entirely from
+ * the gateway's basis object. Null without a usable basis — the line then
+ * renders with no tooltip rather than a made-up methodology.
+ */
+export function costPerGBTooltip(basis: CostPerGBBasis | null | undefined): string | null {
+  if (!basis || !basis.median_paid_per_quote_atto || !basis.chunks_per_gb) return null
+  const feeTerm = basis.batches_per_gb > 0 ? ` + ${basis.batches_per_gb} × network fee` : ''
+  return (
+    `Estimated from the gateway's recent payments: median chunk price ` +
+    `${attoToANT(basis.median_paid_per_quote_atto)} ANT × ${basis.chunks_per_gb} chunks/GB${feeTerm}, ` +
+    `over ${basis.sample_quotes} paid quotes in the last ${basis.window}. ` +
+    `Actual cost varies with deduplication and market movement.`
+  )
+}
+
+/**
  * Display form of the gateway's per-batch network fee (V2-1113): "≈ $0.01"
  * at a rate, "0.005 ANT" without one, null when the fee is unknown or zero —
  * caller hides the note. Marked per batch by the caller; every upload settles

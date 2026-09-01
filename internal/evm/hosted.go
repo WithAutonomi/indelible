@@ -306,35 +306,71 @@ func (h *HostedPayer) pollPayment(ctx context.Context, paymentKey, lastTx string
 	}
 }
 
-// AccountInfo returns the tenant's remaining gateway credit balance in atto
-// plus the gateway's exact USD-per-ANT rate and per-batch network fee in
-// atto (each empty when none configured, or when an older gateway predates
-// the field) — the trio the crypto-free display converts with (V2-1100) and
-// fee-aware estimates add with (V2-1113).
-func (h *HostedPayer) AccountInfo(ctx context.Context) (balance, rateUSDPerANT, feePerBatchAtto string, err error) {
+// AccountDetails is the gateway's GET /account answer as the display
+// surfaces relay it: balance, the exact USD-per-ANT rate (V2-1100), the
+// per-batch network fee (V2-1113), and the directional cost-per-GB estimate
+// with its methodology basis (V2-1114). Every field beyond the balance is
+// optional — empty/nil when the gateway has none configured, has too little
+// paid history yet, or simply predates the field. Absence is never an error.
+type AccountDetails struct {
+	BalanceAtto     string
+	RateUSDPerANT   string
+	FeePerBatchAtto string
+	// EstCostPerGBAtto is what ≈1 GB of fresh data costs at current prices,
+	// estimated by the gateway from its own recent paid history; "" = no
+	// estimate ("not enough data yet" client-side, never zero).
+	EstCostPerGBAtto string
+	// EstCostPerGBBasis is the estimate's basis object (median paid per
+	// quote, sample size, window, chunk/batch constants), relayed opaquely so
+	// the client tooltip hardcodes no methodology numbers.
+	EstCostPerGBBasis json.RawMessage
+}
+
+// AccountDetails fetches GET /account once and returns everything the
+// billing surfaces relay (see the AccountDetails type).
+func (h *HostedPayer) AccountDetails(ctx context.Context) (AccountDetails, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, h.gatewayURL+"/account", nil)
 	if err != nil {
-		return "", "", "", err
+		return AccountDetails{}, err
 	}
 	req.Header.Set("Authorization", "Bearer "+h.apiKey)
 	resp, err := h.client.Do(req)
 	if err != nil {
-		return "", "", "", fmt.Errorf("payment gateway unreachable: %w", err)
+		return AccountDetails{}, fmt.Errorf("payment gateway unreachable: %w", err)
 	}
 	defer resp.Body.Close()
 	var out struct {
-		Balance string `json:"balance"`
-		Rate    string `json:"rate_usd_per_ant"`
-		Fee     string `json:"fee_per_batch_atto"`
-		Error   string `json:"error"`
+		Balance   string          `json:"balance"`
+		Rate      string          `json:"rate_usd_per_ant"`
+		Fee       string          `json:"fee_per_batch_atto"`
+		EstCostGB string          `json:"est_cost_per_gb_atto"`
+		EstBasis  json.RawMessage `json:"est_cost_per_gb_basis"`
+		Error     string          `json:"error"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out); err != nil {
-		return "", "", "", fmt.Errorf("decoding /account response: %w", err)
+		return AccountDetails{}, fmt.Errorf("decoding /account response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", "", "", fmt.Errorf("payment gateway /account failed (%d): %s", resp.StatusCode, out.Error)
+		return AccountDetails{}, fmt.Errorf("payment gateway /account failed (%d): %s", resp.StatusCode, out.Error)
 	}
-	return out.Balance, out.Rate, out.Fee, nil
+	return AccountDetails{
+		BalanceAtto:       out.Balance,
+		RateUSDPerANT:     out.Rate,
+		FeePerBatchAtto:   out.Fee,
+		EstCostPerGBAtto:  out.EstCostGB,
+		EstCostPerGBBasis: out.EstBasis,
+	}, nil
+}
+
+// AccountInfo returns the tenant's remaining gateway credit balance in atto
+// plus the gateway's exact USD-per-ANT rate and per-batch network fee in
+// atto (each empty when none configured, or when an older gateway predates
+// the field) — the trio the crypto-free display converts with (V2-1100) and
+// fee-aware estimates add with (V2-1113). Thin wrapper over AccountDetails
+// for the callers that need no more.
+func (h *HostedPayer) AccountInfo(ctx context.Context) (balance, rateUSDPerANT, feePerBatchAtto string, err error) {
+	d, err := h.AccountDetails(ctx)
+	return d.BalanceAtto, d.RateUSDPerANT, d.FeePerBatchAtto, err
 }
 
 // AccountBalance returns the tenant's remaining gateway credit balance in

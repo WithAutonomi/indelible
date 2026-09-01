@@ -659,7 +659,7 @@ func QuoteUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 		// adds one fee. Still an estimate: full dedup at prepare time sends
 		// no batch and pays no fee. Exact big.Int math, atto in, atto out.
 		if cfg.PaymentMode == "hosted" && cfg.PaymentGatewayURL != "" {
-			if _, fee := cachedGatewayPricing(r.Context(), cfg); fee != "" {
+			if fee := cachedGatewayPricing(r.Context(), cfg).fee; fee != "" {
 				if feeInt, ok := new(big.Int).SetString(fee, 10); ok && feeInt.Sign() > 0 {
 					out["gateway_fee_per_batch_atto"] = feeInt.String()
 					out["estimated_batch_count"] = 1

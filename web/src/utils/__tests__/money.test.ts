@@ -1,5 +1,15 @@
 import { describe, it, expect } from 'vitest'
-import { attoToANT, attoToUSDCents, fmtUSD, approxUSD, grossEstimateAtto, fmtFeePerBatch } from '../money'
+import {
+  attoToANT,
+  attoToUSDCents,
+  fmtUSD,
+  approxUSD,
+  grossEstimateAtto,
+  fmtFeePerBatch,
+  gbRemaining,
+  costPerGBTooltip,
+  type CostPerGBBasis,
+} from '../money'
 
 describe('money (V2-1100 crypto-free display)', () => {
   it('attoToANT full precision', () => {
@@ -48,6 +58,58 @@ describe('fee-aware estimates (V2-1113)', () => {
     expect(grossEstimateAtto('0', '5000000000000000', 0)).toBe('0')
     // unusable cost passes through, matching attoToANT's tolerance
     expect(grossEstimateAtto('junk', '5')).toBe('junk')
+  })
+
+  it('gbRemaining floors to one decimal with exact BigInt math (V2-1114)', () => {
+    // exact division: 10 ANT balance / 0.032 ANT per GB = 312.5 GB
+    expect(gbRemaining('10000000000000000000', '32000000000000000')).toBe('312.5')
+    // floor, never round up: 1 / 0.3 = 3.333… → 3.3
+    expect(gbRemaining('1000000000000000000', '300000000000000000')).toBe('3.3')
+    // 0.29999… would round to 0.3 — floor says 0.2
+    expect(gbRemaining('299999999999999999', '1000000000000000000')).toBe('0.2')
+    // below a tenth of a GB: honest 0.0 (the line still shows — near-empty)
+    expect(gbRemaining('1', '32000000000000000')).toBe('0.0')
+    // zero balance is a real answer, not a hidden line
+    expect(gbRemaining('0', '32000000000000000')).toBe('0.0')
+  })
+
+  it('gbRemaining hides (null) when the estimate is absent or unusable', () => {
+    // absent estimate — older gateway or "not enough data yet"
+    expect(gbRemaining('10000000000000000000', '')).toBeNull()
+    expect(gbRemaining('10000000000000000000', null)).toBeNull()
+    expect(gbRemaining('10000000000000000000', undefined)).toBeNull()
+    // absent balance (gateway unreachable)
+    expect(gbRemaining(null, '32000000000000000')).toBeNull()
+    // junk and non-positive costs never divide
+    expect(gbRemaining('10', 'junk')).toBeNull()
+    expect(gbRemaining('junk', '10')).toBeNull()
+    expect(gbRemaining('10', '0')).toBeNull()
+    expect(gbRemaining('10', '-5')).toBeNull()
+    expect(gbRemaining('-10', '5')).toBeNull()
+  })
+
+  it('costPerGBTooltip renders the gateway basis, hides without one', () => {
+    const basis: CostPerGBBasis = {
+      median_paid_per_quote_atto: '105468750000000',
+      sample_quotes: 128,
+      window: '7d',
+      chunks_per_gb: 256,
+      batches_per_gb: 1,
+    }
+    const tip = costPerGBTooltip(basis)!
+    // methodology from the basis object, nothing hardcoded
+    expect(tip).toContain('0.00010546875 ANT') // the median, exact attoToANT form
+    expect(tip).toContain('256 chunks/GB')
+    expect(tip).toContain('1 × network fee')
+    expect(tip).toContain('128 paid quotes')
+    expect(tip).toContain('last 7d')
+    // the honesty clause the ticket requires
+    expect(tip).toContain('deduplication and market movement')
+    // no fee term when the gateway charges per zero batches
+    expect(costPerGBTooltip({ ...basis, batches_per_gb: 0 })).not.toContain('network fee')
+    // no basis → no tooltip (never a made-up methodology)
+    expect(costPerGBTooltip(null)).toBeNull()
+    expect(costPerGBTooltip(undefined)).toBeNull()
   })
 
   it('fmtFeePerBatch prefers fiat, falls back to ANT, hides when no fee', () => {

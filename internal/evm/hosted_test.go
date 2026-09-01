@@ -454,3 +454,53 @@ func TestHostedPayTransportRetry(t *testing.T) {
 		t.Fatalf("exhaustion must report unreachable: %v", err)
 	}
 }
+
+// TestHostedCostPerGBRelay proves the V2-1114 capacity-estimate relay:
+// AccountDetails carries est_cost_per_gb_atto plus the opaque basis object
+// when the gateway serves them, and reads absence (older gateway, thin paid
+// history) as empty fields — never an error. AccountInfo's trio is
+// unaffected either way.
+func TestHostedCostPerGBRelay(t *testing.T) {
+	basis := `{"median_paid_per_quote_atto":"105468750000000","sample_quotes":128,"window":"7d","chunks_per_gb":256,"batches_per_gb":1}`
+
+	t.Run("present", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"account":"acme","balance":"5","rate_usd_per_ant":"0.35",` +
+				`"fee_per_batch_atto":"5000000000000000",` +
+				`"est_cost_per_gb_atto":"32000000000000000","est_cost_per_gb_basis":` + basis + `}`))
+		}))
+		defer srv.Close()
+		d, err := NewHostedPayer(srv.URL, "pgk_test").AccountDetails(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d.BalanceAtto != "5" || d.RateUSDPerANT != "0.35" || d.FeePerBatchAtto != "5000000000000000" {
+			t.Fatalf("trio regressed: %+v", d)
+		}
+		if d.EstCostPerGBAtto != "32000000000000000" {
+			t.Fatalf("est cost = %q", d.EstCostPerGBAtto)
+		}
+		// The basis relays opaquely — semantically the same JSON.
+		var got, want map[string]any
+		if json.Unmarshal(d.EstCostPerGBBasis, &got) != nil || json.Unmarshal([]byte(basis), &want) != nil {
+			t.Fatalf("basis not JSON: %s", d.EstCostPerGBBasis)
+		}
+		if len(got) != len(want) || got["sample_quotes"] != want["sample_quotes"] || got["window"] != "7d" {
+			t.Fatalf("basis relayed wrong: %s", d.EstCostPerGBBasis)
+		}
+	})
+
+	t.Run("absent (older gateway / thin history)", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]any{"account": "acme", "balance": "5", "rate_usd_per_ant": "0.35"})
+		}))
+		defer srv.Close()
+		d, err := NewHostedPayer(srv.URL, "pgk_test").AccountDetails(context.Background())
+		if err != nil {
+			t.Fatalf("absence must never error: %v", err)
+		}
+		if d.EstCostPerGBAtto != "" || d.EstCostPerGBBasis != nil {
+			t.Fatalf("absent fields must relay empty: %+v", d)
+		}
+	})
+}

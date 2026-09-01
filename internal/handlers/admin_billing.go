@@ -59,16 +59,27 @@ func AdminBillingSummary(db *database.DB, cfg *config.Config) http.HandlerFunc {
 		defer cancel()
 		// Credits and history are best-effort separately: a gateway hiccup
 		// on one must not blank the other.
-		if bal, rate, fee, err := payer.AccountInfo(ctx); err == nil {
-			out["gateway_credit_atto"] = bal
+		if d, err := payer.AccountDetails(ctx); err == nil {
+			out["gateway_credit_atto"] = d.BalanceAtto
 			// Exact USD-per-ANT rate for fiat display (V2-1100).
-			if rate != "" {
-				out["rate_usd_per_ant"] = rate
+			if d.RateUSDPerANT != "" {
+				out["rate_usd_per_ant"] = d.RateUSDPerANT
 			}
 			// Per-batch network fee (V2-1098), relayed for fee-aware
 			// estimates and billing transparency (V2-1113).
-			if fee != "" {
-				out["fee_per_batch_atto"] = fee
+			if d.FeePerBatchAtto != "" {
+				out["fee_per_batch_atto"] = d.FeePerBatchAtto
+			}
+			// Directional cost-per-GB estimate + methodology basis (V2-1114):
+			// the "≈ N GB remaining at current prices" line beside the
+			// balance. Rides the live balance call this summary already makes
+			// (fresher than the wallet-status 60s cache, zero extra requests).
+			// Absent — older gateway or thin paid history — hides the line.
+			if d.EstCostPerGBAtto != "" {
+				out["est_cost_per_gb_atto"] = d.EstCostPerGBAtto
+				if len(d.EstCostPerGBBasis) > 0 {
+					out["est_cost_per_gb_basis"] = d.EstCostPerGBBasis
+				}
 			}
 		}
 		if status, raw, err := payer.Credits(ctx); err == nil && status == http.StatusOK {
