@@ -80,12 +80,14 @@ services:
       retries: 3
 
   antd:
-    # Run antd from indelible's own image. The upstream
-    # ghcr.io/withautonomi/antd image is musl-Alpine but the antd binary is a
-    # glibc executable, so it cannot exec inside its own image. indelible's
-    # image bundles the same antd on a glibc base, so reusing it here gives a
-    # working daemon AND guarantees this container's antd is byte-identical to
-    # the managed-mode copy. Bump via .antd-version (rebuild to pick up).
+    # Run antd from indelible's own image rather than the upstream
+    # ghcr.io/withautonomi/antd image. Both work (upstream has been a glibc
+    # debian-slim image since ant-sdk #192, 2026-06-02); reusing indelible's
+    # image guarantees this sidecar's antd is byte-identical to the copy the
+    # indelible container runs in managed mode, so the two can never drift
+    # apart. Bump via .antd-version (rebuild to pick up). Switching to
+    # ghcr.io/withautonomi/antd:<version> is a valid trade of that guarantee
+    # for one fewer image build.
     image: ghcr.io/withautonomi/indelible:latest
     build: .
     entrypoint: ["antd"]
