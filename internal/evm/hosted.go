@@ -16,7 +16,7 @@ import (
 )
 
 // HostedPayer settles payments through a payment gateway's POST /pay instead
-// of signing locally (payment_mode=hosted, V2-929 PoC). It satisfies the same
+// of signing locally (payment_backend=hosted, V2-929 PoC). It satisfies the same
 // method set as Signer so the upload worker can hold either behind one
 // interface. The privateKeyHex arguments are ignored — the gateway holds the
 // treasury key.

@@ -41,7 +41,7 @@ type Upload struct {
 	// (this instance's wallet signed) or "hosted" (gateway credits) — and,
 	// when hosted, the gateway's batch idempotency key (the join to the
 	// gateway's payments ledger). NULL when nothing was paid.
-	PaymentMode       sql.NullString
+	PaymentBackend    sql.NullString
 	GatewayPaymentKey sql.NullString
 	// GatewayFeeAtto is the gateway's per-batch network fee (V2-1098),
 	// itemized out of the gross actual_cost. NULL when no fee was charged.
@@ -55,7 +55,7 @@ type Upload struct {
 
 const uploadColumns = `id, uuid, user_id, token_id, filename, original_filename, file_size, content_type, visibility, status,
 	status_detail, datamap_address, estimated_cost, actual_cost, error_message, temp_path,
-	data_map, backoff_until, backoff_attempt, last_quoted_cost, payment_mode, gateway_payment_key, gateway_fee_atto,
+	data_map, backoff_until, backoff_attempt, last_quoted_cost, payment_backend, gateway_payment_key, gateway_fee_atto,
 	queued_at, processing_at, completed_at, failed_at, created_at`
 
 func scanUpload(scanner interface{ Scan(...any) error }) (*Upload, error) {
@@ -63,7 +63,7 @@ func scanUpload(scanner interface{ Scan(...any) error }) (*Upload, error) {
 	err := scanner.Scan(
 		&u.ID, &u.UUID, &u.UserID, &u.TokenID, &u.Filename, &u.OriginalFilename, &u.FileSize, &u.ContentType,
 		&u.Visibility, &u.Status, &u.StatusDetail, &u.DatamapAddress, &u.EstimatedCost, &u.ActualCost, &u.ErrorMessage, &u.TempPath,
-		&u.DataMap, &u.BackoffUntil, &u.BackoffAttempt, &u.LastQuotedCost, &u.PaymentMode, &u.GatewayPaymentKey, &u.GatewayFeeAtto,
+		&u.DataMap, &u.BackoffUntil, &u.BackoffAttempt, &u.LastQuotedCost, &u.PaymentBackend, &u.GatewayPaymentKey, &u.GatewayFeeAtto,
 		&u.QueuedAt, &u.ProcessingAt, &u.CompletedAt, &u.FailedAt, &u.CreatedAt,
 	)
 	return u, err
@@ -441,7 +441,7 @@ func (s *UploadService) ListPrivatePublishCandidates(limit int) ([]*Upload, erro
 // network fee (V2-1098) — both empty for local.
 func (s *UploadService) SetPaymentProvenance(id int64, mode, gatewayKey, feeAtto string) error {
 	_, err := s.db.Exec(
-		`UPDATE uploads SET payment_mode = ?, gateway_payment_key = NULLIF(?, ''), gateway_fee_atto = NULLIF(?, '') WHERE id = ?`,
+		`UPDATE uploads SET payment_backend = ?, gateway_payment_key = NULLIF(?, ''), gateway_fee_atto = NULLIF(?, '') WHERE id = ?`,
 		mode, gatewayKey, feeAtto, id,
 	)
 	return err

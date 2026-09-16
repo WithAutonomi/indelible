@@ -15,6 +15,42 @@ import (
 // Config holds all application configuration. Values can be set via
 // config file (TOML) or environment variables (INDELIBLE_ prefix).
 // Environment variables take precedence over file values.
+// PaymentBackend names the payment system that settles uploads for this
+// instance. It is the single place the backend set is defined: adding one
+// means a new constant here, a case in each method below, and a payer in
+// internal/worker — callers ask the backend what it needs (NeedsWallet,
+// WantsSignedQuotes) rather than comparing its name.
+type PaymentBackend string
+
+const (
+	// PaymentBackendLocal signs payments with this instance's default wallet.
+	PaymentBackendLocal PaymentBackend = "local"
+	// PaymentBackendHosted delegates payment to the Autonomi Pay gateway,
+	// which pays from the tenant's prepaid credits; no wallet on the host.
+	PaymentBackendHosted PaymentBackend = "hosted"
+)
+
+// Valid reports whether b is a known backend.
+func (b PaymentBackend) Valid() bool {
+	switch b {
+	case PaymentBackendLocal, PaymentBackendHosted:
+		return true
+	}
+	return false
+}
+
+// Hosted reports whether the gateway settles payments for this instance.
+func (b PaymentBackend) Hosted() bool { return b == PaymentBackendHosted }
+
+// NeedsWallet reports whether uploads require a wallet record and its
+// decrypted key on this instance. Only local signing does.
+func (b PaymentBackend) NeedsWallet() bool { return b == PaymentBackendLocal }
+
+// WantsSignedQuotes reports whether upload prepare must return the signed
+// quotes so the settling party can verify the batch offline before paying
+// (V2-926). Only a remote payer needs them; local signing trusts its own antd.
+func (b PaymentBackend) WantsSignedQuotes() bool { return b == PaymentBackendHosted }
+
 type Config struct {
 	Port           int      `toml:"port"`
 	DBURL          string   `toml:"db_url"`
@@ -75,13 +111,16 @@ type Config struct {
 	EvmRPCURL       string `toml:"evm_rpc_url"`       // EVM RPC endpoint
 	EvmTokenAddress string `toml:"evm_token_address"` // Payment token contract address
 
-	// Hosted payments (PoC, V2-929/V2-923): "local" (default) signs payments
-	// with the instance wallet; "hosted" POSTs each upload's payment batch to
-	// the gateway at PaymentGatewayURL instead of signing locally.
-	PaymentMode       string `toml:"payment_mode"`        // "local" (default) or "hosted"
-	PaymentGatewayURL string `toml:"payment_gateway_url"` // required when payment_mode=hosted
+	// PaymentBackend selects which payment system settles uploads (V2-929):
+	// PaymentBackendLocal signs with the instance wallet; PaymentBackendHosted
+	// POSTs each upload's payment batch to the gateway at PaymentGatewayURL.
+	// Exactly one backend is active per instance. Not to be confused with
+	// antd's per-request payment_mode (auto | merkle | single), which is how
+	// a payment is structured on-chain, not who pays for it.
+	PaymentBackend    PaymentBackend `toml:"payment_backend"`     // "local" (default) or "hosted"
+	PaymentGatewayURL string         `toml:"payment_gateway_url"` // required when payment_backend=hosted
 	// PaymentGatewayAPIKey authenticates this instance's tenant account at
-	// the gateway (Bearer). Required when payment_mode=hosted.
+	// the gateway (Bearer). Required when payment_backend=hosted.
 	PaymentGatewayAPIKey string `toml:"payment_gateway_api_key"`
 
 	// SMTP configuration for transactional emails (password reset, email verification)
@@ -391,14 +430,28 @@ func Load(path string) (*Config, error) {
 	if v := os.Getenv("INDELIBLE_EVM_TOKEN_ADDRESS"); v != "" {
 		cfg.EvmTokenAddress = v
 	}
-	if v := os.Getenv("INDELIBLE_PAYMENT_MODE"); v != "" {
-		cfg.PaymentMode = v
+	if v := os.Getenv("INDELIBLE_PAYMENT_BACKEND"); v != "" {
+		cfg.PaymentBackend = PaymentBackend(v)
 	}
 	if v := os.Getenv("INDELIBLE_PAYMENT_GATEWAY_URL"); v != "" {
 		cfg.PaymentGatewayURL = v
 	}
 	if v := os.Getenv("INDELIBLE_PAYMENT_GATEWAY_API_KEY"); v != "" {
 		cfg.PaymentGatewayAPIKey = v
+	}
+
+	// Payment backend: default local; anything outside the known set is a
+	// typo, not a new backend, so refuse to start rather than silently
+	// signing with the wallet. Hosted needs the gateway address up front —
+	// failing here beats failing on the first upload.
+	if cfg.PaymentBackend == "" {
+		cfg.PaymentBackend = PaymentBackendLocal
+	}
+	if !cfg.PaymentBackend.Valid() {
+		return nil, fmt.Errorf("payment_backend %q is not supported (INDELIBLE_PAYMENT_BACKEND / payment_backend in config): use %q or %q", cfg.PaymentBackend, PaymentBackendLocal, PaymentBackendHosted)
+	}
+	if cfg.PaymentBackend.Hosted() && cfg.PaymentGatewayURL == "" {
+		return nil, fmt.Errorf("payment_backend=hosted requires payment_gateway_url (INDELIBLE_PAYMENT_GATEWAY_URL)")
 	}
 
 	// Default antd binary

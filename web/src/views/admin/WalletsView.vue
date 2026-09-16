@@ -26,7 +26,7 @@ const newName = ref('')
 const newPrivateKey = ref('')
 const creating = ref(false)
 
-const paymentMode = ref('local')
+const paymentBackend = ref('local')
 const gatewayUrl = ref('')
 const gatewayCreditAtto = ref<string | null>(null)
 
@@ -51,12 +51,12 @@ async function fetchWallets() {
   try {
     const res = await api.get('/api/v2/admin/wallets')
     wallets.value = res.data.wallets || []
-    paymentMode.value = res.data.payment_mode || 'local'
+    paymentBackend.value = res.data.payment_backend || 'local'
     gatewayUrl.value = res.data.payment_gateway_url || ''
     gatewayCreditAtto.value = res.data.gateway_credit_atto ?? null
     // Hosted mode has no wallets to manage — Billing is the funds surface
     // (V2-1097); this page only lingers as a redirect for old links.
-    if (paymentMode.value === 'hosted') {
+    if (paymentBackend.value === 'hosted') {
       router.replace('/admin/billing')
       return
     }
@@ -185,7 +185,7 @@ onMounted(() => {
     </div>
 
     <!-- Hosted payment mode: these wallets don't pay for uploads (V2-1086/V2-930) -->
-    <Message v-if="paymentMode === 'hosted'" :severity="creditsLow() ? 'error' : 'warn'" :closable="false" class="mb-6">
+    <Message v-if="paymentBackend === 'hosted'" :severity="creditsLow() ? 'error' : 'warn'" :closable="false" class="mb-6">
       <div>
         <p class="font-medium">Hosted payment mode — uploads are paid by the payment gateway, not these wallets</p>
         <p v-if="gatewayCreditAtto !== null" class="text-sm font-medium mt-1">

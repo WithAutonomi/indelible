@@ -74,18 +74,15 @@ func WalletStatus(db *database.DB, cfg *config.Config) http.HandlerFunc {
 
 		// The UI reads this as "can this instance pay for uploads". Hosted
 		// mode pays via the gateway with no wallet at all (V2-929).
-		mode := "local"
-		if cfg.PaymentMode == "hosted" {
-			mode = "hosted"
-		}
+		hosted := cfg.PaymentBackend.Hosted()
 		out := map[string]any{
-			"has_default_wallet": hasWallet || mode == "hosted",
-			"payment_mode":       mode,
+			"has_default_wallet": hasWallet || hosted,
+			"payment_backend":    string(cfg.PaymentBackend),
 		}
 		// Crypto-free display (V2-1100): the gateway's USD-per-ANT rate, so
 		// every view can render costs and balances in fiat. Best-effort and
 		// cached — absent when the gateway has no rate or is unreachable.
-		if mode == "hosted" && cfg.PaymentGatewayURL != "" {
+		if hosted && cfg.PaymentGatewayURL != "" {
 			p := cachedGatewayPricing(r.Context(), cfg)
 			if p.rate != "" {
 				out["gateway_rate_usd_per_ant"] = p.rate

@@ -123,7 +123,7 @@ func grossUploadCost(prepared *antd.PrepareUploadResult, feePerBatch *big.Int) *
 }
 
 // payer is the payment seam: either the local EVM signer or the hosted
-// gateway client (payment_mode=hosted, V2-929 PoC). Both settle a prepared
+// gateway client (payment_backend=hosted, V2-929 PoC). Both settle a prepared
 // batch and answer balance queries; the worker never sees the difference.
 // signedQuotes carries the opaque signed artifacts from the prepare response
 // (V2-926) — the hosted gateway verifies them before paying; local signing
@@ -407,7 +407,7 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 	var wallet *services.Wallet
 	var err error
 	walletKey := ""
-	if w.cfg.PaymentMode != "hosted" {
+	if w.cfg.PaymentBackend.NeedsWallet() {
 		wallet, err = w.walletSvc.GetDefault()
 		if err != nil {
 			return fmt.Errorf("No wallet configured for payment")
@@ -424,8 +424,8 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 	// one EVM tx, and finalize returns a network address for the DataMap.
 	// Private visibility: DataMap stays in-memory and is stored locally.
 	var prepared *antd.PrepareUploadResult
-	if w.cfg.PaymentMode == "hosted" {
-		// Hosted mode (V2-926): ask for the signed quotes so the gateway can
+	if w.cfg.PaymentBackend.WantsSignedQuotes() {
+		// Remote payer (V2-926): ask for the signed quotes so the gateway can
 		// verify the batch offline before paying. Requires antd >= 0.13.0.
 		opts := antd.PrepareOptions{IncludeSignedQuotes: true}
 		if upload.Visibility == "public" {
@@ -446,9 +446,9 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 	// so the ceiling compares that same basis (V2-1113) and must ask the
 	// gateway what the fee is. The ensure-payer block further down is a no-op
 	// once this has run.
-	if w.cfg.PaymentMode == "hosted" {
+	if w.cfg.PaymentBackend.Hosted() {
 		if w.cfg.PaymentGatewayURL == "" {
-			return fmt.Errorf("payment_mode=hosted requires payment_gateway_url")
+			return fmt.Errorf("payment_backend=hosted requires payment_gateway_url")
 		}
 		if w.evmSigner == nil {
 			w.evmSigner = evm.NewHostedPayer(w.cfg.PaymentGatewayURL, w.cfg.PaymentGatewayAPIKey)
@@ -465,7 +465,7 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 	if maxFeeStr, err := w.settingsSvc.Get("max_gas_fee"); err == nil {
 		if maxFee, ok := new(big.Int).SetString(strings.TrimSpace(maxFeeStr), 10); ok && maxFee.Sign() > 0 {
 			var feePerBatch *big.Int
-			if w.cfg.PaymentMode == "hosted" {
+			if w.cfg.PaymentBackend.Hosted() {
 				if fp, ok := w.evmSigner.(interface {
 					FeePerBatch(context.Context) *big.Int
 				}); ok {
@@ -526,7 +526,7 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 	// Ensure the payer is connected. Hosted mode (V2-929 PoC) delegates
 	// signing to the payment gateway and was ensured above, before the cost
 	// ceiling; otherwise connect the local EVM signer to the resolved URL.
-	if w.cfg.PaymentMode != "hosted" && (w.evmSigner == nil || w.evmSigner.RPCUrl() != rpcURL) {
+	if !w.cfg.PaymentBackend.Hosted() && (w.evmSigner == nil || w.evmSigner.RPCUrl() != rpcURL) {
 		signer, err := evm.NewSigner(rpcURL)
 		if err != nil {
 			return fmt.Errorf("Failed to connect to EVM RPC: %w", err)
@@ -696,17 +696,14 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 // not double-record).
 func (w *UploadWorker) recordPayment(ctx context.Context, wallet *services.Wallet, upload *services.Upload, tokenAddr, paidAmount, txHash, gatewayKey, feeAtto string) {
 	// Provenance stamp (V2-1086): recorded with the payment so "how was this
-	// upload paid" survives instance-level payment_mode changes. feeAtto is
+	// upload paid" survives instance-level payment_backend changes. feeAtto is
 	// the gateway's per-batch network fee when one was charged (V2-1098).
-	mode := "local"
-	if w.cfg.PaymentMode == "hosted" {
-		mode = "hosted"
-	}
-	if err := w.uploadSvc.SetPaymentProvenance(upload.ID, mode, gatewayKey, feeAtto); err != nil {
+	backend := string(w.cfg.PaymentBackend)
+	if err := w.uploadSvc.SetPaymentProvenance(upload.ID, backend, gatewayKey, feeAtto); err != nil {
 		slog.Warn("failed to stamp payment provenance", "error", err)
 	}
 
-	if mode == "hosted" {
+	if w.cfg.PaymentBackend.Hosted() {
 		// No wallet paid — the gateway's treasury did, debiting the tenant's
 		// credits. wallet_id NULL (hosted rows belong to no wallet, V-929),
 		// distinct tx_type, balance_after = remaining gateway credits.

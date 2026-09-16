@@ -41,7 +41,7 @@ type uploadResponse struct {
 	ActualCost       *string `json:"actual_cost"`
 	// Payment provenance (V2-1086): "local" (instance wallet) or "hosted"
 	// (gateway credits) + the gateway's batch key; absent when nothing was paid.
-	PaymentMode       *string `json:"payment_mode,omitempty"`
+	PaymentBackend    *string `json:"payment_backend,omitempty"`
 	GatewayPaymentKey *string `json:"gateway_payment_key,omitempty"`
 	// GatewayFeeAtto itemizes the gateway's per-batch network fee out of the
 	// gross actual_cost (V2-1098); absent when no fee was charged.
@@ -78,8 +78,8 @@ func toUploadResponse(u *services.Upload) uploadResponse {
 	if u.ActualCost.Valid {
 		r.ActualCost = &u.ActualCost.String
 	}
-	if u.PaymentMode.Valid {
-		r.PaymentMode = &u.PaymentMode.String
+	if u.PaymentBackend.Valid {
+		r.PaymentBackend = &u.PaymentBackend.String
 	}
 	if u.GatewayPaymentKey.Valid {
 		r.GatewayPaymentKey = &u.GatewayPaymentKey.String
@@ -148,7 +148,7 @@ func CreateUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Pre-flight: reject early if no wallet is configured. Hosted mode
 		// (V2-929) needs no wallet — the payment gateway's treasury signs.
-		if cfg.PaymentMode != "hosted" {
+		if cfg.PaymentBackend.NeedsWallet() {
 			wallet, err := walletSvc.GetDefault()
 			if err != nil || wallet == nil {
 				jsonErrorWithCode(w, "No wallet configured", "wallet_not_configured", http.StatusServiceUnavailable)
@@ -575,7 +575,7 @@ func GetUpload(db *database.DB) http.HandlerFunc {
 // runs self-encryption + a real quote round-trip with the live network's pricer.
 //
 // @Summary      Quote upload cost
-// @Description  Get an exact cost quote by sending the file bytes. antd runs self-encryption and queries the live network for chunk pricing — no estimation, no scaling. Returns a structured estimated_cost object with cost, chunk_count, gas, and payment_mode. In hosted payment mode the gateway debits gross — batch total plus a per-batch network fee (V2-1098) — so the response additionally carries gateway_fee_per_batch_atto, estimated_batch_count, and estimated_total_with_fee_atto (V2-1113).
+// @Description  Get an exact cost quote by sending the file bytes. antd runs self-encryption and queries the live network for chunk pricing — no estimation, no scaling. Returns a structured estimated_cost object with cost, chunk_count, gas, and payment_mode (antd's on-chain payment strategy: auto | merkle | single). With the hosted payment backend the gateway debits gross — batch total plus a per-batch network fee (V2-1098) — so the response additionally carries gateway_fee_per_batch_atto, estimated_batch_count, and estimated_total_with_fee_atto (V2-1113).
 // @Tags         Uploads
 // @Accept       multipart/form-data
 // @Produce      json
@@ -658,7 +658,7 @@ func QuoteUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 		// settles one upload as exactly one gateway batch, so the estimate
 		// adds one fee. Still an estimate: full dedup at prepare time sends
 		// no batch and pays no fee. Exact big.Int math, atto in, atto out.
-		if cfg.PaymentMode == "hosted" && cfg.PaymentGatewayURL != "" {
+		if cfg.PaymentBackend.Hosted() && cfg.PaymentGatewayURL != "" {
 			if fee := cachedGatewayPricing(r.Context(), cfg).fee; fee != "" {
 				if feeInt, ok := new(big.Int).SetString(fee, 10); ok && feeInt.Sign() > 0 {
 					out["gateway_fee_per_batch_atto"] = feeInt.String()

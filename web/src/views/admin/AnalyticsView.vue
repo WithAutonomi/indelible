@@ -13,18 +13,18 @@ const loading = ref(true)
 
 // Crypto-free display (V2-1100): hosted mode renders spend in fiat at the
 // gateway's rate; without a rate the raw atto figures stand as before.
-const paymentMode = ref('local')
+const paymentBackend = ref('local')
 const gatewayRate = ref('')
 async function fetchRate() {
   try {
     const res = await api.get('/api/v2/system/wallet-status')
-    paymentMode.value = res.data.payment_mode || 'local'
+    paymentBackend.value = res.data.payment_backend || 'local'
     gatewayRate.value = res.data.gateway_rate_usd_per_ant || ''
   } catch {
     // fiat display is best-effort
   }
 }
-const fiat = () => paymentMode.value === 'hosted' && gatewayRate.value !== ''
+const fiat = () => paymentBackend.value === 'hosted' && gatewayRate.value !== ''
 function fmtSpend(atto: string | null | undefined): string {
   if (!atto) return '0'
   if (fiat()) {

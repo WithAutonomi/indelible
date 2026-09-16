@@ -74,19 +74,16 @@ func AdminListWallets(db *database.DB, cfg *config.Config) http.HandlerFunc {
 			resp = append(resp, toWalletResponse(wl))
 		}
 
-		// Payment mode rides along so the wallet screen can state whether
+		// Payment backend rides along so the wallet screen can state whether
 		// these wallets actually pay for uploads (hosted mode: they don't —
 		// the gateway settles from prepaid credits, V2-1086/V2-930).
-		mode := "local"
-		if cfg.PaymentMode == "hosted" {
-			mode = "hosted"
-		}
+		hosted := cfg.PaymentBackend.Hosted()
 		out := map[string]any{
 			"wallets":             resp,
-			"payment_mode":        mode,
+			"payment_backend":     string(cfg.PaymentBackend),
 			"payment_gateway_url": cfg.PaymentGatewayURL,
 		}
-		if mode == "hosted" && cfg.PaymentGatewayURL != "" {
+		if hosted && cfg.PaymentGatewayURL != "" {
 			// Remaining credits, best-effort: an unreachable gateway must
 			// not break the wallets screen — the field is simply absent.
 			balCtx, cancel := context.WithTimeout(r.Context(), 3*time.Second)

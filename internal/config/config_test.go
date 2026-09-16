@@ -302,3 +302,58 @@ func TestLoad_DownloadCacheMaxBytesEnvInvalid(t *testing.T) {
 		}
 	}
 }
+
+func TestLoad_PaymentBackendDefaultsLocal(t *testing.T) {
+	setRequiredSecrets(t)
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.PaymentBackend != PaymentBackendLocal {
+		t.Errorf("PaymentBackend = %q, want %q by default", cfg.PaymentBackend, PaymentBackendLocal)
+	}
+	if !cfg.PaymentBackend.NeedsWallet() || cfg.PaymentBackend.Hosted() || cfg.PaymentBackend.WantsSignedQuotes() {
+		t.Error("local backend should need a wallet, not be hosted, and not want signed quotes")
+	}
+}
+
+func TestLoad_PaymentBackendUnknownRejected(t *testing.T) {
+	// A typo must not fall through to wallet signing.
+	setRequiredSecrets(t)
+	t.Setenv("INDELIBLE_PAYMENT_BACKEND", "hsoted")
+
+	if _, err := Load(""); err == nil {
+		t.Fatal("expected Load to reject an unknown payment_backend")
+	}
+}
+
+func TestLoad_PaymentBackendHostedRequiresGatewayURL(t *testing.T) {
+	setRequiredSecrets(t)
+	t.Setenv("INDELIBLE_PAYMENT_BACKEND", "hosted")
+	// Intentionally no INDELIBLE_PAYMENT_GATEWAY_URL.
+
+	if _, err := Load(""); err == nil {
+		t.Fatal("expected Load to fail: hosted backend without a gateway URL")
+	}
+}
+
+func TestLoad_PaymentBackendHostedFromEnv(t *testing.T) {
+	setRequiredSecrets(t)
+	t.Setenv("INDELIBLE_PAYMENT_BACKEND", "hosted")
+	t.Setenv("INDELIBLE_PAYMENT_GATEWAY_URL", "http://gateway.test:8090")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.PaymentBackend.Hosted() {
+		t.Errorf("PaymentBackend = %q, want hosted", cfg.PaymentBackend)
+	}
+	if cfg.PaymentBackend.NeedsWallet() {
+		t.Error("hosted backend must not require a wallet on the instance")
+	}
+	if !cfg.PaymentBackend.WantsSignedQuotes() {
+		t.Error("hosted backend must ask prepare for signed quotes (V2-926)")
+	}
+}

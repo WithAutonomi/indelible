@@ -17,11 +17,11 @@ const { isDark, toggle: toggleTheme } = useTheme()
 // Hosted payment mode swaps the Wallets nav slot for Billing (V2-1097):
 // there are no wallets to manage, the gateway's prepaid credits are the
 // funds surface. Defaults to local until wallet-status answers.
-const paymentMode = ref('local')
+const paymentBackend = ref('local')
 onMounted(async () => {
   try {
     const res = await api.get('/api/v2/system/wallet-status')
-    paymentMode.value = res.data.payment_mode || 'local'
+    paymentBackend.value = res.data.payment_backend || 'local'
   } catch {
     // keep 'local' — worst case the nav shows Wallets, which redirects
   }
@@ -64,7 +64,7 @@ const navItems = computed(() => {
     items.push(
       { label: 'Users', icon: 'pi pi-users', to: '/admin/users' },
       { label: 'Groups', icon: 'pi pi-id-card', to: '/admin/groups' },
-      paymentMode.value === 'hosted'
+      paymentBackend.value === 'hosted'
         ? { label: 'Billing', icon: 'pi pi-credit-card', to: '/admin/billing' }
         : { label: 'Wallets', icon: 'pi pi-wallet', to: '/admin/wallets' },
       { label: 'Transactions', icon: 'pi pi-receipt', to: '/admin/transactions' },

@@ -30,7 +30,7 @@ const toast = useToast()
 const noWallet = ref(false)
 // Crypto-free display (V2-1100): in hosted mode, costs render in fiat at
 // the gateway's rate; ANT only when no rate is available.
-const paymentMode = ref('local')
+const paymentBackend = ref('local')
 const gatewayRate = ref('')
 // Fee-aware estimates (V2-1113): the gateway adds a per-batch network fee to
 // every settled batch (V2-1098) — each upload settles as one batch, so warn
@@ -41,7 +41,7 @@ async function checkWalletStatus() {
   try {
     const res = await api.get('/api/v2/system/wallet-status')
     noWallet.value = !res.data.has_default_wallet
-    paymentMode.value = res.data.payment_mode || 'local'
+    paymentBackend.value = res.data.payment_backend || 'local'
     gatewayRate.value = res.data.gateway_rate_usd_per_ant || ''
     gatewayFee.value = res.data.gateway_fee_per_batch_atto || ''
   } catch {
@@ -51,7 +51,7 @@ async function checkWalletStatus() {
 
 // "≈ $0.01" / "0.005 ANT" per upload, or null when no fee applies — hosted only.
 const feeNote = computed(() =>
-  paymentMode.value === 'hosted' ? fmtFeePerBatch(gatewayFee.value, gatewayRate.value) : null,
+  paymentBackend.value === 'hosted' ? fmtFeePerBatch(gatewayFee.value, gatewayRate.value) : null,
 )
 
 // Stored estimates are the net antd quote; hosted mode displays gross — plus
@@ -59,13 +59,13 @@ const feeNote = computed(() =>
 // (last_quoted_cost is NOT run through this: the worker records it gross.)
 function estimateWithFee(atto: string | null | undefined): string | null {
   if (!atto) return null
-  return paymentMode.value === 'hosted' ? grossEstimateAtto(atto, gatewayFee.value) : atto
+  return paymentBackend.value === 'hosted' ? grossEstimateAtto(atto, gatewayFee.value) : atto
 }
 
 // Hosted → "≈ $0.02" (raw value in the tooltip); local → unchanged.
 function fmtCost(atto: string | null | undefined): string {
   if (!atto) return '—'
-  if (paymentMode.value === 'hosted') {
+  if (paymentBackend.value === 'hosted') {
     const usd = approxUSD(atto, gatewayRate.value)
     if (usd) return usd
   }
@@ -1013,10 +1013,10 @@ watch(() => route.query.focus, (f, old) => {
             <!-- Last quoted is the max_gas_fee comparison basis — gross (incl.
                  the per-batch network fee) in hosted mode (V2-1113). -->
             <div v-if="detail.last_quoted_cost" class="flex justify-between gap-3"><dt class="text-surface-500">Last quoted</dt><dd :title="detail.last_quoted_cost">{{ fmtCost(detail.last_quoted_cost) }}</dd></div>
-            <div v-if="detail.payment_mode" class="flex justify-between gap-3">
+            <div v-if="detail.payment_backend" class="flex justify-between gap-3">
               <dt class="text-surface-500">Paid via</dt>
-              <dd><Tag :value="detail.payment_mode === 'hosted' ? 'Hosted gateway credits' : 'Wallet (local)'"
-                :severity="detail.payment_mode === 'hosted' ? 'warn' : 'info'" /></dd>
+              <dd><Tag :value="detail.payment_backend === 'hosted' ? 'Hosted gateway credits' : 'Wallet (local)'"
+                :severity="detail.payment_backend === 'hosted' ? 'warn' : 'info'" /></dd>
             </div>
             <div v-if="detail.gateway_payment_key" class="flex justify-between gap-3">
               <dt class="text-surface-500">Gateway batch</dt>

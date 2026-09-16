@@ -21,8 +21,8 @@ import (
 // nil when the instance is not in hosted mode (these endpoints have no
 // meaning for local signing).
 func billingPayer(w http.ResponseWriter, cfg *config.Config) *evm.HostedPayer {
-	if cfg.PaymentMode != "hosted" || cfg.PaymentGatewayURL == "" {
-		jsonError(w, "billing is only available in hosted payment mode", http.StatusBadRequest)
+	if !cfg.PaymentBackend.Hosted() || cfg.PaymentGatewayURL == "" {
+		jsonError(w, "billing is only available with the hosted payment backend", http.StatusBadRequest)
 		return nil
 	}
 	return evm.NewHostedPayer(cfg.PaymentGatewayURL, cfg.PaymentGatewayAPIKey)
@@ -52,7 +52,7 @@ func AdminBillingSummary(db *database.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 		out := map[string]any{
-			"payment_mode":        "hosted",
+			"payment_backend":     string(config.PaymentBackendHosted),
 			"payment_gateway_url": cfg.PaymentGatewayURL,
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
