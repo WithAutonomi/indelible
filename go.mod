@@ -4,7 +4,7 @@ go 1.25.13
 
 require (
 	github.com/BurntSushi/toml v1.6.0
-	github.com/WithAutonomi/ant-sdk/antd-go v0.12.0
+	github.com/WithAutonomi/ant-sdk/antd-go v0.13.0
 	github.com/coreos/go-oidc/v3 v3.18.0
 	github.com/elimity-com/scim v0.0.0-20240320110924-172bf2aee9c8
 	github.com/ethereum/go-ethereum v1.17.3
@@ -79,5 +79,3 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
-
-replace github.com/WithAutonomi/ant-sdk/antd-go => ../ant-sdk-854/antd-go
