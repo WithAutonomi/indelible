@@ -424,7 +424,8 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 	// one EVM tx, and finalize returns a network address for the DataMap.
 	// Private visibility: DataMap stays in-memory and is stored locally.
 	var prepared *antd.PrepareUploadResult
-	if w.cfg.PaymentBackend.WantsSignedQuotes() {
+	switch {
+	case w.cfg.PaymentBackend.WantsSignedQuotes():
 		// Remote payer (V2-926): ask for the signed quotes so the gateway can
 		// verify the batch offline before paying. Requires antd >= 0.13.0.
 		opts := antd.PrepareOptions{IncludeSignedQuotes: true}
@@ -432,9 +433,9 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 			opts.Visibility = "public"
 		}
 		prepared, err = w.antdClient.PrepareUploadWithOptions(ctx, tempPath, opts)
-	} else if upload.Visibility == "public" {
+	case upload.Visibility == "public":
 		prepared, err = w.antdClient.PrepareUploadPublic(ctx, tempPath)
-	} else {
+	default:
 		prepared, err = w.antdClient.PrepareUpload(ctx, tempPath)
 	}
 	if err != nil {
