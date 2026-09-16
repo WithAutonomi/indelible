@@ -357,3 +357,52 @@ func TestLoad_PaymentBackendHostedFromEnv(t *testing.T) {
 		t.Error("hosted backend must ask prepare for signed quotes (V2-926)")
 	}
 }
+
+func TestLoad_HostedBackendBootsWithoutWalletKey(t *testing.T) {
+	// V2-929: a hosted-backend writer has no wallet to encrypt, so the wallet
+	// key is optional. It boots with workers ON, flags the key unconfigured
+	// (wallet/OIDC create refuse), and still builds a placeholder keyring.
+	t.Setenv("INDELIBLE_JWT_SECRET", "test-secret-at-least-32-bytes-long-xx")
+	t.Setenv("INDELIBLE_PAYMENT_BACKEND", "hosted")
+	t.Setenv("INDELIBLE_PAYMENT_GATEWAY_URL", "http://gateway.test:8090")
+	// Intentionally no INDELIBLE_WALLET_ENCRYPTION_KEY; workers default to enabled.
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("hosted Load without wallet key should succeed, got: %v", err)
+	}
+	if !cfg.WorkersEnabled {
+		t.Error("WorkersEnabled = false, want true (this is a writer)")
+	}
+	if cfg.WalletKeyConfigured() {
+		t.Error("WalletKeyConfigured() = true, want false without a real key")
+	}
+	if cfg.WalletKeyring() == nil {
+		t.Error("WalletKeyring() = nil, want a placeholder keyring")
+	}
+}
+
+func TestLoad_HostedBackendKeepsWalletKeyWhenSet(t *testing.T) {
+	// Setting the key on a hosted writer keeps OIDC client-secret storage usable.
+	setRequiredSecrets(t)
+	t.Setenv("INDELIBLE_PAYMENT_BACKEND", "hosted")
+	t.Setenv("INDELIBLE_PAYMENT_GATEWAY_URL", "http://gateway.test:8090")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.WalletKeyConfigured() {
+		t.Error("WalletKeyConfigured() = false, want true when the key is set")
+	}
+}
+
+func TestLoad_LocalBackendStillRequiresWalletKey(t *testing.T) {
+	// The relaxation is hosted-only; local signing still needs the key.
+	t.Setenv("INDELIBLE_JWT_SECRET", "test-secret-at-least-32-bytes-long-xx")
+	t.Setenv("INDELIBLE_PAYMENT_BACKEND", "local")
+
+	if _, err := Load(""); err == nil {
+		t.Fatal("expected Load to fail: local backend, workers on, no wallet key")
+	}
+}

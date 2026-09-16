@@ -519,7 +519,7 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 	// Cache antd's response only when our config is empty — preserves the
 	// original "first PrepareUpload populates cfg" behaviour for installs
 	// that rely on antd as authority.
-	if w.cfg.EvmRPCURL == "" && prepared.RPCUrl != "" {
+	if w.cfg.PaymentBackend.NeedsWallet() && w.cfg.EvmRPCURL == "" && prepared.RPCUrl != "" {
 		w.cfg.EvmRPCURL = prepared.RPCUrl
 		w.cfg.EvmTokenAddress = prepared.PaymentTokenAddress
 	}

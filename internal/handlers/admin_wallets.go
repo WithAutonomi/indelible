@@ -115,7 +115,7 @@ func AdminListWallets(db *database.DB, cfg *config.Config) http.HandlerFunc {
 // placeholder key into the shared DB — these operations belong on the writer.
 func requireWalletKey(w http.ResponseWriter, cfg *config.Config) bool {
 	if !cfg.WalletKeyConfigured() {
-		jsonError(w, "wallet/OIDC management is unavailable on this instance (no wallet encryption key configured); perform it on the writer instance", http.StatusServiceUnavailable)
+		jsonError(w, "wallet/OIDC management is unavailable on this instance (no wallet encryption key configured): on a reader, perform it on the writer; on a hosted-backend writer, set INDELIBLE_WALLET_ENCRYPTION_KEY to enable OIDC client-secret storage", http.StatusServiceUnavailable)
 		return false
 	}
 	return true
