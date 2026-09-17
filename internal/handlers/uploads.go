@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/big"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -38,15 +39,22 @@ type uploadResponse struct {
 	DatamapAddress   *string `json:"datamap_address"`
 	EstimatedCost    *string `json:"estimated_cost"`
 	ActualCost       *string `json:"actual_cost"`
-	ErrorMessage     *string `json:"error_message"`
-	BackoffUntil     *string `json:"backoff_until,omitempty"`
-	BackoffAttempt   int     `json:"backoff_attempt,omitempty"`
-	LastQuotedCost   *string `json:"last_quoted_cost,omitempty"`
-	QueuedAt         string  `json:"queued_at"`
-	ProcessingAt     *string `json:"processing_at"`
-	CompletedAt      *string `json:"completed_at"`
-	FailedAt         *string `json:"failed_at"`
-	CreatedAt        string  `json:"created_at"`
+	// Payment provenance (V2-1086): "local" (instance wallet) or "hosted"
+	// (gateway credits) + the gateway's batch key; absent when nothing was paid.
+	PaymentBackend    *string `json:"payment_backend,omitempty"`
+	GatewayPaymentKey *string `json:"gateway_payment_key,omitempty"`
+	// GatewayFeeAtto itemizes the gateway's per-batch network fee out of the
+	// gross actual_cost (V2-1098); absent when no fee was charged.
+	GatewayFeeAtto *string `json:"gateway_fee_atto,omitempty"`
+	ErrorMessage   *string `json:"error_message"`
+	BackoffUntil   *string `json:"backoff_until,omitempty"`
+	BackoffAttempt int     `json:"backoff_attempt,omitempty"`
+	LastQuotedCost *string `json:"last_quoted_cost,omitempty"`
+	QueuedAt       string  `json:"queued_at"`
+	ProcessingAt   *string `json:"processing_at"`
+	CompletedAt    *string `json:"completed_at"`
+	FailedAt       *string `json:"failed_at"`
+	CreatedAt      string  `json:"created_at"`
 }
 
 func toUploadResponse(u *services.Upload) uploadResponse {
@@ -69,6 +77,15 @@ func toUploadResponse(u *services.Upload) uploadResponse {
 	}
 	if u.ActualCost.Valid {
 		r.ActualCost = &u.ActualCost.String
+	}
+	if u.PaymentBackend.Valid {
+		r.PaymentBackend = &u.PaymentBackend.String
+	}
+	if u.GatewayPaymentKey.Valid {
+		r.GatewayPaymentKey = &u.GatewayPaymentKey.String
+	}
+	if u.GatewayFeeAtto.Valid {
+		r.GatewayFeeAtto = &u.GatewayFeeAtto.String
 	}
 	if u.ErrorMessage.Valid {
 		r.ErrorMessage = &u.ErrorMessage.String
@@ -129,11 +146,14 @@ func CreateUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 	walletSvc := services.NewWalletService(db, cfg.WalletKeyring())
 
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Pre-flight: reject early if no wallet is configured
-		wallet, err := walletSvc.GetDefault()
-		if err != nil || wallet == nil {
-			jsonErrorWithCode(w, "No wallet configured", "wallet_not_configured", http.StatusServiceUnavailable)
-			return
+		// Pre-flight: reject early if no wallet is configured. Hosted mode
+		// (V2-929) needs no wallet — the payment gateway's treasury signs.
+		if cfg.PaymentBackend.NeedsWallet() {
+			wallet, err := walletSvc.GetDefault()
+			if err != nil || wallet == nil {
+				jsonErrorWithCode(w, "No wallet configured", "wallet_not_configured", http.StatusServiceUnavailable)
+				return
+			}
 		}
 
 		// Disk back-pressure: the disk-alert worker sets "uploads_paused" when the
@@ -555,7 +575,7 @@ func GetUpload(db *database.DB) http.HandlerFunc {
 // runs self-encryption + a real quote round-trip with the live network's pricer.
 //
 // @Summary      Quote upload cost
-// @Description  Get an exact cost quote by sending the file bytes. antd runs self-encryption and queries the live network for chunk pricing — no estimation, no scaling. Returns a structured estimated_cost object with cost, chunk_count, gas, and payment_mode.
+// @Description  Get an exact cost quote by sending the file bytes. antd runs self-encryption and queries the live network for chunk pricing — no estimation, no scaling. Returns a structured estimated_cost object with cost, chunk_count, gas, and payment_mode (antd's on-chain payment strategy: auto | merkle | single). With the hosted payment backend the gateway debits gross — batch total plus a per-batch network fee (V2-1098) — so the response additionally carries gateway_fee_per_batch_atto, estimated_batch_count, and estimated_total_with_fee_atto (V2-1113).
 // @Tags         Uploads
 // @Accept       multipart/form-data
 // @Produce      json
@@ -625,12 +645,32 @@ func QuoteUpload(db *database.DB, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		jsonResponse(w, http.StatusOK, map[string]any{
+		out := map[string]any{
 			"estimated_cost":    est,
 			"file_size":         written,
 			"original_filename": filepath.Base(header.Filename),
 			"visibility":        visibility,
-		})
+		}
+
+		// Hosted mode (V2-1113): the gateway debits GROSS — batch total plus
+		// a per-batch network fee (V2-1098) — so a quote without the fee
+		// understates what the credits will actually drop by. The worker
+		// settles one upload as exactly one gateway batch, so the estimate
+		// adds one fee. Still an estimate: full dedup at prepare time sends
+		// no batch and pays no fee. Exact big.Int math, atto in, atto out.
+		if cfg.PaymentBackend.Hosted() && cfg.PaymentGatewayURL != "" {
+			if fee := cachedGatewayPricing(r.Context(), cfg).fee; fee != "" {
+				if feeInt, ok := new(big.Int).SetString(fee, 10); ok && feeInt.Sign() > 0 {
+					out["gateway_fee_per_batch_atto"] = feeInt.String()
+					out["estimated_batch_count"] = 1
+					if cost, ok := new(big.Int).SetString(est.Cost, 10); ok {
+						out["estimated_total_with_fee_atto"] = new(big.Int).Add(cost, feeInt).String()
+					}
+				}
+			}
+		}
+
+		jsonResponse(w, http.StatusOK, out)
 	}
 }
 
@@ -1285,7 +1325,6 @@ func DeleteUpload(db *database.DB, cache *downloadcache.Store) http.HandlerFunc 
 		jsonResponse(w, http.StatusOK, map[string]string{"message": "upload deleted"})
 	}
 }
-
 
 // effectiveAllowlist resolves the content-type allowlist for an upload using
 // the override chain: token > user > system setting > built-in default.

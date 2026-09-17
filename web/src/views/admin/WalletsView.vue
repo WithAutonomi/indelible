@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useConfirm } from 'primevue/useconfirm'
 import { useToast } from 'primevue/usetoast'
 import { api } from '../../api/client'
@@ -16,6 +16,7 @@ import Dialog from 'primevue/dialog'
 import Drawer from 'primevue/drawer'
 
 const route = useRoute()
+const router = useRouter()
 const confirm = useConfirm()
 const toast = useToast()
 const wallets = ref<Wallet[]>([])
@@ -25,11 +26,40 @@ const newName = ref('')
 const newPrivateKey = ref('')
 const creating = ref(false)
 
+const paymentBackend = ref('local')
+const gatewayUrl = ref('')
+const gatewayCreditAtto = ref<string | null>(null)
+
+// Atto → ANT for display: BigInt string math, no floats.
+function attoToANT(atto: string): string {
+  const s = atto.padStart(19, '0')
+  const whole = s.slice(0, -18)
+  const frac = s.slice(-18).replace(/0+$/, '')
+  return frac ? `${whole}.${frac}` : whole
+}
+
+// Low-credit alarm threshold: 1 ANT (a handful of uploads' headroom).
+const LOW_CREDIT_ATTO = 10n ** 18n
+
+const creditsLow = () => {
+  if (gatewayCreditAtto.value === null) return false
+  try { return BigInt(gatewayCreditAtto.value) < LOW_CREDIT_ATTO } catch { return false }
+}
+
 async function fetchWallets() {
   loading.value = true
   try {
     const res = await api.get('/api/v2/admin/wallets')
     wallets.value = res.data.wallets || []
+    paymentBackend.value = res.data.payment_backend || 'local'
+    gatewayUrl.value = res.data.payment_gateway_url || ''
+    gatewayCreditAtto.value = res.data.gateway_credit_atto ?? null
+    // Hosted mode has no wallets to manage — Billing is the funds surface
+    // (V2-1097); this page only lingers as a redirect for old links.
+    if (paymentBackend.value === 'hosted') {
+      router.replace('/admin/billing')
+      return
+    }
   } catch {
     // ignore
   } finally {
@@ -153,6 +183,18 @@ onMounted(() => {
       <h1 class="text-2xl font-bold">Wallets</h1>
       <Button icon="pi pi-plus" label="Add Wallet" @click="showCreate = !showCreate" />
     </div>
+
+    <!-- Hosted payment mode: these wallets don't pay for uploads (V2-1086/V2-930) -->
+    <Message v-if="paymentBackend === 'hosted'" :severity="creditsLow() ? 'error' : 'warn'" :closable="false" class="mb-6">
+      <div>
+        <p class="font-medium">Hosted payment mode — uploads are paid by the payment gateway, not these wallets</p>
+        <p v-if="gatewayCreditAtto !== null" class="text-sm font-medium mt-1">
+          Remaining gateway credits: {{ attoToANT(gatewayCreditAtto) }} ANT
+          <span v-if="creditsLow()"> — low balance: uploads will start failing; top up your credits.</span>
+        </p>
+        <p class="text-sm">This instance settles upload payments through the payment gateway<span v-if="gatewayUrl"> at <code>{{ gatewayUrl }}</code></span>, funded by prepaid credits. Wallet balances shown below do not fund uploads.</p>
+      </div>
+    </Message>
 
     <!-- No wallet setup prompt -->
     <Message v-if="!loading && wallets.length === 0 && !showCreate" severity="warn" :closable="false" class="mb-6">

@@ -30,7 +30,12 @@ func NewTransactionService(db *database.DB) *TransactionService {
 }
 
 // Record logs a new transaction with an optional on-chain tx hash.
+// walletID 0 records NULL — hosted payments belong to no wallet (V2-929).
 func (s *TransactionService) Record(walletID int64, uploadID *int64, txType, amount, balanceAfter, txHash string) (*Transaction, error) {
+	var wID sql.NullInt64
+	if walletID != 0 {
+		wID = sql.NullInt64{Int64: walletID, Valid: true}
+	}
 	var uID sql.NullInt64
 	if uploadID != nil {
 		uID = sql.NullInt64{Int64: *uploadID, Valid: true}
@@ -43,7 +48,7 @@ func (s *TransactionService) Record(walletID int64, uploadID *int64, txType, amo
 	var id int64
 	err := s.db.QueryRow(
 		`INSERT INTO transactions (wallet_id, upload_id, tx_type, amount, balance_after, tx_hash) VALUES (?, ?, ?, ?, ?, ?) RETURNING id`,
-		walletID, uID, txType, amount, balanceAfter, hash,
+		wID, uID, txType, amount, balanceAfter, hash,
 	).Scan(&id)
 	if err != nil {
 		return nil, err
@@ -64,7 +69,7 @@ func (s *TransactionService) HasByUpload(uploadID int64) (bool, error) {
 func (s *TransactionService) GetByID(id int64) (*Transaction, error) {
 	t := &Transaction{}
 	err := s.db.QueryRow(
-		`SELECT id, wallet_id, upload_id, tx_type, amount, balance_after, tx_hash, created_at FROM transactions WHERE id = ?`, id,
+		`SELECT id, COALESCE(wallet_id, 0), upload_id, tx_type, amount, balance_after, tx_hash, created_at FROM transactions WHERE id = ?`, id,
 	).Scan(&t.ID, &t.WalletID, &t.UploadID, &t.TxType, &t.Amount, &t.BalanceAfter, &t.TxHash, &t.CreatedAt)
 	if err != nil {
 		return nil, err
@@ -82,7 +87,7 @@ func (s *TransactionService) ListByWallet(walletID int64, limit, offset int) ([]
 	s.db.QueryRow(`SELECT COUNT(*) FROM transactions WHERE wallet_id = ?`, walletID).Scan(&total)
 
 	rows, err := s.db.Query(
-		`SELECT id, wallet_id, upload_id, tx_type, amount, balance_after, tx_hash, created_at
+		`SELECT id, COALESCE(wallet_id, 0), upload_id, tx_type, amount, balance_after, tx_hash, created_at
 		 FROM transactions WHERE wallet_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`,
 		walletID, limit, offset,
 	)
@@ -136,7 +141,7 @@ func (s *TransactionService) List(walletID *int64, txType string, since, until *
 	}
 
 	rows, err := s.db.Query(
-		`SELECT id, wallet_id, upload_id, tx_type, amount, balance_after, tx_hash, created_at
+		`SELECT id, COALESCE(wallet_id, 0), upload_id, tx_type, amount, balance_after, tx_hash, created_at
 		 FROM transactions`+where+` ORDER BY created_at DESC LIMIT ? OFFSET ?`,
 		append(args, limit, offset)...,
 	)

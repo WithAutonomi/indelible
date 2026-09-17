@@ -302,3 +302,122 @@ func TestLoad_DownloadCacheMaxBytesEnvInvalid(t *testing.T) {
 		}
 	}
 }
+
+func TestLoad_PaymentBackendDefaultsLocal(t *testing.T) {
+	setRequiredSecrets(t)
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.PaymentBackend != PaymentBackendLocal {
+		t.Errorf("PaymentBackend = %q, want %q by default", cfg.PaymentBackend, PaymentBackendLocal)
+	}
+	if !cfg.PaymentBackend.NeedsWallet() || cfg.PaymentBackend.Hosted() || cfg.PaymentBackend.WantsSignedQuotes() {
+		t.Error("local backend should need a wallet, not be hosted, and not want signed quotes")
+	}
+}
+
+func TestLoad_PaymentBackendUnknownRejected(t *testing.T) {
+	// A typo must not fall through to wallet signing.
+	setRequiredSecrets(t)
+	t.Setenv("INDELIBLE_PAYMENT_BACKEND", "hsoted")
+
+	if _, err := Load(""); err == nil {
+		t.Fatal("expected Load to reject an unknown payment_backend")
+	}
+}
+
+func TestLoad_PaymentBackendHostedRequiresGatewayURL(t *testing.T) {
+	setRequiredSecrets(t)
+	t.Setenv("INDELIBLE_PAYMENT_BACKEND", "hosted")
+	// Intentionally no INDELIBLE_PAYMENT_GATEWAY_URL.
+
+	if _, err := Load(""); err == nil {
+		t.Fatal("expected Load to fail: hosted backend without a gateway URL")
+	}
+}
+
+func TestLoad_PaymentBackendHostedFromEnv(t *testing.T) {
+	setRequiredSecrets(t)
+	t.Setenv("INDELIBLE_PAYMENT_BACKEND", "hosted")
+	t.Setenv("INDELIBLE_PAYMENT_GATEWAY_URL", "http://gateway.test:8090")
+	t.Setenv("INDELIBLE_PAYMENT_GATEWAY_API_KEY", "pgk_test")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.PaymentBackend.Hosted() {
+		t.Errorf("PaymentBackend = %q, want hosted", cfg.PaymentBackend)
+	}
+	if cfg.PaymentBackend.NeedsWallet() {
+		t.Error("hosted backend must not require a wallet on the instance")
+	}
+	if !cfg.PaymentBackend.WantsSignedQuotes() {
+		t.Error("hosted backend must ask prepare for signed quotes (V2-926)")
+	}
+}
+
+func TestLoad_HostedBackendBootsWithoutWalletKey(t *testing.T) {
+	// V2-929: a hosted-backend writer has no wallet to encrypt, so the wallet
+	// key is optional. It boots with workers ON, flags the key unconfigured
+	// (wallet/OIDC create refuse), and still builds a placeholder keyring.
+	t.Setenv("INDELIBLE_JWT_SECRET", "test-secret-at-least-32-bytes-long-xx")
+	t.Setenv("INDELIBLE_PAYMENT_BACKEND", "hosted")
+	t.Setenv("INDELIBLE_PAYMENT_GATEWAY_URL", "http://gateway.test:8090")
+	t.Setenv("INDELIBLE_PAYMENT_GATEWAY_API_KEY", "pgk_test")
+	// Intentionally no INDELIBLE_WALLET_ENCRYPTION_KEY; workers default to enabled.
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("hosted Load without wallet key should succeed, got: %v", err)
+	}
+	if !cfg.WorkersEnabled {
+		t.Error("WorkersEnabled = false, want true (this is a writer)")
+	}
+	if cfg.WalletKeyConfigured() {
+		t.Error("WalletKeyConfigured() = true, want false without a real key")
+	}
+	if cfg.WalletKeyring() == nil {
+		t.Error("WalletKeyring() = nil, want a placeholder keyring")
+	}
+}
+
+func TestLoad_HostedBackendKeepsWalletKeyWhenSet(t *testing.T) {
+	// Setting the key on a hosted writer keeps OIDC client-secret storage usable.
+	setRequiredSecrets(t)
+	t.Setenv("INDELIBLE_PAYMENT_BACKEND", "hosted")
+	t.Setenv("INDELIBLE_PAYMENT_GATEWAY_URL", "http://gateway.test:8090")
+	t.Setenv("INDELIBLE_PAYMENT_GATEWAY_API_KEY", "pgk_test")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.WalletKeyConfigured() {
+		t.Error("WalletKeyConfigured() = false, want true when the key is set")
+	}
+}
+
+func TestLoad_LocalBackendStillRequiresWalletKey(t *testing.T) {
+	// The relaxation is hosted-only; local signing still needs the key.
+	t.Setenv("INDELIBLE_JWT_SECRET", "test-secret-at-least-32-bytes-long-xx")
+	t.Setenv("INDELIBLE_PAYMENT_BACKEND", "local")
+
+	if _, err := Load(""); err == nil {
+		t.Fatal("expected Load to fail: local backend, workers on, no wallet key")
+	}
+}
+
+func TestLoad_PaymentBackendHostedRequiresAPIKey(t *testing.T) {
+	// Fail at boot, not on the first upload's 401.
+	setRequiredSecrets(t)
+	t.Setenv("INDELIBLE_PAYMENT_BACKEND", "hosted")
+	t.Setenv("INDELIBLE_PAYMENT_GATEWAY_URL", "http://gateway.test:8090")
+	// Intentionally no INDELIBLE_PAYMENT_GATEWAY_API_KEY.
+
+	if _, err := Load(""); err == nil {
+		t.Fatal("expected Load to fail: hosted backend without a gateway API key")
+	}
+}

@@ -138,6 +138,157 @@
                 }
             }
         },
+        "/admin/billing": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Hosted-mode billing: gateway credits and credited top-up history",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin: Billing"
+                ],
+                "summary": "Billing summary",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Not in hosted payment mode",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/billing/topup-checkout": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Create a Stripe Checkout session at the gateway; returns the hosted payment page URL and the exact credit",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin: Billing"
+                ],
+                "summary": "Start a card top-up",
+                "parameters": [
+                    {
+                        "description": "Amount in USD cents and return URLs",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handlers.topupCheckoutRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "session_id, url, credit_atto",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "Gateway unreachable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/admin/billing/topup-sync": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Ask the gateway to retrieve the Checkout session from Stripe and credit it if paid (idempotent; webhook-loss fallback)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin: Billing"
+                ],
+                "summary": "Sync a top-up",
+                "parameters": [
+                    {
+                        "description": "Checkout session id",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handlers.topupSyncRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "credited, payment_status",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "Gateway unreachable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/admin/departments": {
             "get": {
                 "security": [
@@ -5657,7 +5808,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Get an exact cost quote by sending the file bytes. antd runs self-encryption and queries the live network for chunk pricing — no estimation, no scaling. Returns a structured estimated_cost object with cost, chunk_count, gas, and payment_mode.",
+                "description": "Get an exact cost quote by sending the file bytes. antd runs self-encryption and queries the live network for chunk pricing — no estimation, no scaling. Returns a structured estimated_cost object with cost, chunk_count, gas, and payment_mode (antd's on-chain payment strategy: auto | merkle | single). With the hosted payment backend the gateway debits gross — batch total plus a per-batch network fee (V2-1098) — so the response additionally carries gateway_fee_per_batch_atto, estimated_batch_count, and estimated_total_with_fee_atto (V2-1113).",
                 "consumes": [
                     "multipart/form-data"
                 ],
@@ -7258,6 +7409,29 @@
                 }
             }
         },
+        "internal_handlers.topupCheckoutRequest": {
+            "type": "object",
+            "properties": {
+                "amount_usd_cents": {
+                    "type": "integer"
+                },
+                "cancel_url": {
+                    "type": "string"
+                },
+                "success_url": {
+                    "description": "Absolute URLs back into this instance's UI; validated by the gateway\n(http/https only). Stripe substitutes {CHECKOUT_SESSION_ID} in\nsuccess_url if the placeholder is present.",
+                    "type": "string"
+                }
+            }
+        },
+        "internal_handlers.topupSyncRequest": {
+            "type": "object",
+            "properties": {
+                "session_id": {
+                    "type": "string"
+                }
+            }
+        },
         "internal_handlers.updateGroupRequest": {
             "type": "object",
             "properties": {
@@ -7405,10 +7579,21 @@
                 "filename": {
                     "type": "string"
                 },
+                "gateway_fee_atto": {
+                    "description": "GatewayFeeAtto itemizes the gateway's per-batch network fee out of the\ngross actual_cost (V2-1098); absent when no fee was charged.",
+                    "type": "string"
+                },
+                "gateway_payment_key": {
+                    "type": "string"
+                },
                 "last_quoted_cost": {
                     "type": "string"
                 },
                 "original_filename": {
+                    "type": "string"
+                },
+                "payment_backend": {
+                    "description": "Payment provenance (V2-1086): \"local\" (instance wallet) or \"hosted\"\n(gateway credits) + the gateway's batch key; absent when nothing was paid.",
                     "type": "string"
                 },
                 "processing_at": {

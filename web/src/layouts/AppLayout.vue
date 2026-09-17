@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, watch, onUnmounted } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useHealthStore } from '../stores/health'
 import { useTheme } from '../composables/useTheme'
+import { api } from '../api/client'
 import GlobalSearch from '../components/GlobalSearch.vue'
 import Button from 'primevue/button'
 import Avatar from 'primevue/avatar'
@@ -12,6 +13,19 @@ const auth = useAuthStore()
 const router = useRouter()
 const health = useHealthStore()
 const { isDark, toggle: toggleTheme } = useTheme()
+
+// Hosted payment mode swaps the Wallets nav slot for Billing (V2-1097):
+// there are no wallets to manage, the gateway's prepaid credits are the
+// funds surface. Defaults to local until wallet-status answers.
+const paymentBackend = ref('local')
+onMounted(async () => {
+  try {
+    const res = await api.get('/api/v2/system/wallet-status')
+    paymentBackend.value = res.data.payment_backend || 'local'
+  } catch {
+    // keep 'local' — worst case the nav shows Wallets, which redirects
+  }
+})
 
 // Poll antd/network health only while an admin is signed in — the status
 // banner and System view are admin-only, and /health is a cheap unauthenticated
@@ -50,7 +64,9 @@ const navItems = computed(() => {
     items.push(
       { label: 'Users', icon: 'pi pi-users', to: '/admin/users' },
       { label: 'Groups', icon: 'pi pi-id-card', to: '/admin/groups' },
-      { label: 'Wallets', icon: 'pi pi-wallet', to: '/admin/wallets' },
+      paymentBackend.value === 'hosted'
+        ? { label: 'Billing', icon: 'pi pi-credit-card', to: '/admin/billing' }
+        : { label: 'Wallets', icon: 'pi pi-wallet', to: '/admin/wallets' },
       { label: 'Transactions', icon: 'pi pi-receipt', to: '/admin/transactions' },
       { label: 'Quotas', icon: 'pi pi-gauge', to: '/admin/quotas' },
       { label: 'Tag Rules', icon: 'pi pi-tags', to: '/admin/tag-rules' },

@@ -15,6 +15,42 @@ import (
 // Config holds all application configuration. Values can be set via
 // config file (TOML) or environment variables (INDELIBLE_ prefix).
 // Environment variables take precedence over file values.
+// PaymentBackend names the payment system that settles uploads for this
+// instance. It is the single place the backend set is defined: adding one
+// means a new constant here, a case in each method below, and a payer in
+// internal/worker — callers ask the backend what it needs (NeedsWallet,
+// WantsSignedQuotes) rather than comparing its name.
+type PaymentBackend string
+
+const (
+	// PaymentBackendLocal signs payments with this instance's default wallet.
+	PaymentBackendLocal PaymentBackend = "local"
+	// PaymentBackendHosted delegates payment to the Autonomi Pay gateway,
+	// which pays from the tenant's prepaid credits; no wallet on the host.
+	PaymentBackendHosted PaymentBackend = "hosted"
+)
+
+// Valid reports whether b is a known backend.
+func (b PaymentBackend) Valid() bool {
+	switch b {
+	case PaymentBackendLocal, PaymentBackendHosted:
+		return true
+	}
+	return false
+}
+
+// Hosted reports whether the gateway settles payments for this instance.
+func (b PaymentBackend) Hosted() bool { return b == PaymentBackendHosted }
+
+// NeedsWallet reports whether uploads require a wallet record and its
+// decrypted key on this instance. Only local signing does.
+func (b PaymentBackend) NeedsWallet() bool { return b == PaymentBackendLocal }
+
+// WantsSignedQuotes reports whether upload prepare must return the signed
+// quotes so the settling party can verify the batch offline before paying
+// (V2-926). Only a remote payer needs them; local signing trusts its own antd.
+func (b PaymentBackend) WantsSignedQuotes() bool { return b == PaymentBackendHosted }
+
 type Config struct {
 	Port           int      `toml:"port"`
 	DBURL          string   `toml:"db_url"`
@@ -75,6 +111,18 @@ type Config struct {
 	EvmRPCURL       string `toml:"evm_rpc_url"`       // EVM RPC endpoint
 	EvmTokenAddress string `toml:"evm_token_address"` // Payment token contract address
 
+	// PaymentBackend selects which payment system settles uploads (V2-929):
+	// PaymentBackendLocal signs with the instance wallet; PaymentBackendHosted
+	// POSTs each upload's payment batch to the gateway at PaymentGatewayURL.
+	// Exactly one backend is active per instance. Not to be confused with
+	// antd's per-request payment_mode (auto | merkle | single), which is how
+	// a payment is structured on-chain, not who pays for it.
+	PaymentBackend    PaymentBackend `toml:"payment_backend"`     // "local" (default) or "hosted"
+	PaymentGatewayURL string         `toml:"payment_gateway_url"` // required when payment_backend=hosted
+	// PaymentGatewayAPIKey authenticates this instance's tenant account at
+	// the gateway (Bearer). Required when payment_backend=hosted.
+	PaymentGatewayAPIKey string `toml:"payment_gateway_api_key"`
+
 	// SMTP configuration for transactional emails (password reset, email verification)
 	SMTP SMTPConfig `toml:"smtp"`
 
@@ -94,8 +142,9 @@ type Config struct {
 	walletKeyring *crypto.Keyring
 	jwtKeyring    *crypto.Keyring
 
-	// walletKeyUnconfigured is set by Load only for a reader replica that booted
-	// without a real wallet key (V2-518). It gates WalletKeyConfigured(). Kept as
+	// walletKeyUnconfigured is set by Load for an instance that booted without a
+	// real wallet key: a reader replica (V2-518) or a hosted-backend writer
+	// (V2-929). It gates WalletKeyConfigured(). Kept as
 	// a flag (not derived from the key value) so a directly-constructed Config —
 	// e.g. tests that use the all-zeros placeholder as a working key — still
 	// reports the key as configured.
@@ -107,8 +156,9 @@ type Config struct {
 func (c *Config) Secrets() secrets.Provider { return c.secrets }
 
 // WalletKeyConfigured reports whether the instance has a usable wallet/OIDC
-// encryption key. It is false only on a reader replica that Load booted without
-// one (V2-518). Callers that ENCRYPT wallet or OIDC secrets must refuse when
+// encryption key. It is false when Load booted without one, which is allowed
+// for a reader replica (V2-518) and for a writer on the hosted payment backend
+// (V2-929). Callers that ENCRYPT wallet or OIDC secrets must refuse when
 // this is false, rather than seal data under the placeholder key into the shared
 // database (which the writer, holding the real key, could not decrypt).
 func (c *Config) WalletKeyConfigured() bool {
@@ -382,6 +432,32 @@ func Load(path string) (*Config, error) {
 	if v := os.Getenv("INDELIBLE_EVM_TOKEN_ADDRESS"); v != "" {
 		cfg.EvmTokenAddress = v
 	}
+	if v := os.Getenv("INDELIBLE_PAYMENT_BACKEND"); v != "" {
+		cfg.PaymentBackend = PaymentBackend(v)
+	}
+	if v := os.Getenv("INDELIBLE_PAYMENT_GATEWAY_URL"); v != "" {
+		cfg.PaymentGatewayURL = v
+	}
+	if v := os.Getenv("INDELIBLE_PAYMENT_GATEWAY_API_KEY"); v != "" {
+		cfg.PaymentGatewayAPIKey = v
+	}
+
+	// Payment backend: default local; anything outside the known set is a
+	// typo, not a new backend, so refuse to start rather than silently
+	// signing with the wallet. Hosted needs the gateway address up front —
+	// failing here beats failing on the first upload.
+	if cfg.PaymentBackend == "" {
+		cfg.PaymentBackend = PaymentBackendLocal
+	}
+	if !cfg.PaymentBackend.Valid() {
+		return nil, fmt.Errorf("payment_backend %q is not supported (INDELIBLE_PAYMENT_BACKEND / payment_backend in config): use %q or %q", cfg.PaymentBackend, PaymentBackendLocal, PaymentBackendHosted)
+	}
+	if cfg.PaymentBackend.Hosted() && cfg.PaymentGatewayURL == "" {
+		return nil, fmt.Errorf("payment_backend=hosted requires payment_gateway_url (INDELIBLE_PAYMENT_GATEWAY_URL)")
+	}
+	if cfg.PaymentBackend.Hosted() && cfg.PaymentGatewayAPIKey == "" {
+		return nil, fmt.Errorf("payment_backend=hosted requires payment_gateway_api_key (INDELIBLE_PAYMENT_GATEWAY_API_KEY): without it the gateway answers 401 on the first upload")
+	}
 
 	// Default antd binary
 	if cfg.AntdBin == "" {
@@ -412,22 +488,25 @@ func Load(path string) (*Config, error) {
 		}
 	}
 
-	// Require wallet encryption key — except on reader replicas (V2-518). A
-	// reader (WorkersEnabled=false) never decrypts an EVM wallet or OIDC client
-	// secret: the worker tier is off, and OIDC login / wallet admin run on the
-	// writer. So it boots without the key. An empty wallet keyring is still built
-	// below (NewKeyring tolerates ""), so the unused wallet/OIDC routes error
-	// cleanly rather than panic if reached. JWT_SECRET is still required for
-	// everyone — readers verify sessions and API tokens against the DB.
+	// Require the wallet encryption key only where a wallet can exist: a writer
+	// on the local payment backend. Two roles boot without it:
+	//   - a reader replica (V2-518, WorkersEnabled=false) never decrypts an EVM
+	//     wallet or OIDC client secret — the worker tier is off, and OIDC login /
+	//     wallet admin run on the writer;
+	//   - a hosted-backend writer (V2-929) has no wallet at all — the payment
+	//     gateway's treasury signs, so there is nothing to encrypt. It MAY still
+	//     set the key to keep OIDC client-secret storage available; without it,
+	//     wallet/OIDC create refuse (503) exactly as on a reader.
+	// In both cases an all-zeros placeholder keyring is still built (NewKeyring
+	// tolerates it) so the unused wallet/OIDC routes error cleanly rather than
+	// panic, and the key is flagged unconfigured so encrypt entry points refuse
+	// rather than seal data under the placeholder. JWT_SECRET is still required
+	// for everyone — sessions and API tokens are verified against the DB.
 	const placeholderWalletKey = "0000000000000000000000000000000000000000000000000000000000000000"
 	if cfg.WalletEncryptionKey == "" || cfg.WalletEncryptionKey == placeholderWalletKey {
-		if cfg.WorkersEnabled {
-			return nil, fmt.Errorf("wallet_encryption_key is required (set INDELIBLE_WALLET_ENCRYPTION_KEY or wallet_encryption_key in config); generate with: openssl rand -hex 32")
+		if cfg.WorkersEnabled && cfg.PaymentBackend.NeedsWallet() {
+			return nil, fmt.Errorf("wallet_encryption_key is required for the local payment backend (set INDELIBLE_WALLET_ENCRYPTION_KEY or wallet_encryption_key in config; generate with: openssl rand -hex 32) — not needed with payment_backend=hosted")
 		}
-		// Reader role: no real wallet key. Pin the all-zeros placeholder (a valid
-		// 32-byte key) so the *unused* wallet keyring still constructs and nothing
-		// nil-derefs, and flag the key as unconfigured so encrypt entry points
-		// (wallet/OIDC create) refuse rather than seal data under the placeholder.
 		cfg.WalletEncryptionKey = placeholderWalletKey
 		cfg.walletKeyUnconfigured = true
 	}

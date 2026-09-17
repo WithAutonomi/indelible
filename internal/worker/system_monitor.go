@@ -263,6 +263,9 @@ func isAntdHardDown(err error) bool {
 }
 
 func (m *SystemMonitor) checkEvmRpcHealth() {
+	if !m.cfg.PaymentBackend.NeedsWallet() {
+		return // hosted backend: this instance never talks to an EVM RPC (V2-929)
+	}
 	if m.cfg.EvmRPCURL == "" {
 		return // not yet configured (set during first upload)
 	}
