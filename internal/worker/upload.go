@@ -468,9 +468,31 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 			var feePerBatch *big.Int
 			if w.cfg.PaymentBackend.Hosted() {
 				if fp, ok := w.evmSigner.(interface {
-					FeePerBatch(context.Context) *big.Int
+					FeePerBatch(context.Context) (*big.Int, bool)
 				}); ok {
-					feePerBatch = fp.FeePerBatch(ctx)
+					fee, known := fp.FeePerBatch(ctx)
+					if !known {
+						// The gateway debits GROSS, but the fee could not be learned
+						// (never fetched successfully — gateway down since boot). A
+						// ceiling computed without it would pass exactly when the
+						// gateway might charge past it, so never spend on an
+						// unknown fee: back off like a too-high quote and retry the
+						// fetch on the next pass (review of #163).
+						attempt := upload.BackoffAttempt + 1
+						if attempt > maxGasBackoffAttempts {
+							return fmt.Errorf("Gateway fee unavailable — cannot verify the cost ceiling; try again later")
+						}
+						backoffUntil := calcGasBackoff(attempt)
+						netCost := grossUploadCost(prepared, nil)
+						if err := w.uploadSvc.SetGasBackoff(upload.ID, backoffUntil, attempt, netCost.String()); err != nil {
+							return fmt.Errorf("Internal error scheduling retry")
+						}
+						slog.Warn("gateway fee unknown, deferring cost-ceiling check",
+							"uuid", upload.UUID, "net_quoted", netCost.String(), "max", maxFeeStr,
+							"attempt", attempt, "retry_at", backoffUntil.Format(time.RFC3339))
+						return errGasBackoff
+					}
+					feePerBatch = fee
 				}
 			}
 			estCost := grossUploadCost(prepared, feePerBatch)

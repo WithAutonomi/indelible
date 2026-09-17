@@ -342,6 +342,7 @@ func TestLoad_PaymentBackendHostedFromEnv(t *testing.T) {
 	setRequiredSecrets(t)
 	t.Setenv("INDELIBLE_PAYMENT_BACKEND", "hosted")
 	t.Setenv("INDELIBLE_PAYMENT_GATEWAY_URL", "http://gateway.test:8090")
+	t.Setenv("INDELIBLE_PAYMENT_GATEWAY_API_KEY", "pgk_test")
 
 	cfg, err := Load("")
 	if err != nil {
@@ -365,6 +366,7 @@ func TestLoad_HostedBackendBootsWithoutWalletKey(t *testing.T) {
 	t.Setenv("INDELIBLE_JWT_SECRET", "test-secret-at-least-32-bytes-long-xx")
 	t.Setenv("INDELIBLE_PAYMENT_BACKEND", "hosted")
 	t.Setenv("INDELIBLE_PAYMENT_GATEWAY_URL", "http://gateway.test:8090")
+	t.Setenv("INDELIBLE_PAYMENT_GATEWAY_API_KEY", "pgk_test")
 	// Intentionally no INDELIBLE_WALLET_ENCRYPTION_KEY; workers default to enabled.
 
 	cfg, err := Load("")
@@ -387,6 +389,7 @@ func TestLoad_HostedBackendKeepsWalletKeyWhenSet(t *testing.T) {
 	setRequiredSecrets(t)
 	t.Setenv("INDELIBLE_PAYMENT_BACKEND", "hosted")
 	t.Setenv("INDELIBLE_PAYMENT_GATEWAY_URL", "http://gateway.test:8090")
+	t.Setenv("INDELIBLE_PAYMENT_GATEWAY_API_KEY", "pgk_test")
 
 	cfg, err := Load("")
 	if err != nil {
@@ -404,5 +407,17 @@ func TestLoad_LocalBackendStillRequiresWalletKey(t *testing.T) {
 
 	if _, err := Load(""); err == nil {
 		t.Fatal("expected Load to fail: local backend, workers on, no wallet key")
+	}
+}
+
+func TestLoad_PaymentBackendHostedRequiresAPIKey(t *testing.T) {
+	// Fail at boot, not on the first upload's 401.
+	setRequiredSecrets(t)
+	t.Setenv("INDELIBLE_PAYMENT_BACKEND", "hosted")
+	t.Setenv("INDELIBLE_PAYMENT_GATEWAY_URL", "http://gateway.test:8090")
+	// Intentionally no INDELIBLE_PAYMENT_GATEWAY_API_KEY.
+
+	if _, err := Load(""); err == nil {
+		t.Fatal("expected Load to fail: hosted backend without a gateway API key")
 	}
 }

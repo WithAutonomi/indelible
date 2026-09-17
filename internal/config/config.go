@@ -455,6 +455,9 @@ func Load(path string) (*Config, error) {
 	if cfg.PaymentBackend.Hosted() && cfg.PaymentGatewayURL == "" {
 		return nil, fmt.Errorf("payment_backend=hosted requires payment_gateway_url (INDELIBLE_PAYMENT_GATEWAY_URL)")
 	}
+	if cfg.PaymentBackend.Hosted() && cfg.PaymentGatewayAPIKey == "" {
+		return nil, fmt.Errorf("payment_backend=hosted requires payment_gateway_api_key (INDELIBLE_PAYMENT_GATEWAY_API_KEY): without it the gateway answers 401 on the first upload")
+	}
 
 	// Default antd binary
 	if cfg.AntdBin == "" {

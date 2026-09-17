@@ -100,8 +100,10 @@ func (h *HostedPayer) PaymentCost(paymentKey string) (PaymentCost, bool) {
 	return c, ok
 }
 
+// hostedPayRequest is the /pay body. The tenant is never named here: the
+// gateway resolves it from the Bearer API key and treats any account_id in
+// the body as advisory at most, so sending one only invites confusion.
 type hostedPayRequest struct {
-	AccountID           string                  `json:"account_id"`
 	PaymentType         string                  `json:"payment_type,omitempty"`
 	Payments            []antd.PaymentInfo      `json:"payments"`
 	TokenAddress        string                  `json:"token_address"`
@@ -149,7 +151,6 @@ func (h *HostedPayer) PayForQuotes(
 	dataPaymentsAddress string,
 ) (map[string]string, string, error) {
 	body, err := json.Marshal(hostedPayRequest{
-		AccountID:           "indelible-poc",
 		PaymentType:         "wave_batch",
 		Payments:            payments,
 		TokenAddress:        tokenAddress,
@@ -388,8 +389,12 @@ func (h *HostedPayer) AccountBalance(ctx context.Context) (string, error) {
 // last known value keeps serving (fee changes are rare, refusing uploads over
 // a stale fee lookup would be worse), and a gateway that reports no fee —
 // none configured, or an older gateway without the field — counts as zero.
-// Never an error: the fee is a pre-spend refinement, not a payment step.
-func (h *HostedPayer) FeePerBatch(ctx context.Context) *big.Int {
+//
+// The bool is false only when NO fetch has ever succeeded: then the fee is
+// not "zero", it is unknown, and a caller gating spend on the gross cost must
+// not treat it as zero (review of #163). Once a fetch has succeeded the value
+// is known, even if stale.
+func (h *HostedPayer) FeePerBatch(ctx context.Context) (*big.Int, bool) {
 	h.feeMu.Lock()
 	defer h.feeMu.Unlock()
 	if h.feeFetched.IsZero() || time.Since(h.feeFetched) >= h.feeTTL {
@@ -407,9 +412,9 @@ func (h *HostedPayer) FeePerBatch(ctx context.Context) *big.Int {
 		h.feeFetched = time.Now()
 	}
 	if h.feeCached == nil {
-		return new(big.Int)
+		return new(big.Int), false
 	}
-	return new(big.Int).Set(h.feeCached)
+	return new(big.Int).Set(h.feeCached), true
 }
 
 // relay performs one authenticated gateway call for the in-app billing

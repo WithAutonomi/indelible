@@ -367,7 +367,7 @@ func TestHostedFeePerBatchRelay(t *testing.T) {
 			}))
 			defer srv.Close()
 			h := NewHostedPayer(srv.URL, "pgk_test")
-			if got := h.FeePerBatch(context.Background()); got.String() != tc.want {
+			if got, _ := h.FeePerBatch(context.Background()); got.String() != tc.want {
 				t.Errorf("FeePerBatch = %s, want %s", got, tc.want)
 			}
 		})
@@ -388,11 +388,11 @@ func TestHostedFeePerBatchCache(t *testing.T) {
 	defer srv.Close()
 	h := NewHostedPayer(srv.URL, "pgk_test")
 
-	if got := h.FeePerBatch(context.Background()); got.String() != "5000000000000000" {
+	if got, _ := h.FeePerBatch(context.Background()); got.String() != "5000000000000000" {
 		t.Fatalf("first fetch: %s", got)
 	}
 	fee = "9000000000000000"
-	if got := h.FeePerBatch(context.Background()); got.String() != "5000000000000000" {
+	if got, _ := h.FeePerBatch(context.Background()); got.String() != "5000000000000000" {
 		t.Fatalf("within TTL the cached fee must serve, got %s", got)
 	}
 	if calls != 1 {
@@ -400,20 +400,21 @@ func TestHostedFeePerBatchCache(t *testing.T) {
 	}
 
 	h.feeTTL = 0 // expire the window
-	if got := h.FeePerBatch(context.Background()); got.String() != "9000000000000000" {
+	if got, _ := h.FeePerBatch(context.Background()); got.String() != "9000000000000000" {
 		t.Fatalf("expired window must refetch, got %s", got)
 	}
 
 	// Gateway gone: the last known value keeps serving.
 	srv.Close()
-	if got := h.FeePerBatch(context.Background()); got.String() != "9000000000000000" {
+	if got, _ := h.FeePerBatch(context.Background()); got.String() != "9000000000000000" {
 		t.Fatalf("unreachable gateway must serve last known fee, got %s", got)
 	}
 
-	// Never fetched successfully at all → zero, still no error path.
+	// Never fetched successfully at all → zero AND flagged unknown, so a
+	// spend gate can refuse to treat it as a real zero (review of #163).
 	dead := NewHostedPayer("http://127.0.0.1:1", "pgk_test")
-	if got := dead.FeePerBatch(context.Background()); got.Sign() != 0 {
-		t.Fatalf("unknown fee must count as zero, got %s", got)
+	if got, known := dead.FeePerBatch(context.Background()); got.Sign() != 0 || known {
+		t.Fatalf("never-fetched fee must be 0 and unknown, got %s known=%v", got, known)
 	}
 }
 
@@ -503,4 +504,36 @@ func TestHostedCostPerGBRelay(t *testing.T) {
 			t.Fatalf("absent fields must relay empty: %+v", d)
 		}
 	})
+}
+
+// TestHostedFeePerBatchUnknownUntilFirstFetch proves the fee-unknown signal
+// (review of #163): a gateway that is unreachable before any successful
+// fetch yields known=false — the fee is not zero, it is unknown, and the
+// worker must not gate spend as if it were zero. After one success the fee
+// is known and stays known (stale) through a later outage.
+func TestHostedFeePerBatchUnknownUntilFirstFetch(t *testing.T) {
+	up := true
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !up {
+			http.Error(w, "down", http.StatusBadGateway)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"balance": "5", "fee_per_batch_atto": "5000000000000000"})
+	}))
+	defer srv.Close()
+	h := NewHostedPayer(srv.URL, "pgk_test")
+	h.feeTTL = 0 // refetch on every call so the outage/recovery sequence is observable
+
+	up = false
+	if fee, known := h.FeePerBatch(context.Background()); known || fee.Sign() != 0 {
+		t.Fatalf("before any successful fetch: fee=%s known=%v, want 0/false", fee, known)
+	}
+	up = true
+	if fee, known := h.FeePerBatch(context.Background()); !known || fee.String() != "5000000000000000" {
+		t.Fatalf("after a successful fetch: fee=%s known=%v, want 5000000000000000/true", fee, known)
+	}
+	up = false
+	if fee, known := h.FeePerBatch(context.Background()); !known || fee.String() != "5000000000000000" {
+		t.Fatalf("outage after a success must serve the stale fee as known: fee=%s known=%v", fee, known)
+	}
 }
