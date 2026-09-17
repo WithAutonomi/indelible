@@ -18,11 +18,22 @@ import (
 // and cost-per-GB estimate + basis (capacity display, V2-1114): every
 // authenticated view reads wallet-status, so the gateway is asked at most
 // once per minute.
+//
+// Entries are keyed by gateway identity (URL + API key), never process-wide:
+// two Configs in one process, or one Config re-pointed at another gateway,
+// must never serve each other's numbers (#163 review, V2-1269).
 var gatewayPricingCache struct {
 	sync.Mutex
+	byGateway map[string]*gatewayPricingEntry
+}
+
+type gatewayPricingEntry struct {
 	pricing gatewayPricing
 	fetched time.Time
 }
+
+// gatewayPricingTTL bounds how often any one gateway is asked.
+const gatewayPricingTTL = time.Minute
 
 // gatewayPricing is the cached display trio+basis; every field optional
 // (older gateway, nothing configured, thin history — all read as absent).
@@ -34,10 +45,19 @@ type gatewayPricing struct {
 }
 
 func cachedGatewayPricing(ctx context.Context, cfg *config.Config) gatewayPricing {
+	key := cfg.PaymentGatewayURL + "\x00" + cfg.PaymentGatewayAPIKey
 	gatewayPricingCache.Lock()
 	defer gatewayPricingCache.Unlock()
-	if time.Since(gatewayPricingCache.fetched) < time.Minute {
-		return gatewayPricingCache.pricing
+	if gatewayPricingCache.byGateway == nil {
+		gatewayPricingCache.byGateway = map[string]*gatewayPricingEntry{}
+	}
+	e := gatewayPricingCache.byGateway[key]
+	if e == nil {
+		e = &gatewayPricingEntry{}
+		gatewayPricingCache.byGateway[key] = e
+	}
+	if !e.fetched.IsZero() && time.Since(e.fetched) < gatewayPricingTTL {
+		return e.pricing
 	}
 	rateCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
@@ -46,15 +66,15 @@ func cachedGatewayPricing(ctx context.Context, cfg *config.Config) gatewayPricin
 	if err != nil {
 		// Best-effort display data: keep serving the stale values and try
 		// again after the normal interval.
-		gatewayPricingCache.fetched = time.Now()
-		return gatewayPricingCache.pricing
+		e.fetched = time.Now()
+		return e.pricing
 	}
-	gatewayPricingCache.pricing = gatewayPricing{
+	e.pricing = gatewayPricing{
 		rate: d.RateUSDPerANT, fee: d.FeePerBatchAtto,
 		estCostGB: d.EstCostPerGBAtto, estBasis: d.EstCostPerGBBasis,
 	}
-	gatewayPricingCache.fetched = time.Now()
-	return gatewayPricingCache.pricing
+	e.fetched = time.Now()
+	return e.pricing
 }
 
 // WalletStatus godoc

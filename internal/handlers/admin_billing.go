@@ -3,7 +3,9 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/WithAutonomi/indelible/internal/config"
@@ -28,13 +30,49 @@ func billingPayer(w http.ResponseWriter, cfg *config.Config) *evm.HostedPayer {
 	return evm.NewHostedPayer(cfg.PaymentGatewayURL, cfg.PaymentGatewayAPIKey)
 }
 
-// relayOut passes a gateway answer through unmodified — status code and body
-// both — so bounds errors, refusals and successes read identically whether
+// relayOut passes a gateway SUCCESS answer through unmodified — status code
+// and body both — so a successful checkout or sync reads identically whether
 // the caller hit the gateway directly or via this relay.
-func relayOut(w http.ResponseWriter, status int, raw []byte) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_, _ = w.Write(raw)
+//
+// A non-2xx answer is NOT echoed: the browser gets the gateway's status code
+// and only its short operator-facing `error` string (or a generic message),
+// while the raw body is logged server-side. Gateway internals stay off the
+// wire (#163 review, V2-1269).
+func relayOut(w http.ResponseWriter, op string, status int, raw []byte) {
+	if status >= 200 && status < 300 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = w.Write(raw)
+		return
+	}
+	logged := raw
+	if len(logged) > 1024 {
+		logged = logged[:1024]
+	}
+	slog.Warn("billing relay: gateway refused", "op", op, "status", status, "gateway_body", string(logged))
+	jsonError(w, gatewayErrorMessage(status, raw), status)
+}
+
+// gatewayErrorMessage extracts the gateway's short `error` string from a
+// refusal body — one line, bounded — or falls back to a generic message.
+func gatewayErrorMessage(status int, raw []byte) string {
+	var g struct {
+		Error string `json:"error"`
+	}
+	msg := ""
+	if json.Unmarshal(raw, &g) == nil {
+		msg = strings.TrimSpace(g.Error)
+	}
+	if i := strings.IndexAny(msg, "\r\n"); i >= 0 {
+		msg = msg[:i]
+	}
+	if len(msg) > 200 {
+		msg = msg[:200]
+	}
+	if msg == "" {
+		return "payment gateway refused the request (HTTP " + http.StatusText(status) + ")"
+	}
+	return msg
 }
 
 // @Summary      Billing summary
@@ -130,7 +168,7 @@ func AdminBillingTopupCheckout(db *database.DB, cfg *config.Config) http.Handler
 			jsonError(w, err.Error(), http.StatusBadGateway)
 			return
 		}
-		relayOut(w, status, raw)
+		relayOut(w, "topup-checkout", status, raw)
 	}
 }
 
@@ -165,6 +203,6 @@ func AdminBillingTopupSync(db *database.DB, cfg *config.Config) http.HandlerFunc
 			jsonError(w, err.Error(), http.StatusBadGateway)
 			return
 		}
-		relayOut(w, status, raw)
+		relayOut(w, "topup-sync", status, raw)
 	}
 }
