@@ -1,4 +1,4 @@
-.PHONY: build dev test clean frontend backend all security fuzz bench check ci-local ci-dev1 setup-dev1
+.PHONY: build dev test clean frontend backend all notices security fuzz bench check ci-local ci-dev1 setup-dev1
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 
@@ -15,6 +15,12 @@ backend:
 # Build everything
 build: frontend backend
 	@echo "Built bin/indelible $(VERSION)"
+
+# Third-party licence notices for the release targets (shipped with every
+# release and in the Docker image)
+notices: frontend
+	cd web && node scripts/third-party-notices.mjs THIRD-PARTY-NOTICES.web.txt
+	go run ./scripts/notices -web web/THIRD-PARTY-NOTICES.web.txt -o THIRD-PARTY-NOTICES.txt
 
 # Development: run Go backend with hot reload (requires air)
 dev-backend:

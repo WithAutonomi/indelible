@@ -21,6 +21,11 @@ e2e/playwright-report/
 e2e/test-results/
 e2e/.auth/
 
+# Generated licence notices (make notices / release workflow)
+THIRD-PARTY-NOTICES.txt
+web/THIRD-PARTY-NOTICES.web.txt
+web/bundled-packages.json
+
 # IDE
 .idea/
 .vscode/

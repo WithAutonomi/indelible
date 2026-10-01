@@ -45,10 +45,10 @@ indelible.toml.local
 .DS_Store
 Thumbs.db
 
-# Docs and planning content — image doesn't need them
+# Docs and planning content — image doesn't need them (LICENSE-* files are
+# kept: the runtime image ships them)
 *.md
 !web/README.md
-LICENSE*
 CHANGELOG*
 
 # Re-include things we DO need despite the broad excludes above

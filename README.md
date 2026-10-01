@@ -308,4 +308,6 @@ The CI runs on every PR and push to `master`:
 
 ## License
 
-See [LICENSE](LICENSE) for details.
+Licensed under either of the [MIT License](LICENSE-MIT) or the [Apache License, Version 2.0](LICENSE-APACHE), at your option.
+
+Third-party licences and notices, including the GNU LGPL terms of the go-ethereum library code Indelible links, ship as `THIRD-PARTY-NOTICES.txt` with every release and under `/usr/share/doc/indelible/` in the Docker image. `make notices` generates the file locally.

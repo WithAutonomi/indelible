@@ -139,6 +139,27 @@ jobs:
           go build -ldflags "-s -w -X github.com/WithAutonomi/indelible/internal/buildinfo.Version=${VERSION}" \
             -o "${{ matrix.indelible_artifact }}" ./cmd/indelible
 
+      # One notices file covers every release target (scripts/notices lists the
+      # modules linked on each), so only one matrix entry generates it.
+      - name: Generate third-party notices
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        shell: bash
+        run: |
+          node web/scripts/third-party-notices.mjs web/THIRD-PARTY-NOTICES.web.txt
+          go run ./scripts/notices -web web/THIRD-PARTY-NOTICES.web.txt \
+            -source "${GITHUB_SHA}" -antd "${{ needs.resolve-antd-version.outputs.antd_tag }}" \
+            -o THIRD-PARTY-NOTICES.txt
+
+      - uses: actions/upload-artifact@v4
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        with:
+          name: indelible-third-party-notices
+          path: |
+            THIRD-PARTY-NOTICES.txt
+            LICENSE-MIT
+            LICENSE-APACHE
+          if-no-files-found: error
+
       - name: Download antd daemon
         if: matrix.antd_artifact != ''
         shell: bash
@@ -232,6 +253,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           build-args: |
             VERSION=${{ needs.release-meta.outputs.version }}
+            SOURCE_COMMIT=${{ github.sha }}
             ANTD_IMAGE=ghcr.io/withautonomi/antd:${{ needs.resolve-antd-version.outputs.antd_tag }}
           tags: |
             ghcr.io/withautonomi/indelible:${{ needs.release-meta.outputs.version }}
