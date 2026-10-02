@@ -17,6 +17,8 @@ COPY web/package*.json ./
 RUN npm ci
 COPY web/ ./
 RUN npm run build
+# Licence notices for the npm packages bundled into web/dist.
+RUN node scripts/third-party-notices.mjs THIRD-PARTY-NOTICES.web.txt
 
 # Build backend on the native arch, cross-compile to TARGETARCH. Going through
 # QEMU emulation is 5-10x slower than native + cross-compile.
@@ -32,6 +34,15 @@ ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -ldflags "-s -w -X github.com/WithAutonomi/indelible/internal/buildinfo.Version=${VERSION}" \
     -o /indelible ./cmd/indelible
+# THIRD-PARTY-NOTICES.txt for this target: the Go modules linked above, the Go
+# standard library, the embedded Swagger UI and the web UI packages. Runs on the
+# build platform; the target only selects which modules are listed.
+ARG ANTD_IMAGE
+ARG SOURCE_COMMIT=
+COPY --from=frontend /app/web/THIRD-PARTY-NOTICES.web.txt ./web/
+RUN go run ./scripts/notices -targets "${TARGETOS}/${TARGETARCH}" \
+    -source "${SOURCE_COMMIT}" -antd "${ANTD_IMAGE}" \
+    -web web/THIRD-PARTY-NOTICES.web.txt -o /THIRD-PARTY-NOTICES.txt
 
 # Runtime — non-root, persistent volume on /var/lib/indelible.
 #
@@ -49,6 +60,9 @@ RUN apt-get update \
  && mkdir -p /var/lib/indelible \
  && chown -R indelible:indelible /var/lib/indelible
 COPY --from=backend /indelible /usr/local/bin/indelible
+# Indelible's licence and the third-party notices, where Debian keeps them.
+COPY LICENSE-MIT LICENSE-APACHE /usr/share/doc/indelible/
+COPY --from=backend /THIRD-PARTY-NOTICES.txt /usr/share/doc/indelible/
 # Bundled antd daemon (see ANTD_IMAGE note at top). Lands in PATH with its
 # executable bit preserved, so indelible's managed mode (and a bare
 # `docker run`) can spawn it without an external daemon.
