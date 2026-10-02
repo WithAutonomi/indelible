@@ -488,11 +488,11 @@ server {
 **Minimal (single binary, SQLite, smallest setup):**
 ```bash
 # 1. Download
-curl -LO https://github.com/WithAutonomi/indelible/releases/latest/download/indelible-linux-amd64.tar.gz
-tar -xzf indelible-linux-amd64.tar.gz
+curl -LO https://github.com/WithAutonomi/indelible/releases/latest/download/indelible-linux-amd64
+chmod +x indelible-linux-amd64
 
 # 2. Run (SQLite default, port 8080)
-./indelible --antd-url http://localhost:8082
+./indelible-linux-amd64 --antd-url http://localhost:8082
 
 # 3. Open browser, register first user (auto-admin), configure from dashboard
 ```

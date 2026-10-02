@@ -141,7 +141,8 @@ jobs:
 
       # One notices file covers every release target (scripts/notices lists the
       # modules linked on each), so only one matrix entry generates it; the
-      # release job puts it in every binary's archive.
+      # release job puts it in every binary's archive and also publishes it
+      # loose beside the bare binaries.
       - name: Generate third-party notices
         if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
         shell: bash
@@ -199,9 +200,11 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      # Each indelible binary ships as an archive with Indelible's licence
-      # files and the third-party notices, so every copy carries them. The
-      # bundled antd binaries stay as they are: they are ant-sdk release assets,
+      # Each indelible binary also ships in an archive with Indelible's licence
+      # files and the third-party notices, so that copy carries them. The bare
+      # binaries keep their existing names and download URLs, and the licence
+      # files and notices stay loose release assets beside them. The bundled
+      # antd binaries stay as they are: they are ant-sdk release assets,
       # redistributed unchanged.
       - name: Package archives
         run: |
@@ -228,10 +231,8 @@ jobs:
                 tar -C "$stage" -czf "$bin.tar.gz" indelible $docs
                 ;;
             esac
-            rm -r "$stage" "$bin"
+            rm -r "$stage"
           done
-          # shellcheck disable=SC2086
-          rm $docs
           ls -l
 
       - name: Generate checksums
@@ -249,7 +250,7 @@ jobs:
           body: |
             Bundled antd daemon: `${{ needs.resolve-antd-version.outputs.antd_tag }}`
 
-            Each `indelible-<os>-<arch>` archive (`.zip` for Windows, `.tar.gz` otherwise) contains the `indelible` binary (`indelible.exe` on Windows) with `LICENSE-MIT`, `LICENSE-APACHE` and `THIRD-PARTY-NOTICES.txt`, which reproduces the licences and notices of the third-party code in the binary. The `antd-*` binaries are the ant-sdk release named above, redistributed unchanged; their licence and notices are those of that release.
+            Each `indelible-<os>-<arch>.tar.gz` archive (`indelible-windows-amd64.zip` on Windows) contains the `indelible` binary (`indelible.exe` on Windows) with its licences and notices: `LICENSE-MIT`, `LICENSE-APACHE` and `THIRD-PARTY-NOTICES.txt`, which reproduces the licences and notices of the third-party code in the binary. The bare `indelible-<os>-<arch>` binaries are kept at their existing download URLs; the `LICENSE-MIT`, `LICENSE-APACHE` and `THIRD-PARTY-NOTICES.txt` files in this release apply to them. The `antd-*` binaries are the ant-sdk release named above, redistributed unchanged; their licence and notices are those of that release.
 
             ⚠️ Before upgrading, check [UPGRADING.md](https://github.com/WithAutonomi/indelible/blob/master/UPGRADING.md) for any operator actions.
 
