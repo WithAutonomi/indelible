@@ -139,6 +139,29 @@ jobs:
           go build -ldflags "-s -w -X github.com/WithAutonomi/indelible/internal/buildinfo.Version=${VERSION}" \
             -o "${{ matrix.indelible_artifact }}" ./cmd/indelible
 
+      # One notices file covers every release target (scripts/notices lists the
+      # modules linked on each), so only one matrix entry generates it; the
+      # release job puts it in every binary's archive and also publishes it
+      # loose beside the bare binaries.
+      - name: Generate third-party notices
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        shell: bash
+        run: |
+          node web/scripts/third-party-notices.mjs web/THIRD-PARTY-NOTICES.web.txt
+          go run ./scripts/notices -web web/THIRD-PARTY-NOTICES.web.txt \
+            -source "${GITHUB_SHA}" -antd "${{ needs.resolve-antd-version.outputs.antd_tag }}" \
+            -o THIRD-PARTY-NOTICES.txt
+
+      - uses: actions/upload-artifact@v4
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        with:
+          name: indelible-third-party-notices
+          path: |
+            THIRD-PARTY-NOTICES.txt
+            LICENSE-MIT
+            LICENSE-APACHE
+          if-no-files-found: error
+
       - name: Download antd daemon
         if: matrix.antd_artifact != ''
         shell: bash
@@ -177,6 +200,41 @@ jobs:
           path: artifacts
           merge-multiple: true
 
+      # Each indelible binary also ships in an archive with Indelible's licence
+      # files and the third-party notices, so that copy carries them. The bare
+      # binaries keep their existing names and download URLs, and the licence
+      # files and notices stay loose release assets beside them. The bundled
+      # antd binaries stay as they are: they are ant-sdk release assets,
+      # redistributed unchanged.
+      - name: Package archives
+        run: |
+          cd artifacts
+          docs="LICENSE-MIT LICENSE-APACHE THIRD-PARTY-NOTICES.txt"
+          for doc in $docs; do
+            [ -f "$doc" ] || { echo "::error::$doc is missing from the build artifacts"; exit 1; }
+          done
+          for bin in indelible-*; do
+            stage="$(mktemp -d)"
+            # shellcheck disable=SC2086
+            cp $docs "$stage/"
+            chmod 0644 "$stage"/*
+            case "$bin" in
+              *.exe)
+                cp "$bin" "$stage/indelible.exe"
+                # shellcheck disable=SC2086
+                (cd "$stage" && zip -q -X "$OLDPWD/${bin%.exe}.zip" indelible.exe $docs)
+                ;;
+              *)
+                cp "$bin" "$stage/indelible"
+                chmod 0755 "$stage/indelible"
+                # shellcheck disable=SC2086
+                tar -C "$stage" -czf "$bin.tar.gz" indelible $docs
+                ;;
+            esac
+            rm -r "$stage"
+          done
+          ls -l
+
       - name: Generate checksums
         run: |
           cd artifacts
@@ -192,12 +250,14 @@ jobs:
           body: |
             Bundled antd daemon: `${{ needs.resolve-antd-version.outputs.antd_tag }}`
 
+            Each `indelible-<os>-<arch>.tar.gz` archive (`indelible-windows-amd64.zip` on Windows) contains the `indelible` binary (`indelible.exe` on Windows) with its licences and notices: `LICENSE-MIT`, `LICENSE-APACHE` and `THIRD-PARTY-NOTICES.txt`, which reproduces the licences and notices of the third-party code in the binary. The bare `indelible-<os>-<arch>` binaries are kept at their existing download URLs; the `LICENSE-MIT`, `LICENSE-APACHE` and `THIRD-PARTY-NOTICES.txt` files in this release apply to them. The `antd-*` binaries are the ant-sdk release named above, redistributed unchanged; their licence and notices are those of that release.
+
             ⚠️ Before upgrading, check [UPGRADING.md](https://github.com/WithAutonomi/indelible/blob/master/UPGRADING.md) for any operator actions.
 
   docker:
     name: Docker (multi-arch build + push)
     # Depends on resolve-antd-version so the antd bundled INTO the image is the
-    # same tag bundled as a binary in the release tarballs (honors the
+    # same tag published as the release's antd-* assets (honors the
     # workflow_dispatch antd_version override too).
     needs: [release-meta, resolve-antd-version]
     runs-on: ubuntu-latest
@@ -232,6 +292,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           build-args: |
             VERSION=${{ needs.release-meta.outputs.version }}
+            SOURCE_COMMIT=${{ github.sha }}
             ANTD_IMAGE=ghcr.io/withautonomi/antd:${{ needs.resolve-antd-version.outputs.antd_tag }}
           tags: |
             ghcr.io/withautonomi/indelible:${{ needs.release-meta.outputs.version }}
