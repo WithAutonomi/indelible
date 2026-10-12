@@ -1,12 +1,14 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/go-chi/chi/v5"
@@ -72,7 +74,26 @@ func AdminListWallets(db *database.DB, cfg *config.Config) http.HandlerFunc {
 			resp = append(resp, toWalletResponse(wl))
 		}
 
-		jsonResponse(w, http.StatusOK, map[string]any{"wallets": resp})
+		// Payment backend rides along so the wallet screen can state whether
+		// these wallets actually pay for uploads (hosted mode: they don't —
+		// the gateway settles from prepaid credits, V2-1086/V2-930).
+		hosted := cfg.PaymentBackend.Hosted()
+		out := map[string]any{
+			"wallets":             resp,
+			"payment_backend":     string(cfg.PaymentBackend),
+			"payment_gateway_url": cfg.PaymentGatewayURL,
+		}
+		if hosted && cfg.PaymentGatewayURL != "" {
+			// Remaining credits, best-effort: an unreachable gateway must
+			// not break the wallets screen — the field is simply absent.
+			balCtx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+			defer cancel()
+			payer := evm.NewHostedPayer(cfg.PaymentGatewayURL, cfg.PaymentGatewayAPIKey)
+			if bal, err := payer.AccountBalance(balCtx); err == nil {
+				out["gateway_credit_atto"] = bal
+			}
+		}
+		jsonResponse(w, http.StatusOK, out)
 	}
 }
 
@@ -94,7 +115,7 @@ func AdminListWallets(db *database.DB, cfg *config.Config) http.HandlerFunc {
 // placeholder key into the shared DB — these operations belong on the writer.
 func requireWalletKey(w http.ResponseWriter, cfg *config.Config) bool {
 	if !cfg.WalletKeyConfigured() {
-		jsonError(w, "wallet/OIDC management is unavailable on this instance (no wallet encryption key configured); perform it on the writer instance", http.StatusServiceUnavailable)
+		jsonError(w, "wallet/OIDC management is unavailable on this instance (no wallet encryption key configured): on a reader, perform it on the writer; on a hosted-backend writer, set INDELIBLE_WALLET_ENCRYPTION_KEY to enable OIDC client-secret storage", http.StatusServiceUnavailable)
 		return false
 	}
 	return true

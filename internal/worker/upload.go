@@ -107,6 +107,48 @@ func estimatedUploadCost(prepared *antd.PrepareUploadResult) *big.Int {
 	return new(big.Int)
 }
 
+// grossUploadCost is the ceiling's comparison basis (V2-1113): the net quote
+// (estimatedUploadCost) plus, when a per-batch fee applies, one fee for the
+// single gateway batch a prepared wave upload settles as — the same GROSS
+// basis the gateway actually debits and 402s on (V2-1098), so a configured
+// max_gas_fee refuses BEFORE spending exactly when the gateway would charge
+// past it. A full-dedup prepare (no payments) sends no batch and pays no fee.
+// feePerBatch nil means no fee applies (local mode, or fee unknown → zero).
+func grossUploadCost(prepared *antd.PrepareUploadResult, feePerBatch *big.Int) *big.Int {
+	cost := estimatedUploadCost(prepared)
+	if feePerBatch != nil && feePerBatch.Sign() > 0 && len(prepared.Payments) > 0 {
+		cost.Add(cost, feePerBatch)
+	}
+	return cost
+}
+
+// payer is the payment seam: either the local EVM signer or the hosted
+// gateway client (payment_backend=hosted, V2-929 PoC). Both settle a prepared
+// batch and answer balance queries; the worker never sees the difference.
+// signedQuotes carries the opaque signed artifacts from the prepare response
+// (V2-926) — the hosted gateway verifies them before paying; local signing
+// ignores them.
+type payer interface {
+	// PayForQuotes additionally returns the settling party's payment
+	// reference — the gateway's batch idempotency key for hosted payments,
+	// "" for local signing — stamped on the upload as provenance (V2-1086).
+	PayForQuotes(ctx context.Context, privateKeyHex string, payments []antd.PaymentInfo, signedQuotes []antd.SignedQuoteEntry, tokenAddress, dataPaymentsAddress string) (map[string]string, string, error)
+	PayForMerkleTree(ctx context.Context, privateKeyHex string, depth int, poolCommitments []antd.PoolCommitmentEntry, merklePaymentTimestamp uint64, tokenAddress, merklePaymentsAddress string) (winnerPoolHash, totalAmount string, err error)
+	GetBalances(ctx context.Context, walletAddress, tokenAddress string) (string, string, error)
+	SetConfirmationTimeout(d time.Duration)
+	RPCUrl() string
+}
+
+// localPayer adapts *evm.Signer to the payer seam: local signing has no use
+// for the relayed signed quotes, so it drops them. Keeps evm.Signer's own
+// signature untouched (migrate.EvmPayer and the audit-anchor worker use it).
+type localPayer struct{ *evm.Signer }
+
+func (l localPayer) PayForQuotes(ctx context.Context, privateKeyHex string, payments []antd.PaymentInfo, _ []antd.SignedQuoteEntry, tokenAddress, dataPaymentsAddress string) (map[string]string, string, error) {
+	hashes, err := l.Signer.PayForQuotes(ctx, privateKeyHex, payments, tokenAddress, dataPaymentsAddress)
+	return hashes, "", err
+}
+
 // UploadWorker processes queued file uploads in the background.
 type UploadWorker struct {
 	uploadSvc   *services.UploadService
@@ -116,7 +158,7 @@ type UploadWorker struct {
 	webhookSvc  *services.WebhookDeliveryService
 	settingsSvc *services.CachedSettingsService
 	antdClient  *antd.Client
-	evmSigner   *evm.Signer // lazily initialized on first upload
+	evmSigner   payer // lazily initialized on first upload
 	cfg         *config.Config
 	// dlCache is the shared download cache store, seeded write-through from
 	// upload temp files after a successful store (V2-822). Nil disables
@@ -359,15 +401,21 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		return fmt.Errorf("Quota exceeded: %w", err)
 	}
 
-	// Get default wallet — required for external signer payment
-	wallet, err := w.walletSvc.GetDefault()
-	if err != nil {
-		return fmt.Errorf("No wallet configured for payment")
-	}
-
-	walletKey, err := w.walletSvc.DecryptKey(wallet)
-	if err != nil {
-		return fmt.Errorf("Failed to decrypt wallet key")
+	// Local mode signs with the default wallet. Hosted mode needs NO wallet
+	// at all (V2-929): the gateway's treasury signs, so a wallet record is
+	// neither required nor consulted.
+	var wallet *services.Wallet
+	var err error
+	walletKey := ""
+	if w.cfg.PaymentBackend.NeedsWallet() {
+		wallet, err = w.walletSvc.GetDefault()
+		if err != nil {
+			return fmt.Errorf("No wallet configured for payment")
+		}
+		walletKey, err = w.walletSvc.DecryptKey(wallet)
+		if err != nil {
+			return fmt.Errorf("Failed to decrypt wallet key")
+		}
 	}
 
 	// Phase 1: Prepare upload — encrypts file, collects network quotes.
@@ -376,23 +424,78 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 	// one EVM tx, and finalize returns a network address for the DataMap.
 	// Private visibility: DataMap stays in-memory and is stored locally.
 	var prepared *antd.PrepareUploadResult
-	if upload.Visibility == "public" {
+	switch {
+	case w.cfg.PaymentBackend.WantsSignedQuotes():
+		// Remote payer (V2-926): ask for the signed quotes so the gateway can
+		// verify the batch offline before paying. Requires antd >= 0.13.0.
+		opts := antd.PrepareOptions{IncludeSignedQuotes: true}
+		if upload.Visibility == "public" {
+			opts.Visibility = "public"
+		}
+		prepared, err = w.antdClient.PrepareUploadWithOptions(ctx, tempPath, opts)
+	case upload.Visibility == "public":
 		prepared, err = w.antdClient.PrepareUploadPublic(ctx, tempPath)
-	} else {
+	default:
 		prepared, err = w.antdClient.PrepareUpload(ctx, tempPath)
 	}
 	if err != nil {
 		return fmt.Errorf("Failed to prepare upload: %w", err)
 	}
 
+	// Hosted mode needs the gateway client BEFORE the cost ceiling: the
+	// gateway debits GROSS — batch total + per-batch network fee (V2-1098) —
+	// so the ceiling compares that same basis (V2-1113) and must ask the
+	// gateway what the fee is. The ensure-payer block further down is a no-op
+	// once this has run.
+	if w.cfg.PaymentBackend.Hosted() {
+		if w.cfg.PaymentGatewayURL == "" {
+			return fmt.Errorf("payment_backend=hosted requires payment_gateway_url")
+		}
+		if w.evmSigner == nil {
+			w.evmSigner = evm.NewHostedPayer(w.cfg.PaymentGatewayURL, w.cfg.PaymentGatewayAPIKey)
+		}
+	}
+
 	// Cost ceiling — applies to wave-batch AND merkle. Wave cost is known upfront
 	// (prepared.TotalAmount); merkle cost is the most the contract could charge
-	// (one winning candidate per pool). Either exceeding max_gas_fee backs off to
-	// a cheaper window rather than paying uncapped. Compared as big.Int so large
-	// atto-token amounts don't overflow.
+	// (one winning candidate per pool). Hosted mode compares gross — quote plus
+	// the gateway's per-batch network fee (V2-1113) — matching the actual debit
+	// and the gateway's own 402 threshold. Either exceeding max_gas_fee backs off
+	// to a cheaper window rather than paying uncapped. Compared as big.Int so
+	// large atto-token amounts don't overflow.
 	if maxFeeStr, err := w.settingsSvc.Get("max_gas_fee"); err == nil {
 		if maxFee, ok := new(big.Int).SetString(strings.TrimSpace(maxFeeStr), 10); ok && maxFee.Sign() > 0 {
-			estCost := estimatedUploadCost(prepared)
+			var feePerBatch *big.Int
+			if w.cfg.PaymentBackend.Hosted() {
+				if fp, ok := w.evmSigner.(interface {
+					FeePerBatch(context.Context) (*big.Int, bool)
+				}); ok {
+					fee, known := fp.FeePerBatch(ctx)
+					if !known {
+						// The gateway debits GROSS, but the fee could not be learned
+						// (never fetched successfully — gateway down since boot). A
+						// ceiling computed without it would pass exactly when the
+						// gateway might charge past it, so never spend on an
+						// unknown fee: back off like a too-high quote and retry the
+						// fetch on the next pass (review of #163).
+						attempt := upload.BackoffAttempt + 1
+						if attempt > maxGasBackoffAttempts {
+							return fmt.Errorf("Gateway fee unavailable — cannot verify the cost ceiling; try again later")
+						}
+						backoffUntil := calcGasBackoff(attempt)
+						netCost := grossUploadCost(prepared, nil)
+						if err := w.uploadSvc.SetGasBackoff(upload.ID, backoffUntil, attempt, netCost.String()); err != nil {
+							return fmt.Errorf("Internal error scheduling retry")
+						}
+						slog.Warn("gateway fee unknown, deferring cost-ceiling check",
+							"uuid", upload.UUID, "net_quoted", netCost.String(), "max", maxFeeStr,
+							"attempt", attempt, "retry_at", backoffUntil.Format(time.RFC3339))
+						return errGasBackoff
+					}
+					feePerBatch = fee
+				}
+			}
+			estCost := grossUploadCost(prepared, feePerBatch)
 			if estCost.Cmp(maxFee) > 0 {
 				attempt := upload.BackoffAttempt + 1
 				if attempt > maxGasBackoffAttempts {
@@ -438,18 +541,20 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 	// Cache antd's response only when our config is empty — preserves the
 	// original "first PrepareUpload populates cfg" behaviour for installs
 	// that rely on antd as authority.
-	if w.cfg.EvmRPCURL == "" && prepared.RPCUrl != "" {
+	if w.cfg.PaymentBackend.NeedsWallet() && w.cfg.EvmRPCURL == "" && prepared.RPCUrl != "" {
 		w.cfg.EvmRPCURL = prepared.RPCUrl
 		w.cfg.EvmTokenAddress = prepared.PaymentTokenAddress
 	}
 
-	// Ensure EVM signer is connected to the resolved URL.
-	if w.evmSigner == nil || w.evmSigner.RPCUrl() != rpcURL {
+	// Ensure the payer is connected. Hosted mode (V2-929 PoC) delegates
+	// signing to the payment gateway and was ensured above, before the cost
+	// ceiling; otherwise connect the local EVM signer to the resolved URL.
+	if !w.cfg.PaymentBackend.Hosted() && (w.evmSigner == nil || w.evmSigner.RPCUrl() != rpcURL) {
 		signer, err := evm.NewSigner(rpcURL)
 		if err != nil {
 			return fmt.Errorf("Failed to connect to EVM RPC: %w", err)
 		}
-		w.evmSigner = signer
+		w.evmSigner = localPayer{signer}
 	}
 
 	// Optional operator override for how long we wait for a payment tx to
@@ -488,7 +593,7 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 
 		// Record the confirmed spend BEFORE finalize, so a finalize failure still
 		// leaves an accounting record rather than losing the payment (V2-426).
-		w.recordPayment(ctx, wallet, upload, tokenAddr, paidAmount, txHash)
+		w.recordPayment(ctx, wallet, upload, tokenAddr, paidAmount, txHash, "", "")
 
 		// Phase 3: Finalize merkle upload. A failure here means money is already
 		// spent; re-running would submit a second merkle payment (not provably
@@ -503,9 +608,10 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		// every chunk is already on-network (content-addressed dedup) — there's
 		// nothing to pay, so skip signing an empty batch and finalize directly.
 		var txHashes map[string]string
+		var gatewayKey string
 		paymentMade := false
 		if len(prepared.Payments) > 0 {
-			txHashes, err = w.evmSigner.PayForQuotes(ctx, walletKey, prepared.Payments, tokenAddr, prepared.PaymentVaultAddress)
+			txHashes, gatewayKey, err = w.evmSigner.PayForQuotes(ctx, walletKey, prepared.Payments, prepared.SignedQuotes, tokenAddr, prepared.PaymentVaultAddress)
 			if err != nil {
 				return fmt.Errorf("EVM payment failed: %w", err)
 			}
@@ -521,13 +627,30 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		}
 
 		// Record the confirmed spend BEFORE finalize (V2-426). Only when a payment
-		// actually happened — a dedup re-Prepare pays nothing.
+		// actually happened — a dedup re-Prepare pays nothing. Hosted mode: the
+		// gateway may charge a per-batch network fee (V2-1098) — the customer's
+		// books record the GROSS debit (what the credits actually dropped by),
+		// with the fee itemized on the upload.
+		feeAtto := ""
 		if paymentMade {
-			w.recordPayment(ctx, wallet, upload, tokenAddr, paidAmount, txHash)
+			if pc, ok := w.evmSigner.(interface {
+				PaymentCost(string) (evm.PaymentCost, bool)
+			}); ok && gatewayKey != "" {
+				if c, ok := pc.PaymentCost(gatewayKey); ok {
+					paidAmount = c.TotalDebited
+					feeAtto = c.FeeAtto
+				}
+			}
+			w.recordPayment(ctx, wallet, upload, tokenAddr, paidAmount, txHash, gatewayKey, feeAtto)
 		}
 
 		// Phase 3: Finalize wave-batch upload. Retrying re-Prepares at zero cost
-		// (dedup), so a finalize failure is safe to retry.
+		// (dedup), so a finalize failure is safe to retry. antd requires
+		// tx_hashes as an empty object — never null — when prepare reported no
+		// payments (full dedup), and a nil Go map marshals to null.
+		if txHashes == nil {
+			txHashes = map[string]string{}
+		}
 		result, err = w.antdClient.FinalizeUpload(ctx, prepared.UploadID, txHashes, false)
 		if err != nil {
 			return fmt.Errorf("Failed to finalize upload: %w", errors.Join(errFinalizeFailed, err))
@@ -594,7 +717,33 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 // still leaves a queryable accounting record rather than losing the spend. Called
 // exactly once per real payment (a dedup re-Prepare pays nothing, so retries do
 // not double-record).
-func (w *UploadWorker) recordPayment(ctx context.Context, wallet *services.Wallet, upload *services.Upload, tokenAddr, paidAmount, txHash string) {
+func (w *UploadWorker) recordPayment(ctx context.Context, wallet *services.Wallet, upload *services.Upload, tokenAddr, paidAmount, txHash, gatewayKey, feeAtto string) {
+	// Provenance stamp (V2-1086): recorded with the payment so "how was this
+	// upload paid" survives instance-level payment_backend changes. feeAtto is
+	// the gateway's per-batch network fee when one was charged (V2-1098).
+	backend := string(w.cfg.PaymentBackend)
+	if err := w.uploadSvc.SetPaymentProvenance(upload.ID, backend, gatewayKey, feeAtto); err != nil {
+		slog.Warn("failed to stamp payment provenance", "error", err)
+	}
+
+	if w.cfg.PaymentBackend.Hosted() {
+		// No wallet paid — the gateway's treasury did, debiting the tenant's
+		// credits. wallet_id NULL (hosted rows belong to no wallet, V-929),
+		// distinct tx_type, balance_after = remaining gateway credits.
+		creditBal := ""
+		if ab, ok := w.evmSigner.(interface {
+			AccountBalance(context.Context) (string, error)
+		}); ok {
+			if bal, err := ab.AccountBalance(ctx); err == nil {
+				creditBal = bal
+			} else {
+				slog.Warn("failed to query gateway credit balance", "error", err)
+			}
+		}
+		_, _ = w.txnSvc.Record(0, &upload.ID, "hosted_payment", paidAmount, creditBal, txHash)
+		return
+	}
+
 	if tokenBal, gasBal, err := w.evmSigner.GetBalances(ctx, wallet.Address, tokenAddr); err == nil {
 		_ = w.walletSvc.UpdateBalance(wallet.ID, tokenBal, gasBal)
 		_, _ = w.txnSvc.Record(wallet.ID, &upload.ID, "upload", paidAmount, tokenBal, txHash)

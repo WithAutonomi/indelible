@@ -85,6 +85,15 @@ func main() {
 	slog.SetDefault(logger)
 
 	slog.Info("starting indelible", "version", buildinfo.Version, "port", cfg.Port, "db_driver", cfg.DBDriver())
+	if cfg.PaymentBackend.Hosted() {
+		// V2-929: uploads are paid by the gateway from prepaid credits — no
+		// wallet record, no EVM RPC, and the wallet encryption key is optional
+		// (it only gates OIDC client-secret storage here).
+		slog.Info("payment backend: hosted — uploads paid by the gateway, no wallet or EVM RPC on this instance",
+			"gateway", cfg.PaymentGatewayURL, "wallet_key_configured", cfg.WalletKeyConfigured())
+	} else {
+		slog.Info("payment backend: local — uploads signed with the instance wallet", "network", cfg.Network)
+	}
 
 	// Managed antd
 	var antdMgr *managedantd.Manager

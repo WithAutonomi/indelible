@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { api } from '../../api/client'
+import { approxUSD } from '../../utils/money'
 import Select from 'primevue/select'
 import Card from 'primevue/card'
 
@@ -9,6 +10,29 @@ const uploadStats = ref<any>(null)
 const tokenStats = ref<any>(null)
 const costStats = ref<any>(null)
 const loading = ref(true)
+
+// Crypto-free display (V2-1100): hosted mode renders spend in fiat at the
+// gateway's rate; without a rate the raw atto figures stand as before.
+const paymentBackend = ref('local')
+const gatewayRate = ref('')
+async function fetchRate() {
+  try {
+    const res = await api.get('/api/v2/system/wallet-status')
+    paymentBackend.value = res.data.payment_backend || 'local'
+    gatewayRate.value = res.data.gateway_rate_usd_per_ant || ''
+  } catch {
+    // fiat display is best-effort
+  }
+}
+const fiat = () => paymentBackend.value === 'hosted' && gatewayRate.value !== ''
+function fmtSpend(atto: string | null | undefined): string {
+  if (!atto) return '0'
+  if (fiat()) {
+    const usd = approxUSD(atto, gatewayRate.value)
+    if (usd) return usd
+  }
+  return atto
+}
 
 const periodOptions = [
   { label: 'Last 7 days', value: 7 },
@@ -42,7 +66,10 @@ function formatBytes(bytes: number) {
   return (bytes / 1073741824).toFixed(2) + ' GB'
 }
 
-onMounted(fetchAll)
+onMounted(() => {
+  fetchRate()
+  fetchAll()
+})
 </script>
 
 <template>
@@ -123,12 +150,12 @@ onMounted(fetchAll)
               <p class="text-2xl font-bold">{{ costStats?.total_uploads || 0 }}</p>
             </div>
             <div>
-              <p class="text-xs text-surface-500 uppercase">Total Spent (atto)</p>
-              <p class="text-2xl font-bold font-mono">{{ costStats?.total_cost || '0' }}</p>
+              <p class="text-xs text-surface-500 uppercase">Total Spent{{ fiat() ? '' : ' (atto)' }}</p>
+              <p class="text-2xl font-bold font-mono" :title="costStats?.total_cost || ''">{{ fmtSpend(costStats?.total_cost) }}</p>
             </div>
             <div>
-              <p class="text-xs text-surface-500 uppercase">Avg / Upload (atto)</p>
-              <p class="text-2xl font-bold font-mono">{{ costStats?.avg_cost_per_upload || '0' }}</p>
+              <p class="text-xs text-surface-500 uppercase">Avg / Upload{{ fiat() ? '' : ' (atto)' }}</p>
+              <p class="text-2xl font-bold font-mono" :title="costStats?.avg_cost_per_upload || ''">{{ fmtSpend(costStats?.avg_cost_per_upload) }}</p>
             </div>
           </div>
           <div v-if="costStats?.by_department?.length">
@@ -136,7 +163,7 @@ onMounted(fetchAll)
             <div class="space-y-1">
               <div v-for="d in costStats.by_department" :key="d.department" class="flex justify-between text-sm">
                 <span>{{ d.department || 'Unassigned' }}</span>
-                <span class="text-surface-500 font-mono">{{ d.total_cost }}</span>
+                <span class="text-surface-500 font-mono" :title="d.total_cost">{{ fmtSpend(d.total_cost) }}</span>
               </div>
             </div>
           </div>

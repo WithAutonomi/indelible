@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useConfirm } from 'primevue/useconfirm'
 import { useToast } from 'primevue/usetoast'
 import { api } from '../../api/client'
 import { useAuthStore } from '../../stores/auth'
+import { approxUSD, fmtFeePerBatch, grossEstimateAtto } from '../../utils/money'
 import type { Upload, Collection } from '../../types/api'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
@@ -27,14 +28,48 @@ const router = useRouter()
 const confirm = useConfirm()
 const toast = useToast()
 const noWallet = ref(false)
+// Crypto-free display (V2-1100): in hosted mode, costs render in fiat at
+// the gateway's rate; ANT only when no rate is available.
+const paymentBackend = ref('local')
+const gatewayRate = ref('')
+// Fee-aware estimates (V2-1113): the gateway adds a per-batch network fee to
+// every settled batch (V2-1098) — each upload settles as one batch, so warn
+// before uploading rather than surprising in the debit. Empty = no fee.
+const gatewayFee = ref('')
 
 async function checkWalletStatus() {
   try {
     const res = await api.get('/api/v2/system/wallet-status')
     noWallet.value = !res.data.has_default_wallet
+    paymentBackend.value = res.data.payment_backend || 'local'
+    gatewayRate.value = res.data.gateway_rate_usd_per_ant || ''
+    gatewayFee.value = res.data.gateway_fee_per_batch_atto || ''
   } catch {
     // ignore
   }
+}
+
+// "≈ $0.01" / "0.005 ANT" per upload, or null when no fee applies — hosted only.
+const feeNote = computed(() =>
+  paymentBackend.value === 'hosted' ? fmtFeePerBatch(gatewayFee.value, gatewayRate.value) : null,
+)
+
+// Stored estimates are the net antd quote; hosted mode displays gross — plus
+// one per-batch network fee (V2-1113) — matching what would be debited.
+// (last_quoted_cost is NOT run through this: the worker records it gross.)
+function estimateWithFee(atto: string | null | undefined): string | null {
+  if (!atto) return null
+  return paymentBackend.value === 'hosted' ? grossEstimateAtto(atto, gatewayFee.value) : atto
+}
+
+// Hosted → "≈ $0.02" (raw value in the tooltip); local → unchanged.
+function fmtCost(atto: string | null | undefined): string {
+  if (!atto) return '—'
+  if (paymentBackend.value === 'hosted') {
+    const usd = approxUSD(atto, gatewayRate.value)
+    if (usd) return usd
+  }
+  return atto
 }
 
 const uploads = ref<Upload[]>([])
@@ -680,6 +715,14 @@ watch(() => route.query.focus, (f, old) => {
               :disabled="!file || uploading || noWallet" :loading="uploading" />
           </div>
 
+          <!-- Fee-aware estimate note (V2-1113): the gateway debits gross —
+               storage cost + a per-batch network fee (V2-1098) — and each
+               upload settles as one batch, so say so before the debit.
+               Exact atto in the tooltip per the established pattern. -->
+          <p v-if="feeNote" class="text-xs text-surface-500 -mt-2" :title="`${gatewayFee} atto per batch`">
+            Estimated costs include a network fee of {{ feeNote }} per upload, charged with the storage cost.
+          </p>
+
           <!-- Upload-time tags -->
           <div v-if="file" class="border-t border-surface-200 pt-3">
             <p class="text-xs text-surface-500 mb-2">Tags (optional — applied when the file is queued)</p>
@@ -944,6 +987,13 @@ watch(() => route.query.focus, (f, old) => {
           </dl>
           <div v-if="detail.error_message" class="mt-2 p-2 rounded bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 text-xs break-words">
             {{ detail.error_message }}
+            <!-- Insufficient gateway credits is the one failure the reader can
+                 fix (V2-1097): admins get the door, users get the messenger. -->
+            <template v-if="detail.error_message.includes('insufficient gateway credits')">
+              <router-link v-if="auth.isAdmin" to="/admin/billing"
+                class="block mt-1 font-medium underline">Top up credits →</router-link>
+              <p v-else class="mt-1 font-medium">Ask your administrator to top up the instance's credits, then retry.</p>
+            </template>
           </div>
         </section>
 
@@ -951,9 +1001,27 @@ watch(() => route.query.focus, (f, old) => {
         <section>
           <h3 class="text-xs font-semibold uppercase text-surface-400 mb-2">Cost</h3>
           <dl class="flex flex-col gap-2">
-            <div class="flex justify-between gap-3"><dt class="text-surface-500">Estimated</dt><dd>{{ detail.estimated_cost || '—' }}</dd></div>
-            <div class="flex justify-between gap-3"><dt class="text-surface-500">Actual</dt><dd>{{ detail.actual_cost || '—' }}</dd></div>
-            <div v-if="detail.last_quoted_cost" class="flex justify-between gap-3"><dt class="text-surface-500">Last quoted</dt><dd>{{ detail.last_quoted_cost }}</dd></div>
+            <!-- Estimated is fee-aware in hosted mode (V2-1113): stored net
+                 quote + one per-batch network fee, the gross debit basis. -->
+            <div class="flex justify-between gap-3"><dt class="text-surface-500">Estimated</dt><dd :title="estimateWithFee(detail.estimated_cost) || ''">{{ fmtCost(estimateWithFee(detail.estimated_cost)) }}</dd></div>
+            <div class="flex justify-between gap-3"><dt class="text-surface-500">Actual</dt><dd :title="detail.actual_cost || ''">{{ fmtCost(detail.actual_cost) }}</dd></div>
+            <!-- The gateway's per-batch network fee (V2-1098), already included in the actual cost above. -->
+            <div v-if="detail.gateway_fee_atto" class="flex justify-between gap-3">
+              <dt class="text-surface-500">Network fee</dt>
+              <dd :title="detail.gateway_fee_atto">{{ fmtCost(detail.gateway_fee_atto) }} <span class="text-surface-400 text-xs">included</span></dd>
+            </div>
+            <!-- Last quoted is the max_gas_fee comparison basis — gross (incl.
+                 the per-batch network fee) in hosted mode (V2-1113). -->
+            <div v-if="detail.last_quoted_cost" class="flex justify-between gap-3"><dt class="text-surface-500">Last quoted</dt><dd :title="detail.last_quoted_cost">{{ fmtCost(detail.last_quoted_cost) }}</dd></div>
+            <div v-if="detail.payment_backend" class="flex justify-between gap-3">
+              <dt class="text-surface-500">Paid via</dt>
+              <dd><Tag :value="detail.payment_backend === 'hosted' ? 'Hosted gateway credits' : 'Wallet (local)'"
+                :severity="detail.payment_backend === 'hosted' ? 'warn' : 'info'" /></dd>
+            </div>
+            <div v-if="detail.gateway_payment_key" class="flex justify-between gap-3">
+              <dt class="text-surface-500">Gateway batch</dt>
+              <dd><code class="bg-surface-100 px-2 py-1 rounded font-mono text-xs break-all" :title="detail.gateway_payment_key">{{ detail.gateway_payment_key.substring(0, 12) }}…</code></dd>
+            </div>
           </dl>
         </section>
 

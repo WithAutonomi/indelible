@@ -75,7 +75,14 @@ data_dir = "./data"
 
 # Required
 jwt_secret = "your-secret-key-at-least-32-chars"
-wallet_encryption_key = "64-hex-char-key-for-aes-256-gcm"
+wallet_encryption_key = "64-hex-char-key-for-aes-256-gcm"   # local payment backend only; optional with payment_backend = "hosted"
+
+# Payments: "local" (default) signs uploads with a wallet you add in the admin UI;
+# "hosted" pays through the Autonomi Pay gateway from prepaid credits — no wallet,
+# no EVM RPC on this instance. Requires antd >= 0.13.0.
+# payment_backend = "hosted"
+# payment_gateway_url = "https://pay.example.com"
+# payment_gateway_api_key = "pgk_..."
 
 # Bootstrap admin — seeds the first admin on a fresh DB (self-registration is
 # off by default; the server won't start with no admin and no seed).
@@ -183,7 +190,10 @@ curl -X POST /api/v2/tokens \
 | `INDELIBLE_JWT_SECRET` | **Required.** Secret for JWT signing; **minimum 32 characters** (the server refuses to start below this). Generate with `openssl rand -hex 32` | -- |
 | `INDELIBLE_JWT_SECRET_PREVIOUS` | Comma-separated **verify-only** former JWT secrets, kept during a rotation so live sessions survive. New tokens always sign with `INDELIBLE_JWT_SECRET`; these only verify already-issued tokens until they expire. See [key-rotation guide](docs/guides/key-rotation.md#rotating-the-jwt-secret) | -- |
 | `INDELIBLE_JWT_SECRET_FILE` | Path to a file holding the JWT secret (Docker/K8s secrets); takes precedence over `INDELIBLE_JWT_SECRET` | -- |
-| `INDELIBLE_WALLET_ENCRYPTION_KEY` | **Required.** 64-char hex key for wallet encryption (AES-256-GCM) | -- |
+| `INDELIBLE_WALLET_ENCRYPTION_KEY` | **Required for the local payment backend.** 64-char hex key for wallet + OIDC client-secret encryption (AES-256-GCM). Optional with `INDELIBLE_PAYMENT_BACKEND=hosted` (no wallet exists); set it there only if you want OIDC login, whose client secrets it also encrypts | -- |
+| `INDELIBLE_PAYMENT_BACKEND` | Who pays for uploads: `local` (this instance's wallet signs) or `hosted` (the Autonomi Pay gateway pays from the tenant's prepaid credits; no wallet, no EVM RPC on this instance; antd >= 0.13.0). Unknown values refuse to start. Not to be confused with the upload API's `payment_mode` (`auto`/`merkle`/`single`), which is how a payment is structured on-chain | `local` |
+| `INDELIBLE_PAYMENT_GATEWAY_URL` | Gateway base URL. **Required** when the backend is `hosted` | -- |
+| `INDELIBLE_PAYMENT_GATEWAY_API_KEY` | Tenant API key issued by the gateway (Bearer). Required when the backend is `hosted` | -- |
 | `INDELIBLE_WALLET_ENCRYPTION_KEY_FILE` | Path to a file holding the wallet encryption key (Docker/K8s secrets); takes precedence over `INDELIBLE_WALLET_ENCRYPTION_KEY` | -- |
 | `INDELIBLE_WALLET_ENCRYPTION_KEY_PREVIOUS` | Comma-separated **decrypt-only** former wallet keys, so the running service can read rows not yet re-encrypted during a rotation. See [key-rotation guide](docs/guides/key-rotation.md#rotating-the-wallet-encryption-key) | -- |
 | `INDELIBLE_SECRETS_BACKEND` | Where key material is sourced from. `env` sources from env / config-file / `_FILE`. Other backends (Vault, cloud KMS) plug in behind the same provider seam | `env` |

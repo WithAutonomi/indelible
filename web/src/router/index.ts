@@ -77,6 +77,12 @@ const router = createRouter({
       meta: { auth: true, admin: true },
     },
     {
+      path: '/admin/billing',
+      name: 'admin-billing',
+      component: () => import('../views/admin/BillingView.vue'),
+      meta: { auth: true, admin: true },
+    },
+    {
       path: '/admin/transactions',
       name: 'admin-transactions',
       component: () => import('../views/admin/TransactionsView.vue'),

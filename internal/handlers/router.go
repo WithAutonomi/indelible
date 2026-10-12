@@ -210,6 +210,12 @@ func NewRouter(cfg *config.Config, db *database.DB, antdInfo AntdInfoProvider, d
 			r.Delete("/admin/tokens/bulk", AdminBulkRevokeTokens(db))
 
 			// Wallet management
+			// Billing (V2-1097): hosted-mode funds surface — server-side
+			// relays to the payment gateway (tenant key stays server-side).
+			r.Get("/admin/billing", AdminBillingSummary(db, cfg))
+			r.Post("/admin/billing/topup-checkout", AdminBillingTopupCheckout(db, cfg))
+			r.Post("/admin/billing/topup-sync", AdminBillingTopupSync(db, cfg))
+
 			r.Get("/admin/wallets", AdminListWallets(db, cfg))
 			r.Post("/admin/wallets", AdminCreateWallet(db, cfg))
 			r.Put("/admin/wallets/{id}/default", AdminSetDefaultWallet(db, cfg))

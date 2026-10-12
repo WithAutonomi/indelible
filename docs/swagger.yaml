@@ -677,6 +677,24 @@ definitions:
       uuid:
         type: string
     type: object
+  internal_handlers.topupCheckoutRequest:
+    properties:
+      amount_usd_cents:
+        type: integer
+      cancel_url:
+        type: string
+      success_url:
+        description: |-
+          Absolute URLs back into this instance's UI; validated by the gateway
+          (http/https only). Stripe substitutes {CHECKOUT_SESSION_ID} in
+          success_url if the placeholder is present.
+        type: string
+    type: object
+  internal_handlers.topupSyncRequest:
+    properties:
+      session_id:
+        type: string
+    type: object
   internal_handlers.updateGroupRequest:
     properties:
       description:
@@ -774,9 +792,21 @@ definitions:
         type: integer
       filename:
         type: string
+      gateway_fee_atto:
+        description: |-
+          GatewayFeeAtto itemizes the gateway's per-batch network fee out of the
+          gross actual_cost (V2-1098); absent when no fee was charged.
+        type: string
+      gateway_payment_key:
+        type: string
       last_quoted_cost:
         type: string
       original_filename:
+        type: string
+      payment_backend:
+        description: |-
+          Payment provenance (V2-1086): "local" (instance wallet) or "hosted"
+          (gateway credits) + the gateway's batch key; absent when nothing was paid.
         type: string
       processing_at:
         type: string
@@ -937,6 +967,104 @@ paths:
       summary: Get upload analytics
       tags:
       - 'Admin: Analytics'
+  /admin/billing:
+    get:
+      description: 'Hosted-mode billing: gateway credits and credited top-up history'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Not in hosted payment mode
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Billing summary
+      tags:
+      - 'Admin: Billing'
+  /admin/billing/topup-checkout:
+    post:
+      consumes:
+      - application/json
+      description: Create a Stripe Checkout session at the gateway; returns the hosted
+        payment page URL and the exact credit
+      parameters:
+      - description: Amount in USD cents and return URLs
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handlers.topupCheckoutRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: session_id, url, credit_atto
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "502":
+          description: Gateway unreachable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Start a card top-up
+      tags:
+      - 'Admin: Billing'
+  /admin/billing/topup-sync:
+    post:
+      consumes:
+      - application/json
+      description: Ask the gateway to retrieve the Checkout session from Stripe and
+        credit it if paid (idempotent; webhook-loss fallback)
+      parameters:
+      - description: Checkout session id
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handlers.topupSyncRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: credited, payment_status
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "502":
+          description: Gateway unreachable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Sync a top-up
+      tags:
+      - 'Admin: Billing'
   /admin/departments:
     get:
       description: Return the distinct department labels in use across API tokens,
@@ -4851,10 +4979,13 @@ paths:
     post:
       consumes:
       - multipart/form-data
-      description: Get an exact cost quote by sending the file bytes. antd runs self-encryption
+      description: 'Get an exact cost quote by sending the file bytes. antd runs self-encryption
         and queries the live network for chunk pricing — no estimation, no scaling.
         Returns a structured estimated_cost object with cost, chunk_count, gas, and
-        payment_mode.
+        payment_mode (antd''s on-chain payment strategy: auto | merkle | single).
+        With the hosted payment backend the gateway debits gross — batch total plus
+        a per-batch network fee (V2-1098) — so the response additionally carries gateway_fee_per_batch_atto,
+        estimated_batch_count, and estimated_total_with_fee_atto (V2-1113).'
       parameters:
       - description: File to quote
         in: formData
