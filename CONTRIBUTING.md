@@ -45,7 +45,7 @@ permitted.
 
 ### Toolchain
 
-- **Go** — version pinned in `go.mod` (currently 1.25+). The backend is Go +
+- **Go** — version pinned in `go.mod` (currently 1.26+). The backend is Go +
   [chi](https://github.com/go-chi/chi) + dual-dialect (SQLite/Postgres) via
   [goose](https://github.com/pressly/goose) migrations.
 - **Node** — 22+ for the Vue 3 + PrimeVue frontend in `web/`.

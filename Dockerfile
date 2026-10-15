@@ -7,7 +7,7 @@
 # platform); keep ANTD_IMAGE in lockstep with .antd-version. release.yml
 # passes the pinned tag explicitly; this default keeps `docker compose
 # up --build` and bare `docker build` working out of the box.
-ARG ANTD_IMAGE=ghcr.io/withautonomi/antd:v0.12.0
+ARG ANTD_IMAGE=ghcr.io/withautonomi/antd:v0.15.0
 FROM ${ANTD_IMAGE} AS antd
 
 # Build frontend on the native arch — JS output is arch-independent.
@@ -22,7 +22,7 @@ RUN node scripts/third-party-notices.mjs THIRD-PARTY-NOTICES.web.txt
 
 # Build backend on the native arch, cross-compile to TARGETARCH. Going through
 # QEMU emulation is 5-10x slower than native + cross-compile.
-FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS backend
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS backend
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
