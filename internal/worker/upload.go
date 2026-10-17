@@ -84,27 +84,109 @@ func classifyFailure(err error, paymentMade, canRetry bool) uploadOutcome {
 }
 
 // estimatedUploadCost returns the cost to compare against max_gas_fee. For
-// wave-batch it's the quoted TotalAmount; for merkle (cost determined on-chain)
-// it's the upper bound the contract could charge — the sum over pools of the
-// largest candidate amount. Unparseable/empty amounts count as zero.
+// wave-batch it's the quoted TotalAmount; for merkle (cost determined
+// on-chain) it's the upper bound the contract could charge across every
+// payment batch — per batch, the highest pool median quote * 2^depth
+// (PaymentVaultV2 charges the winner pool's median16 * 2^depth and picks the
+// winner at execution time). Unparseable/empty amounts count as zero; a
+// merkle prepare with no batches at all estimates zero here and fails with a
+// clear error in the payment branch.
 func estimatedUploadCost(prepared *antd.PrepareUploadResult) *big.Int {
 	if prepared.PaymentType == "merkle" {
-		total := new(big.Int)
-		for _, pc := range prepared.PoolCommitments {
-			poolMax := new(big.Int)
-			for _, c := range pc.Candidates {
-				if amt, ok := new(big.Int).SetString(c.Amount, 10); ok && amt.Cmp(poolMax) > 0 {
-					poolMax = amt
-				}
-			}
-			total.Add(total, poolMax)
+		batches, err := merkleBatchPlan(prepared)
+		if err != nil {
+			return new(big.Int)
 		}
-		return total
+		return evm.MaxMerkleBatchesPayout(batches)
 	}
 	if amt, ok := new(big.Int).SetString(strings.TrimSpace(prepared.TotalAmount), 10); ok {
 		return amt
 	}
 	return new(big.Int)
+}
+
+// merkleBatchPlan returns the ordered merkle payment batches for a prepare
+// result. antd >= 0.12.0 always populates MerkleBatches (one entry per
+// payForMerkleTree transaction the signer must submit); older daemons fill
+// only the legacy single-batch mirror fields, synthesized here into one batch.
+// Neither present means the daemon and SDK disagree about the wire format —
+// surfaced as a clear version-gap error instead of an empty payment attempt.
+func merkleBatchPlan(prepared *antd.PrepareUploadResult) ([]antd.MerkleBatchEntry, error) {
+	if len(prepared.MerkleBatches) > 0 {
+		return prepared.MerkleBatches, nil
+	}
+	if len(prepared.PoolCommitments) > 0 {
+		return []antd.MerkleBatchEntry{{
+			Depth:                  prepared.Depth,
+			PoolCommitments:        prepared.PoolCommitments,
+			MerklePaymentTimestamp: prepared.MerklePaymentTimestamp,
+		}}, nil
+	}
+	return nil, fmt.Errorf("merkle prepare returned no payment batches and no pool commitments — daemon/SDK version mismatch (multi-batch merkle uploads need antd >= 0.12.0)")
+}
+
+// validateMerkleBatches rejects malformed payment data before any money moves,
+// so a bad batch N can never fail after batches 1..N-1 already paid. Mirrors
+// the checks PayForMerkleTree applies per batch, naming the batch and pool.
+func validateMerkleBatches(batches []antd.MerkleBatchEntry) error {
+	for i, b := range batches {
+		if b.Depth < 1 || b.Depth > 8 {
+			return fmt.Errorf("batch %d/%d has invalid merkle depth %d (want 1-8)", i+1, len(batches), b.Depth)
+		}
+		if len(b.PoolCommitments) == 0 {
+			return fmt.Errorf("batch %d/%d has no pool commitments", i+1, len(batches))
+		}
+		for j, pc := range b.PoolCommitments {
+			if len(pc.Candidates) != evm.MerklePoolCandidateCount {
+				return fmt.Errorf("batch %d/%d pool %d: expected %d candidates, got %d",
+					i+1, len(batches), j, evm.MerklePoolCandidateCount, len(pc.Candidates))
+			}
+			for _, c := range pc.Candidates {
+				if _, ok := new(big.Int).SetString(c.Amount, 10); !ok {
+					return fmt.Errorf("batch %d/%d pool %d: invalid candidate amount %q",
+						i+1, len(batches), j, c.Amount)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// padWinnerList right-pads winners with "" to batchCount entries. The daemon
+// requires the finalize list length to equal the batch count; an empty entry
+// marks a batch the signer never paid.
+func padWinnerList(winners []string, batchCount int) []string {
+	padded := make([]string, batchCount)
+	copy(padded, winners)
+	return padded
+}
+
+// shouldSalvageMerkle decides whether a mid-plan payment failure warrants a
+// best-effort partial finalize (storing the already-paid batches' chunks).
+// Only when something was actually paid, and never on a confirmation timeout —
+// that tx may still mine, and a partial finalize now would consume the upload
+// and foreclose the manual full finalize.
+func shouldSalvageMerkle(err error, paidBatches int) bool {
+	return paidBatches > 0 && !errors.Is(err, evm.ErrConfirmationTimeout)
+}
+
+// logIfPartialUpload logs the chunk accounting when err carries antd's
+// PARTIAL_UPLOAD detail (some batches/chunks stored, the rest failed).
+func logIfPartialUpload(uuid string, err error) {
+	var partial *antd.PartialUploadError
+	if errors.As(err, &partial) {
+		slog.Warn("merkle finalize stored only part of the upload",
+			"uuid", uuid, "chunks_stored", partial.ChunksStored,
+			"chunks_failed", partial.ChunksFailed, "total_chunks", partial.TotalChunks)
+	}
+}
+
+// merkleAllowancePayer is the optional pre-approval seam: implemented by
+// *evm.Signer. Payers without it (e.g. a hosted-mode gateway payer) fall back
+// to PayForMerkleTree's own per-batch approval — pre-approval only saves the
+// N-1 extra approve transactions.
+type merkleAllowancePayer interface {
+	EnsureMerkleAllowance(ctx context.Context, privateKeyHex string, batches []antd.MerkleBatchEntry, tokenAddress, merklePaymentsAddress string) error
 }
 
 // UploadWorker processes queued file uploads in the background.
@@ -468,33 +550,62 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 
 	switch prepared.PaymentType {
 	case "merkle":
-		// Phase 2: Sign merkle batch payment
-		winnerHash, totalPaid, err := w.evmSigner.PayForMerkleTree(
-			ctx, walletKey,
-			prepared.Depth,
-			prepared.PoolCommitments,
-			prepared.MerklePaymentTimestamp,
-			tokenAddr,
-			prepared.PaymentVaultAddress,
-		)
-		if err != nil {
-			return fmt.Errorf("EVM merkle payment failed: %w", err)
+		// Phase 2: Sign merkle payments — one payForMerkleTree transaction per
+		// batch (antd >= 0.12.0 splits uploads larger than one merkle tree, 256
+		// fresh chunks ~= 1 GiB, into several batches; older daemons send a
+		// single batch via the legacy mirror fields).
+		batches, planErr := merkleBatchPlan(prepared)
+		if planErr != nil {
+			return planErr // nothing paid → abandon
 		}
-		paidAmount = totalPaid
-		txHash = winnerHash
+		if verr := validateMerkleBatches(batches); verr != nil {
+			return fmt.Errorf("merkle payment data invalid: %w", verr) // nothing paid → abandon
+		}
+		slog.Info("merkle payment plan", "uuid", upload.UUID, "batches", len(batches),
+			"est_max_cost", evm.MaxMerkleBatchesPayout(batches).String())
 
-		slog.Info("EVM merkle payment submitted",
-			"uuid", upload.UUID, "winner_pool_hash", winnerHash, "total_paid", totalPaid)
+		// Multi-batch: pre-approve the whole plan's worst case in one approve
+		// tx. Optional seam — payers without it self-approve per batch.
+		if len(batches) > 1 {
+			if p, ok := any(w.evmSigner).(merkleAllowancePayer); ok {
+				if aerr := p.EnsureMerkleAllowance(ctx, walletKey, batches, tokenAddr, prepared.PaymentVaultAddress); aerr != nil {
+					return fmt.Errorf("EVM merkle allowance approval failed: %w", aerr)
+				}
+			}
+		}
 
-		// Record the confirmed spend BEFORE finalize, so a finalize failure still
-		// leaves an accounting record rather than losing the payment (V2-426).
-		w.recordPayment(ctx, wallet, upload, tokenAddr, paidAmount, txHash)
+		winners, totalPaid, payErr := w.payMerkleBatches(ctx, walletKey, batches, tokenAddr,
+			prepared.PaymentVaultAddress, wallet, upload)
+		if payErr != nil {
+			if shouldSalvageMerkle(payErr, len(winners)) {
+				// Definitive failure with money already spent: store what was
+				// paid for so a retry pays only the remainder, then preserve.
+				if r := w.salvageMerkleFinalize(ctx, upload, prepared.UploadID, winners, len(batches)); r != nil {
+					result = r
+					paidAmount = totalPaid.String()
+					break // salvage fully succeeded — complete the upload
+				}
+				return fmt.Errorf("EVM merkle payment failed at batch %d/%d (%d paid): %w",
+					len(winners)+1, len(batches), len(winners), errors.Join(errPaidNoRetry, payErr))
+			}
+			// Nothing paid, or a confirmation timeout (the tx may still mine —
+			// no salvage, so the manual full finalize stays possible). %w keeps
+			// evm.ErrConfirmationTimeout visible to classifyFailure.
+			return fmt.Errorf("EVM merkle payment failed (batch %d/%d): %w",
+				len(winners)+1, len(batches), payErr)
+		}
+		paidAmount = totalPaid.String()
 
 		// Phase 3: Finalize merkle upload. A failure here means money is already
 		// spent; re-running would submit a second merkle payment (not provably
 		// zero-cost), so flag it no-retry and preserve the source for recovery.
-		result, err = w.antdClient.FinalizeMerkleUpload(ctx, prepared.UploadID, winnerHash, false)
+		if len(batches) == 1 {
+			result, err = w.antdClient.FinalizeMerkleUpload(ctx, prepared.UploadID, winners[0], false)
+		} else {
+			result, err = w.antdClient.FinalizeMerkleUploadMulti(ctx, prepared.UploadID, winners, false)
+		}
 		if err != nil {
+			logIfPartialUpload(upload.UUID, err)
 			return fmt.Errorf("Failed to finalize merkle upload: %w", errors.Join(errPaidNoRetry, err))
 		}
 
@@ -602,6 +713,83 @@ func (w *UploadWorker) recordPayment(ctx context.Context, wallet *services.Walle
 		slog.Warn("failed to query post-payment balance", "error", err)
 		_, _ = w.txnSvc.Record(wallet.ID, &upload.ID, "upload", paidAmount, wallet.PaymentBalance, txHash)
 	}
+}
+
+// payMerkleBatches submits one payForMerkleTree transaction per batch, in
+// order. Each confirmed batch is recorded (one transactions row per batch,
+// tx_hash = that batch's winner pool hash) BEFORE the next batch is paid
+// (V2-426), so a mid-plan failure leaves an accurate accounting trail. Returns
+// the winner hashes of the batches paid so far — on error, len(winners) is the
+// paid count and the error is the failing batch's raw error (caller wraps).
+func (w *UploadWorker) payMerkleBatches(
+	ctx context.Context,
+	walletKey string,
+	batches []antd.MerkleBatchEntry,
+	tokenAddr, vaultAddr string,
+	wallet *services.Wallet,
+	upload *services.Upload,
+) (winners []string, totalPaid *big.Int, err error) {
+	winners = make([]string, 0, len(batches))
+	totalPaid = new(big.Int)
+	for i, b := range batches {
+		slog.Info("paying merkle batch", "uuid", upload.UUID,
+			"batch", i+1, "batches", len(batches), "pools", len(b.PoolCommitments))
+		winnerHash, batchPaid, payErr := w.evmSigner.PayForMerkleTree(
+			ctx, walletKey, b.Depth, b.PoolCommitments, b.MerklePaymentTimestamp, tokenAddr, vaultAddr)
+		if payErr != nil {
+			return winners, totalPaid, payErr
+		}
+		winners = append(winners, winnerHash)
+		if amt, ok := new(big.Int).SetString(batchPaid, 10); ok {
+			totalPaid.Add(totalPaid, amt)
+		}
+		w.recordPayment(ctx, wallet, upload, tokenAddr, batchPaid, winnerHash)
+		slog.Info("merkle batch paid", "uuid", upload.UUID,
+			"batch", i+1, "batches", len(batches), "winner_pool_hash", winnerHash,
+			"amount", batchPaid, "cumulative", totalPaid.String())
+	}
+	return winners, totalPaid, nil
+}
+
+// salvageMerkleFinalize is the best-effort finalize after a definitive
+// mid-plan payment failure: the paid batches' chunks still store (unpaid
+// batches surface through PARTIAL_UPLOAD), so a later re-upload of the same
+// content dedups them and pays only for the remainder. Runs detached from the
+// caller's cancellation (bounded) so a worker shutdown that killed the payment
+// doesn't also skip the salvage. Returns a non-nil result only in the
+// unexpected full-success case (the unpaid batches' chunks were already
+// on-network) — the upload is then genuinely complete and the caller should
+// continue the normal completion path.
+func (w *UploadWorker) salvageMerkleFinalize(
+	ctx context.Context,
+	upload *services.Upload,
+	uploadID string,
+	winners []string,
+	batchCount int,
+) *antd.FinalizeUploadResult {
+	slog.Warn("merkle payment failed mid-plan — salvage-finalizing paid batches",
+		"uuid", upload.UUID, "paid", len(winners), "batches", batchCount)
+
+	salvageCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+	defer cancel()
+
+	result, err := w.antdClient.FinalizeMerkleUploadMulti(salvageCtx, uploadID, padWinnerList(winners, batchCount), false)
+	if err == nil {
+		slog.Warn("merkle salvage finalize fully succeeded — unpaid batches were already on-network",
+			"uuid", upload.UUID, "chunks", result.ChunksStored)
+		return result
+	}
+
+	var partial *antd.PartialUploadError
+	if errors.As(err, &partial) {
+		slog.Warn("merkle salvage finalize stored paid batches",
+			"uuid", upload.UUID, "chunks_stored", partial.ChunksStored,
+			"chunks_failed", partial.ChunksFailed, "total_chunks", partial.TotalChunks)
+	} else {
+		slog.Warn("merkle salvage finalize failed — paid batches remain pending on antd (a rejected finalize does not consume the upload; manual retry possible)",
+			"uuid", upload.UUID, "upload_id", uploadID, "error", err)
+	}
+	return nil
 }
 
 // seedDownloadCache write-through-seeds the download cache from the upload's
