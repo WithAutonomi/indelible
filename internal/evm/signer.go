@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -281,8 +282,8 @@ func (s *Signer) PayForMerkleTree(
 		}
 		commitments[i].PoolHash = poolHash
 
-		if len(pc.Candidates) != 16 {
-			return "", "", fmt.Errorf("pool %d: expected 16 candidates, got %d", i, len(pc.Candidates))
+		if len(pc.Candidates) != MerklePoolCandidateCount {
+			return "", "", fmt.Errorf("pool %d: expected %d candidates, got %d", i, MerklePoolCandidateCount, len(pc.Candidates))
 		}
 		for j, c := range pc.Candidates {
 			amt, ok := new(big.Int).SetString(c.Amount, 10)
@@ -296,11 +297,12 @@ func (s *Signer) PayForMerkleTree(
 		}
 	}
 
-	// Ensure token allowance for the merkle payments contract. We don't know the
-	// exact cost upfront (the contract picks one winning candidate per pool), so
-	// approve the maximum it could possibly charge rather than an unlimited
-	// max-uint256 allowance.
-	if err := s.ensureAllowance(ctx, privateKey, fromAddress, tokenAddr, merkleAddr, maxMerklePayout(commitments)); err != nil {
+	// Ensure token allowance for the merkle payments contract. We don't know
+	// the exact cost upfront (the contract charges the winner pool's median
+	// quote * 2^depth, and picks the winner at execution time), so approve the
+	// maximum it could possibly charge rather than an unlimited max-uint256
+	// allowance.
+	if err := s.ensureAllowance(ctx, privateKey, fromAddress, tokenAddr, merkleAddr, maxMerklePayout(depth, commitments)); err != nil {
 		return "", "", fmt.Errorf("token approval: %w", err)
 	}
 
@@ -412,22 +414,122 @@ func (s *Signer) sendTxWithReceipt(
 	return signedTx.Hash().Hex(), receipt, nil
 }
 
-// maxMerklePayout returns the largest total the merkle payment contract could
-// charge: the sum over pools of the highest candidate amount in each pool (the
-// contract pays exactly one winning candidate per pool). Used to bound the
-// ERC-20 allowance instead of approving max-uint256.
-func maxMerklePayout(commitments []MerklePoolCommitment) *big.Int {
-	total := new(big.Int)
-	for _, pc := range commitments {
-		poolMax := new(big.Int)
+// merkleMaxDepth mirrors the contract's MAX_MERKLE_DEPTH; used only to clamp
+// the estimation shift below (real depth validation happens in the worker and
+// on-chain).
+const merkleMaxDepth = 8
+
+// sortedMedian returns the charging median of a pool's candidate amounts: the
+// element at index len/2 of the sorted list — for the contract's fixed 16
+// candidates that is index 8, exactly median16's pick in PaymentVaultV2.
+func sortedMedian(amounts []*big.Int) *big.Int {
+	if len(amounts) == 0 {
+		return new(big.Int)
+	}
+	sort.Slice(amounts, func(i, j int) bool { return amounts[i].Cmp(amounts[j]) < 0 })
+	return amounts[len(amounts)/2]
+}
+
+// merkleTreeCharge returns the most one payForMerkleTree call could charge.
+// PaymentVaultV2 charges median16(winner pool quotes) * 2^depth, and the
+// winner pool is not known until the transaction executes, so the bound takes
+// the highest pool median. Unparseable amounts count as zero — strict
+// validation happens in the worker before any money moves.
+func merkleTreeCharge(depth int, pools []antd.PoolCommitmentEntry) *big.Int {
+	maxMedian := new(big.Int)
+	for _, pc := range pools {
+		amounts := make([]*big.Int, 0, len(pc.Candidates))
 		for _, c := range pc.Candidates {
-			if c.Amount != nil && c.Amount.Cmp(poolMax) > 0 {
-				poolMax = c.Amount
+			amt, ok := new(big.Int).SetString(c.Amount, 10)
+			if !ok {
+				amt = new(big.Int)
 			}
+			amounts = append(amounts, amt)
 		}
-		total.Add(total, poolMax)
+		if m := sortedMedian(amounts); m.Cmp(maxMedian) > 0 {
+			maxMedian = m
+		}
+	}
+	if depth < 0 {
+		depth = 0
+	} else if depth > merkleMaxDepth {
+		depth = merkleMaxDepth
+	}
+	return new(big.Int).Lsh(maxMedian, uint(depth))
+}
+
+// MaxMerkleBatchesPayout returns the largest total a merkle payment plan could
+// charge: the sum over batches of that batch's worst-case tree charge. Shared
+// by the worker's max_gas_fee precheck and EnsureMerkleAllowance so the two
+// always agree.
+func MaxMerkleBatchesPayout(batches []antd.MerkleBatchEntry) *big.Int {
+	total := new(big.Int)
+	for _, b := range batches {
+		total.Add(total, merkleTreeCharge(b.Depth, b.PoolCommitments))
 	}
 	return total
+}
+
+// EnsureMerkleAllowance approves the ERC-20 allowance for a whole multi-batch
+// merkle payment plan in one transaction: the sum of every batch's maximum
+// payout. Each subsequent PayForMerkleTree call re-checks the allowance and
+// finds it sufficient (spend per batch never exceeds that batch's maximum), so
+// the per-batch approval short-circuits — one approve tx instead of N.
+func (s *Signer) EnsureMerkleAllowance(
+	ctx context.Context,
+	privateKeyHex string,
+	batches []antd.MerkleBatchEntry,
+	tokenAddress string,
+	merklePaymentsAddress string,
+) error {
+	required := MaxMerkleBatchesPayout(batches)
+	if required.Sign() == 0 {
+		return nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	privateKeyHex = strings.TrimPrefix(privateKeyHex, "0x")
+	privateKey, err := crypto.HexToECDSA(privateKeyHex)
+	if err != nil {
+		return fmt.Errorf("invalid private key: %w", err)
+	}
+	fromAddress := crypto.PubkeyToAddress(privateKey.PublicKey)
+
+	if err := s.ensureAllowance(ctx, privateKey, fromAddress,
+		common.HexToAddress(tokenAddress), common.HexToAddress(merklePaymentsAddress), required); err != nil {
+		return fmt.Errorf("token approval: %w", err)
+	}
+	return nil
+}
+
+// maxMerklePayout returns the largest total one payForMerkleTree call could
+// charge: PaymentVaultV2 charges median16(winner pool quotes) * 2^depth, and
+// the winner pool is unknown until the transaction executes, so the bound
+// takes the highest pool median. Used to bound the ERC-20 allowance instead
+// of approving max-uint256.
+func maxMerklePayout(depth int, commitments []MerklePoolCommitment) *big.Int {
+	maxMedian := new(big.Int)
+	for _, pc := range commitments {
+		amounts := make([]*big.Int, 0, len(pc.Candidates))
+		for _, c := range pc.Candidates {
+			amt := c.Amount
+			if amt == nil {
+				amt = new(big.Int)
+			}
+			amounts = append(amounts, amt)
+		}
+		if m := sortedMedian(amounts); m.Cmp(maxMedian) > 0 {
+			maxMedian = m
+		}
+	}
+	if depth < 0 {
+		depth = 0
+	} else if depth > merkleMaxDepth {
+		depth = merkleMaxDepth
+	}
+	return new(big.Int).Lsh(maxMedian, uint(depth))
 }
 
 // waitForReceipt polls for a transaction receipt with a 2-second interval.
