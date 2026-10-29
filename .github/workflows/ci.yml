@@ -78,6 +78,11 @@ jobs:
       - name: Go vet
         run: go vet ./...
 
+      # Fails when a linked Go module ships no licence file or brings GPL-family
+      # licence text, so the release notices cannot silently go incomplete.
+      - name: Third-party notices
+        run: go run ./scripts/notices -o /dev/null
+
       - name: Verify module checksums
         run: go mod verify
 
@@ -255,6 +260,10 @@ jobs:
 
       - name: Type check and build
         run: cd web && npm run build
+
+      # Fails when a bundled package ships no licence file.
+      - name: Third-party notices
+        run: cd web && node scripts/third-party-notices.mjs /dev/null
 
       - name: Unit tests
         run: cd web && npm run test:unit

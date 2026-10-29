@@ -38,7 +38,7 @@ set -uo pipefail
 HOST="${HOST:-prodesk}"
 CONTAINER="${CONTAINER:-dev1}"
 REPO_PATH="${REPO_PATH:-~/dev/indelible}"
-GO_VERSION="${GO_VERSION:-1.25.10}"
+GO_VERSION="${GO_VERSION:-1.26.10}"
 SKIP_HOST=false
 CHECK_ONLY=false
 
