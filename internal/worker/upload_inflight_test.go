@@ -2,12 +2,14 @@ package worker
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/WithAutonomi/indelible/internal/config"
 	"github.com/WithAutonomi/indelible/internal/database"
 	"github.com/WithAutonomi/indelible/internal/dbtest"
+	"github.com/WithAutonomi/indelible/internal/evm"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
 
@@ -186,5 +188,58 @@ func TestRefuseRepayment(t *testing.T) {
 	}
 	if got := classifyFailure(err, true, true); got != outcomePreservePaid {
 		t.Errorf("refusal classified as %v, want outcomePreservePaid", got)
+	}
+}
+
+// A confirmed payment whose ledger write fails is reported, and leaves no row
+// for refuseRepayment to find; a written one is found (V2-1773).
+func TestLedgerPaymentReportsFailedWrite(t *testing.T) {
+	w, _, a, _ := newInflightEnv(t, 0)
+
+	// No such wallet: the insert fails its foreign key on SQLite and Postgres.
+	if err := w.ledgerPayment(999999, a, "100", "900", "0xlost"); err == nil {
+		t.Fatalf("ledgerPayment with a failing insert returned nil")
+	}
+	if err := w.refuseRepayment(a); err != nil {
+		t.Fatalf("an unrecorded payment should be invisible to refuseRepayment, got %v", err)
+	}
+
+	wallet, err := w.walletSvc.Create("w", "0xabc", "deadbeefprivatekey")
+	if err != nil {
+		t.Fatalf("create wallet: %v", err)
+	}
+	if err := w.ledgerPayment(wallet.ID, a, "100", "900", "0xkept"); err != nil {
+		t.Fatalf("ledgerPayment: %v", err)
+	}
+	if err := w.refuseRepayment(a); !errors.Is(err, errPaidNoRetry) {
+		t.Fatalf("recorded payment not refused: %v", err)
+	}
+}
+
+// Once a payment in the attempt went unrecorded, a failure that would retry
+// (a wave-batch finalize failure re-prepares and could pay again) becomes
+// paid/no-retry; without one, classification is unchanged (V2-1773).
+func TestPaidNoRetryIfUnrecorded(t *testing.T) {
+	finalizeErr := fmt.Errorf("Failed to finalize upload: %w", errors.Join(errFinalizeFailed, errors.New("antd error 502")))
+	lost := errors.New("payment 0xlost confirmed but not recorded: FOREIGN KEY constraint failed")
+
+	if got := classifyFailure(paidNoRetryIfUnrecorded(finalizeErr, nil), false, true); got != outcomeRetry {
+		t.Fatalf("finalize failure with every payment recorded = %v, want outcomeRetry", got)
+	}
+	wrapped := paidNoRetryIfUnrecorded(finalizeErr, lost)
+	if !errors.Is(wrapped, errPaidNoRetry) || !errors.Is(wrapped, errFinalizeFailed) {
+		t.Fatalf("wrapped error lost a sentinel: %v", wrapped)
+	}
+	if got := classifyFailure(wrapped, false, true); got != outcomePreservePaid {
+		t.Fatalf("finalize failure after an unrecorded payment = %v, want outcomePreservePaid", got)
+	}
+
+	// An unconfirmed payment keeps its own, stricter outcome.
+	timeout := fmt.Errorf("EVM payment failed: %w", evm.ErrConfirmationTimeout)
+	if got := classifyFailure(paidNoRetryIfUnrecorded(timeout, lost), false, true); got != outcomePreserveUnconfirmed {
+		t.Fatalf("confirmation timeout after an unrecorded payment = %v, want outcomePreserveUnconfirmed", got)
+	}
+	if paidNoRetryIfUnrecorded(nil, lost) != nil {
+		t.Fatalf("a successful attempt became an error")
 	}
 }

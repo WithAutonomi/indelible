@@ -426,7 +426,12 @@ func (w *UploadWorker) finishFailedUpload(upload *services.Upload, err error, ou
 	w.webhookSvc.FireUploadEvent("failed", upload)
 }
 
-func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Upload) error {
+func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Upload) (err error) {
+	// The first confirmed payment of this attempt that the ledger failed to
+	// record. Any failure after it is paid/no-retry (V2-1773).
+	var unrecorded error
+	defer func() { err = paidNoRetryIfUnrecorded(err, unrecorded) }()
+
 	if !upload.TempPath.Valid || upload.TempPath.String == "" {
 		return fmt.Errorf("File not found on server")
 	}
@@ -587,7 +592,7 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		}
 
 		winners, totalPaid, payErr := w.payMerkleBatches(ctx, walletKey, batches, tokenAddr,
-			prepared.PaymentVaultAddress, wallet, upload)
+			prepared.PaymentVaultAddress, wallet, upload, &unrecorded)
 		if payErr != nil {
 			if shouldSalvageMerkle(payErr, len(winners)) {
 				// Definitive failure with money already spent: store what was
@@ -650,7 +655,7 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		// Record the confirmed spend BEFORE finalize (V2-426). Only when a payment
 		// actually happened — a dedup re-Prepare pays nothing.
 		if paymentMade {
-			w.recordPayment(ctx, wallet, upload, tokenAddr, paidAmount, txHash)
+			unrecorded = w.recordPayment(ctx, wallet, upload, tokenAddr, paidAmount, txHash)
 			w.heartbeat(upload, "paid")
 		}
 
@@ -724,14 +729,43 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 // still leaves a queryable accounting record rather than losing the spend. Called
 // exactly once per real payment (a dedup re-Prepare pays nothing, so retries do
 // not double-record).
-func (w *UploadWorker) recordPayment(ctx context.Context, wallet *services.Wallet, upload *services.Upload, tokenAddr, paidAmount, txHash string) {
+//
+// It returns an error when the ledger row could not be written. The payment
+// still happened, but refuseRepayment can't see it, so the caller must keep
+// the rest of the attempt from paying again or retrying (V2-1773).
+func (w *UploadWorker) recordPayment(ctx context.Context, wallet *services.Wallet, upload *services.Upload, tokenAddr, paidAmount, txHash string) error {
+	balanceAfter := wallet.PaymentBalance
 	if tokenBal, gasBal, err := w.evmSigner.GetBalances(ctx, wallet.Address, tokenAddr); err == nil {
 		_ = w.walletSvc.UpdateBalance(wallet.ID, tokenBal, gasBal)
-		_, _ = w.txnSvc.Record(wallet.ID, &upload.ID, "upload", paidAmount, tokenBal, txHash)
+		balanceAfter = tokenBal
 	} else {
 		slog.Warn("failed to query post-payment balance", "error", err)
-		_, _ = w.txnSvc.Record(wallet.ID, &upload.ID, "upload", paidAmount, wallet.PaymentBalance, txHash)
 	}
+	return w.ledgerPayment(wallet.ID, upload, paidAmount, balanceAfter, txHash)
+}
+
+// ledgerPayment writes the transactions row for a confirmed payment. It is not
+// retried: Record inserts and then reads the row back, so a retry after a
+// failed read could record the payment twice.
+func (w *UploadWorker) ledgerPayment(walletID int64, upload *services.Upload, amount, balanceAfter, txHash string) error {
+	if _, err := w.txnSvc.Record(walletID, &upload.ID, "upload", amount, balanceAfter, txHash); err != nil {
+		slog.Error("payment confirmed but not recorded — this attempt will not pay again or retry",
+			"uuid", upload.UUID, "tx_hash", txHash, "amount", amount, "error", err)
+		return fmt.Errorf("payment %s confirmed but not recorded: %w", txHash, err)
+	}
+	return nil
+}
+
+// paidNoRetryIfUnrecorded makes a failed attempt paid/no-retry when one of its
+// confirmed payments could not be recorded (unrecorded != nil). refuseRepayment
+// reads the ledger, so without the row a retry or a re-run would pay again
+// (V2-1773). A success, or a failure already classed as paid/no-retry, is
+// returned unchanged.
+func paidNoRetryIfUnrecorded(err, unrecorded error) error {
+	if err == nil || unrecorded == nil || errors.Is(err, errPaidNoRetry) {
+		return err
+	}
+	return fmt.Errorf("%w; not retrying: %w", err, errors.Join(errPaidNoRetry, unrecorded))
 }
 
 // payMerkleBatches submits one payForMerkleTree transaction per batch, in
@@ -747,6 +781,7 @@ func (w *UploadWorker) payMerkleBatches(
 	tokenAddr, vaultAddr string,
 	wallet *services.Wallet,
 	upload *services.Upload,
+	unrecorded *error, // set to the first ledger-write failure; the plan still completes
 ) (winners []string, totalPaid *big.Int, err error) {
 	winners = make([]string, 0, len(batches))
 	totalPaid = new(big.Int)
@@ -762,7 +797,9 @@ func (w *UploadWorker) payMerkleBatches(
 		if amt, ok := new(big.Int).SetString(batchPaid, 10); ok {
 			totalPaid.Add(totalPaid, amt)
 		}
-		w.recordPayment(ctx, wallet, upload, tokenAddr, batchPaid, winnerHash)
+		if rerr := w.recordPayment(ctx, wallet, upload, tokenAddr, batchPaid, winnerHash); rerr != nil && *unrecorded == nil {
+			*unrecorded = rerr
+		}
 		w.heartbeat(upload, "merkle batch paid")
 		slog.Info("merkle batch paid", "uuid", upload.UUID,
 			"batch", i+1, "batches", len(batches), "winner_pool_hash", winnerHash,

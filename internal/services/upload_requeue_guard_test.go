@@ -135,18 +135,27 @@ func TestHasPaymentSinceQueued(t *testing.T) {
 		t.Fatalf("after a sweep requeue = %v (err %v), want true", paid, err)
 	}
 
-	// The payment predates an operator Retry: a new payment is authorized.
-	// (Backdated so the check doesn't depend on the clock ticking over.)
-	if _, err := db.Exec(`UPDATE transactions SET created_at = '2000-01-01 00:00:00' WHERE upload_id = ?`, u.ID); err != nil {
-		t.Fatalf("backdate txn: %v", err)
-	}
+	// The payment predates an operator Retry: a new payment is authorized,
+	// even when the Retry lands in the same second as that payment.
+	// Timestamps are second-precision, so pin them equal to cover the boundary.
 	if err := uploadSvc.MarkFailed(u.ID, "finalize failed"); err != nil {
 		t.Fatalf("MarkFailed: %v", err)
 	}
 	if err := uploadSvc.Retry(u.ID); err != nil {
 		t.Fatalf("Retry: %v", err)
 	}
+	if _, err := db.Exec(`UPDATE transactions SET created_at = (SELECT queued_at FROM uploads WHERE id = ?) WHERE upload_id = ?`, u.ID, u.ID); err != nil {
+		t.Fatalf("pin txn to the Retry's second: %v", err)
+	}
 	if paid, err := txnSvc.HasPaymentSinceQueued(u.ID); err != nil || paid {
-		t.Fatalf("after an operator Retry = %v (err %v), want false", paid, err)
+		t.Fatalf("after an operator Retry in the payment's second = %v (err %v), want false", paid, err)
+	}
+
+	// The payment the Retry authorized is itself guarded against a re-run.
+	if _, err := txnSvc.Record(wallet.ID, &u.ID, "upload", "100", "800", "0xhash2"); err != nil {
+		t.Fatalf("record second txn: %v", err)
+	}
+	if paid, err := txnSvc.HasPaymentSinceQueued(u.ID); err != nil || !paid {
+		t.Fatalf("after the authorized payment = %v (err %v), want true", paid, err)
 	}
 }
