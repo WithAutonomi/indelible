@@ -162,10 +162,10 @@ func TestHasPaymentSinceQueued(t *testing.T) {
 	}
 }
 
-// Migration 015 keeps the authorization of uploads retried before it: the
-// floor is backfilled from queued_at, so a payment before the Retry no longer
-// counts, while a payment at or after queued_at still does, as under the
-// timestamp check it replaces (V2-1773).
+// Migration 015 gives every existing upload the answer the timestamp check it
+// replaces gave: a payment at or after queued_at counts, payments before an
+// operator Retry don't, whatever the order of transaction ids and timestamps
+// (V2-1773).
 func TestPaymentFloorBackfillOnUpgrade(t *testing.T) {
 	db := setupTestDB(t)
 	// Back to the schema before 015 (no payment_floor_txn_id). The pre-upgrade
@@ -183,28 +183,34 @@ func TestPaymentFloorBackfillOnUpgrade(t *testing.T) {
 		t.Fatalf("create wallet: %v", err)
 	}
 
-	paidAt := "2026-10-01 12:00:00"
+	const queuedAt = "2026-10-01 12:00:00"
 	cases := []struct {
 		name     string
-		queuedAt string
+		paidAt   []string // created_at of each payment, in id order
 		wantPaid bool
 	}{
-		{"retried after paying", "2026-10-01 12:05:00", false},
-		{"paid, never retried", "2026-10-01 11:55:00", true},
-		{"paid in the queued second", paidAt, true},
+		{"retried after paying", []string{"2026-10-01 11:55:00"}, false},
+		{"retried after paying twice", []string{"2026-10-01 11:50:00", "2026-10-01 11:55:00"}, false},
+		{"paid, never retried", []string{"2026-10-01 12:05:00"}, true},
+		{"paid in the queued second", []string{queuedAt}, true},
+		// The lower id is the later payment: the floor must still sit below it.
+		{"ids and timestamps out of order", []string{queuedAt, "2026-10-01 11:59:59"}, true},
+		{"no payments", nil, false},
 	}
 	ids := make([]int64, len(cases))
 	for i, c := range cases {
 		u := createTestUpload(t, uploadSvc, user.ID, c.name+".bin", 100)
 		ids[i] = u.ID
-		txn, err := txnSvc.Record(wallet.ID, &u.ID, "upload", "100", "900", "0xhash")
-		if err != nil {
-			t.Fatalf("%s: record txn: %v", c.name, err)
+		for _, at := range c.paidAt {
+			txn, err := txnSvc.Record(wallet.ID, &u.ID, "upload", "100", "900", "0xhash")
+			if err != nil {
+				t.Fatalf("%s: record txn: %v", c.name, err)
+			}
+			if _, err := db.Exec(`UPDATE transactions SET created_at = ? WHERE id = ?`, at, txn.ID); err != nil {
+				t.Fatalf("%s: set created_at: %v", c.name, err)
+			}
 		}
-		if _, err := db.Exec(`UPDATE transactions SET created_at = ? WHERE id = ?`, paidAt, txn.ID); err != nil {
-			t.Fatalf("%s: set created_at: %v", c.name, err)
-		}
-		if _, err := db.Exec(`UPDATE uploads SET queued_at = ? WHERE id = ?`, c.queuedAt, u.ID); err != nil {
+		if _, err := db.Exec(`UPDATE uploads SET queued_at = ? WHERE id = ?`, queuedAt, u.ID); err != nil {
 			t.Fatalf("%s: set queued_at: %v", c.name, err)
 		}
 	}
