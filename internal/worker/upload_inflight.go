@@ -85,11 +85,14 @@ func (w *UploadWorker) sweepStuck() {
 }
 
 // refuseRepayment returns an error when a payment has already been recorded
-// for the upload since it was last queued: an automatic re-run (sweep or
-// startup requeue, an in-attempt retry, gas backoff) of an upload that has
-// paid, which must not pay again (V2-1773). The error carries errPaidNoRetry,
-// so the upload fails as paid_unfinalized with its source kept. An operator
-// Retry moves queued_at forward, which authorizes one new payment.
+// for the upload since it was created or last retried by an operator: an
+// automatic re-run (sweep or startup requeue, an in-attempt retry, gas
+// backoff) of an upload that has paid, which must not pay again (V2-1773).
+// The error carries errPaidNoRetry, so the upload fails as paid_unfinalized
+// with its source kept. An operator Retry raises the upload's payment floor
+// past its earlier payments, which authorizes one new payment. A payment the
+// ledger failed to record is invisible here; paidNoRetryIfUnrecorded covers
+// the rest of that attempt.
 func (w *UploadWorker) refuseRepayment(u *services.Upload) error {
 	paid, err := w.txnSvc.HasPaymentSinceQueued(u.ID)
 	if err != nil {

@@ -557,12 +557,15 @@ func (s *UploadService) Cancel(id int64) error {
 	return nil
 }
 
-// Retry resets a failed upload back to queued for reprocessing.
+// Retry resets a failed upload back to queued for reprocessing. Raising
+// payment_floor_txn_id to the upload's latest transaction authorizes one new
+// payment: the payments before the Retry no longer count (V2-1773).
 func (s *UploadService) Retry(id int64) error {
 	result, err := s.db.Exec(
 		`UPDATE uploads SET status = 'queued', status_detail = NULL, error_message = NULL,
 		 backoff_until = NULL, backoff_attempt = 0, last_quoted_cost = NULL,
-		 failed_at = NULL, processing_at = NULL, queued_at = CURRENT_TIMESTAMP
+		 failed_at = NULL, processing_at = NULL, queued_at = CURRENT_TIMESTAMP,
+		 payment_floor_txn_id = (SELECT COALESCE(MAX(t.id), 0) FROM transactions t WHERE t.upload_id = uploads.id)
 		 WHERE id = ? AND status = 'failed'`,
 		id,
 	)
