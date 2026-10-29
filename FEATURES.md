@@ -195,7 +195,8 @@ Three permission levels: **read**, **write**, **admin**
 ### 5.3 Queue Management
 - Configurable concurrent upload limit (default 1, max 100)
 - Crash recovery: on startup, any uploads left in `processing` state from a previous run are requeued immediately
-- Reconciliation worker: every 5 min, requeues uploads stuck in `processing` longer than 60 min (covers worker crash mid-upload)
+- Reconciliation worker: every minute, requeues uploads that have made no progress in `processing` for the requeue window (default 60 min). Uploads this instance is still processing are never requeued; progress heartbeats at each phase (prepare, each payment, finalize) restart the clock. Admins can change the window on the System page; the change lasts until restart
+- No automatic double payment: a requeued or retried upload that has already paid since it was queued is not paid for again. It fails as `paid_unfinalized` with its source kept, and an admin Retry authorizes a new payment
 - Queue status monitoring
 
 ### 5.4 Download

@@ -289,6 +289,9 @@ func NewRouter(cfg *config.Config, db *database.DB, antdInfo AntdInfoProvider, d
 			// System status
 			r.Get("/admin/version-check", AdminVersionCheck(cfg, antdInfo))
 			r.Get("/admin/storage", AdminStorage(cfg, db))
+			r.Get("/admin/upload-requeue-window", AdminGetUploadRequeueWindow(cfg))
+			r.Put("/admin/upload-requeue-window", AdminSetUploadRequeueWindow(cfg, db))
+			r.Delete("/admin/upload-requeue-window", AdminResetUploadRequeueWindow(cfg, db))
 		})
 	})
 

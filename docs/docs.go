@@ -2734,6 +2734,118 @@ const docTemplate = `{
                 }
             }
         },
+        "/admin/upload-requeue-window": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "How long an upload may make no progress before the upload worker puts it back in the queue. Uploads this instance is still processing are never requeued. An override set here lives in memory only and reverts to the default on restart.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin: System"
+                ],
+                "summary": "Get the stuck-upload requeue window",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_handlers.UploadRequeueWindow"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Override the requeue window on this instance until it restarts, e.g. to let a long upload through. Audited. Refused on an instance that runs no upload workers.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin: System"
+                ],
+                "summary": "Set the stuck-upload requeue window",
+                "parameters": [
+                    {
+                        "description": "Window in minutes",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_handlers.UploadRequeueWindowRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_handlers.UploadRequeueWindow"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Drop the operator override on this instance, restoring the default window. Audited. Refused on an instance that runs no upload workers.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Admin: System"
+                ],
+                "summary": "Reset the stuck-upload requeue window",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_handlers.UploadRequeueWindow"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/admin/uploads/export": {
             "get": {
                 "security": [
@@ -6491,6 +6603,43 @@ const docTemplate = `{
                 },
                 "used_pct": {
                     "type": "number"
+                }
+            }
+        },
+        "internal_handlers.UploadRequeueWindow": {
+            "type": "object",
+            "properties": {
+                "default_minutes": {
+                    "description": "built-in default, restored on restart",
+                    "type": "integer"
+                },
+                "max_minutes": {
+                    "description": "largest accepted override",
+                    "type": "integer"
+                },
+                "min_minutes": {
+                    "description": "smallest accepted override",
+                    "type": "integer"
+                },
+                "minutes": {
+                    "description": "window in force",
+                    "type": "integer"
+                },
+                "overridden": {
+                    "description": "an operator override is in force (memory only)",
+                    "type": "boolean"
+                },
+                "workers_enabled": {
+                    "description": "false on a reader instance: no upload worker to tune",
+                    "type": "boolean"
+                }
+            }
+        },
+        "internal_handlers.UploadRequeueWindowRequest": {
+            "type": "object",
+            "properties": {
+                "minutes": {
+                    "type": "integer"
                 }
             }
         },

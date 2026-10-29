@@ -60,6 +60,25 @@ func (s *TransactionService) HasByUpload(uploadID int64) (bool, error) {
 	return exists, err
 }
 
+// HasPaymentSinceQueued reports whether a payment has been recorded for an
+// upload since it was created or last retried by an operator: a transaction
+// above uploads.payment_floor_txn_id. Creation leaves the floor at 0 and an
+// operator Retry raises it to the latest transaction; the stuck-upload sweep,
+// startup crash recovery, gas backoff and the worker's own retries leave it
+// alone. So true means an automatic re-run of an upload that has already
+// paid, which must not pay again (V2-1773). Transaction ids only grow, so a
+// Retry in the same second as the payment before it still authorizes a new
+// one; second-precision timestamps could not tell them apart.
+func (s *TransactionService) HasPaymentSinceQueued(uploadID int64) (bool, error) {
+	var exists bool
+	err := s.db.QueryRow(
+		`SELECT EXISTS(SELECT 1 FROM transactions t JOIN uploads u ON u.id = t.upload_id
+		 WHERE t.upload_id = ? AND t.id > u.payment_floor_txn_id)`,
+		uploadID,
+	).Scan(&exists)
+	return exists, err
+}
+
 // GetByID retrieves a transaction by ID.
 func (s *TransactionService) GetByID(id int64) (*Transaction, error) {
 	t := &Transaction{}
