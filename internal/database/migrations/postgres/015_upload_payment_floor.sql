@@ -10,6 +10,16 @@
 -- in the same second as the payment before it.
 ALTER TABLE uploads ADD COLUMN payment_floor_txn_id BIGINT NOT NULL DEFAULT 0;
 
+-- Keep the authorization of uploads an operator retried before this
+-- migration: the floor starts at their latest payment recorded before
+-- queued_at, which is what the created_at/queued_at comparison it replaces
+-- allowed (Retry has always set queued_at). A payment in the same second as
+-- queued_at stays above the floor and counts, as it did before. Uploads with
+-- no such payment start at 0.
+UPDATE uploads SET payment_floor_txn_id = COALESCE(
+    (SELECT MAX(t.id) FROM transactions t
+     WHERE t.upload_id = uploads.id AND t.created_at < uploads.queued_at), 0);
+
 -- +goose Down
 
 ALTER TABLE uploads DROP COLUMN payment_floor_txn_id;
