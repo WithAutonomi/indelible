@@ -3,6 +3,8 @@ package services
 import (
 	"testing"
 	"time"
+
+	"github.com/WithAutonomi/indelible/internal/database"
 )
 
 // backdateProcessing makes every processing upload look idle for `ago`.
@@ -99,8 +101,8 @@ func TestTouchProcessing(t *testing.T) {
 }
 
 // HasPaymentSinceQueued: a payment recorded after the upload was queued
-// blocks an automatic re-pay; an operator Retry (which moves queued_at
-// forward) authorizes a new one (V2-1773).
+// blocks an automatic re-pay; an operator Retry (which raises the payment
+// floor) authorizes a new one (V2-1773).
 func TestHasPaymentSinceQueued(t *testing.T) {
 	db := setupTestDB(t)
 	user := createTestUser(t, NewUserService(db), "repay@example.com", "Re", "Pay")
@@ -157,5 +159,66 @@ func TestHasPaymentSinceQueued(t *testing.T) {
 	}
 	if paid, err := txnSvc.HasPaymentSinceQueued(u.ID); err != nil || !paid {
 		t.Fatalf("after the authorized payment = %v (err %v), want true", paid, err)
+	}
+}
+
+// Migration 015 keeps the authorization of uploads retried before it: the
+// floor is backfilled from queued_at, so a payment before the Retry no longer
+// counts, while a payment at or after queued_at still does, as under the
+// timestamp check it replaces (V2-1773).
+func TestPaymentFloorBackfillOnUpgrade(t *testing.T) {
+	db := setupTestDB(t)
+	// Back to the schema before 015 (no payment_floor_txn_id). The pre-upgrade
+	// state is written with SQL: the new Retry sets the floor column.
+	if err := database.MigrateDown(db, db.Driver()); err != nil {
+		t.Fatalf("roll back 015: %v", err)
+	}
+
+	user := createTestUser(t, NewUserService(db), "upgrade@example.com", "Up", "Grade")
+	uploadSvc := NewUploadService(db)
+	txnSvc := NewTransactionService(db)
+	walletSvc := NewWalletService(db, mustKR(t, "1111111111111111111111111111111111111111111111111111111111111111"))
+	wallet, err := walletSvc.Create("w", "0xabc", "deadbeefprivatekey")
+	if err != nil {
+		t.Fatalf("create wallet: %v", err)
+	}
+
+	paidAt := "2026-10-01 12:00:00"
+	cases := []struct {
+		name     string
+		queuedAt string
+		wantPaid bool
+	}{
+		{"retried after paying", "2026-10-01 12:05:00", false},
+		{"paid, never retried", "2026-10-01 11:55:00", true},
+		{"paid in the queued second", paidAt, true},
+	}
+	ids := make([]int64, len(cases))
+	for i, c := range cases {
+		u := createTestUpload(t, uploadSvc, user.ID, c.name+".bin", 100)
+		ids[i] = u.ID
+		txn, err := txnSvc.Record(wallet.ID, &u.ID, "upload", "100", "900", "0xhash")
+		if err != nil {
+			t.Fatalf("%s: record txn: %v", c.name, err)
+		}
+		if _, err := db.Exec(`UPDATE transactions SET created_at = ? WHERE id = ?`, paidAt, txn.ID); err != nil {
+			t.Fatalf("%s: set created_at: %v", c.name, err)
+		}
+		if _, err := db.Exec(`UPDATE uploads SET queued_at = ? WHERE id = ?`, c.queuedAt, u.ID); err != nil {
+			t.Fatalf("%s: set queued_at: %v", c.name, err)
+		}
+	}
+
+	if err := database.Migrate(db, db.Driver()); err != nil {
+		t.Fatalf("re-apply 015: %v", err)
+	}
+	for i, c := range cases {
+		paid, err := txnSvc.HasPaymentSinceQueued(ids[i])
+		if err != nil {
+			t.Fatalf("%s: HasPaymentSinceQueued: %v", c.name, err)
+		}
+		if paid != c.wantPaid {
+			t.Errorf("%s: paid since queued = %v after the upgrade, want %v", c.name, paid, c.wantPaid)
+		}
 	}
 }
