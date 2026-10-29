@@ -199,6 +199,7 @@ curl -X POST /api/v2/tokens \
 | `INDELIBLE_BASE_URL` | External URL for email links | -- |
 | `INDELIBLE_CORS_ORIGINS` | Comma-separated allowed origins | -- |
 | `INDELIBLE_TRUSTED_PROXIES` | Comma-separated CIDR ranges | -- |
+| `INDELIBLE_DOWNLOAD_CACHE_MAX_BYTES` | Per-instance override of the `download_cache_max_bytes` runtime setting (the DB setting is fleet-global; use this on instances whose disks differ). `0` disables the download cache on this instance | follow the DB setting |
 
 See the [User Guide](USER-GUIDE.md) for SMTP, debug, and advanced configuration.
 
@@ -307,4 +308,6 @@ The CI runs on every PR and push to `master`:
 
 ## License
 
-See [LICENSE](LICENSE) for details.
+Licensed under either of the [MIT License](LICENSE-MIT) or the [Apache License, Version 2.0](LICENSE-APACHE), at your option.
+
+Third-party licences and notices, including the GNU LGPL terms of the go-ethereum library code Indelible links, are in `THIRD-PARTY-NOTICES.txt`. The release workflow publishes it inside each binary archive and as a separate asset beside the bare binaries, and the Docker image carries it under `/usr/share/doc/indelible/`. `make notices` generates the file locally.

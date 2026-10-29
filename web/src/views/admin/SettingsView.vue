@@ -40,9 +40,9 @@ watch(general, () => {
     general.default_visibility !== generalSaved.value.default_visibility
 }, { deep: true })
 
-// Upload Limits card
-const uploadsSaved = ref({ max_upload_gb: '0', max_concurrent_uploads: '', max_gas_fee: '', payment_confirmation_timeout_seconds: '' })
-const uploads = reactive({ max_upload_gb: '0', max_concurrent_uploads: '', max_gas_fee: '', payment_confirmation_timeout_seconds: '' })
+// Transfer Limits card
+const uploadsSaved = ref({ max_upload_gb: '0', max_concurrent_uploads: '', max_gas_fee: '', payment_confirmation_timeout_seconds: '', max_concurrent_downloads: '', download_queue_wait_secs: '', download_cache_gb: '0', download_cache_max_object_mb: '', download_cache_min_uses: '', download_cache_inactive_secs: '', download_cache_seed_on_upload: 'true', download_cache_private: 'false' })
+const uploads = reactive({ max_upload_gb: '0', max_concurrent_uploads: '', max_gas_fee: '', payment_confirmation_timeout_seconds: '', max_concurrent_downloads: '', download_queue_wait_secs: '', download_cache_gb: '0', download_cache_max_object_mb: '', download_cache_min_uses: '', download_cache_inactive_secs: '', download_cache_seed_on_upload: 'true', download_cache_private: 'false' })
 const uploadsDirty = ref(false)
 const uploadsSaving = ref(false)
 
@@ -51,7 +51,15 @@ watch(uploads, () => {
     uploads.max_upload_gb !== uploadsSaved.value.max_upload_gb ||
     uploads.max_concurrent_uploads !== uploadsSaved.value.max_concurrent_uploads ||
     uploads.max_gas_fee !== uploadsSaved.value.max_gas_fee ||
-    uploads.payment_confirmation_timeout_seconds !== uploadsSaved.value.payment_confirmation_timeout_seconds
+    uploads.payment_confirmation_timeout_seconds !== uploadsSaved.value.payment_confirmation_timeout_seconds ||
+    uploads.max_concurrent_downloads !== uploadsSaved.value.max_concurrent_downloads ||
+    uploads.download_queue_wait_secs !== uploadsSaved.value.download_queue_wait_secs ||
+    uploads.download_cache_gb !== uploadsSaved.value.download_cache_gb ||
+    uploads.download_cache_max_object_mb !== uploadsSaved.value.download_cache_max_object_mb ||
+    uploads.download_cache_min_uses !== uploadsSaved.value.download_cache_min_uses ||
+    uploads.download_cache_inactive_secs !== uploadsSaved.value.download_cache_inactive_secs ||
+    uploads.download_cache_seed_on_upload !== uploadsSaved.value.download_cache_seed_on_upload ||
+    uploads.download_cache_private !== uploadsSaved.value.download_cache_private
 }, { deep: true })
 
 // Operations card
@@ -97,6 +105,20 @@ function gbToBytes(gb: string): string {
   return Math.round(n * 1073741824).toString()
 }
 
+// MB variants for the per-object cache ceiling; empty stays empty so a
+// cleared field falls back to the server default rather than becoming 0.
+function bytesToMB(bytes: string): string {
+  const n = parseFloat(bytes)
+  if (!n || n <= 0) return ''
+  return (n / 1048576).toString()
+}
+
+function mbToBytes(mb: string): string {
+  const n = parseFloat(mb)
+  if (!n || n <= 0) return ''
+  return Math.round(n * 1048576).toString()
+}
+
 // --- Fetch & hydrate ---
 
 async function fetchSettings() {
@@ -116,6 +138,14 @@ async function fetchSettings() {
     uploads.max_concurrent_uploads = s.max_concurrent_uploads || ''
     uploads.max_gas_fee = s.max_gas_fee || ''
     uploads.payment_confirmation_timeout_seconds = s.payment_confirmation_timeout_seconds || ''
+    uploads.max_concurrent_downloads = s.max_concurrent_downloads || ''
+    uploads.download_queue_wait_secs = s.download_queue_wait_secs || ''
+    uploads.download_cache_gb = bytesToGB(s.download_cache_max_bytes || '0')
+    uploads.download_cache_max_object_mb = bytesToMB(s.download_cache_max_object_bytes || '')
+    uploads.download_cache_min_uses = s.download_cache_min_uses || ''
+    uploads.download_cache_inactive_secs = s.download_cache_inactive_secs || ''
+    uploads.download_cache_seed_on_upload = s.download_cache_seed_on_upload || 'true'
+    uploads.download_cache_private = s.download_cache_private || 'false'
     uploadsSaved.value = { ...uploads }
 
     // Operations
@@ -152,6 +182,14 @@ async function saveCard(card: string) {
       max_concurrent_uploads: uploads.max_concurrent_uploads,
       max_gas_fee: uploads.max_gas_fee,
       payment_confirmation_timeout_seconds: uploads.payment_confirmation_timeout_seconds,
+      max_concurrent_downloads: uploads.max_concurrent_downloads,
+      download_queue_wait_secs: uploads.download_queue_wait_secs,
+      download_cache_max_bytes: gbToBytes(uploads.download_cache_gb),
+      download_cache_max_object_bytes: mbToBytes(uploads.download_cache_max_object_mb),
+      download_cache_min_uses: uploads.download_cache_min_uses,
+      download_cache_inactive_secs: uploads.download_cache_inactive_secs,
+      download_cache_seed_on_upload: uploads.download_cache_seed_on_upload,
+      download_cache_private: uploads.download_cache_private,
     }
   } else if (card === 'ops') {
     opsSaving.value = true
@@ -271,7 +309,7 @@ onMounted(async () => {
     <Tabs v-else value="0">
       <TabList>
         <Tab value="0">General</Tab>
-        <Tab value="1">Upload Limits</Tab>
+        <Tab value="1">Transfer Limits</Tab>
         <Tab value="2">Operations</Tab>
       </TabList>
       <TabPanels>
@@ -315,7 +353,7 @@ onMounted(async () => {
           </div>
         </TabPanel>
 
-        <!-- Upload Limits -->
+        <!-- Transfer Limits -->
         <TabPanel value="1">
           <div class="divide-y divide-surface-100">
             <div class="grid grid-cols-3 gap-6 py-5">
@@ -361,6 +399,94 @@ onMounted(async () => {
                   <InputText v-model="uploads.payment_confirmation_timeout_seconds" type="number" placeholder="300" class="w-40" />
                   <span class="text-sm text-surface-400">seconds</span>
                 </div>
+              </div>
+            </div>
+            <div class="grid grid-cols-3 gap-6 py-5">
+              <div>
+                <label class="text-sm font-medium">Max Concurrent Downloads</label>
+                <p class="text-xs text-surface-400 mt-1">Simultaneous downloads served per instance; further requests queue, then get 503. Bounds temp disk and network fetch load. Empty for the default (8).</p>
+              </div>
+              <div class="col-span-2">
+                <InputText v-model="uploads.max_concurrent_downloads" type="number" placeholder="8" class="w-32" />
+              </div>
+            </div>
+            <div class="grid grid-cols-3 gap-6 py-5">
+              <div>
+                <label class="text-sm font-medium">Download Queue Wait</label>
+                <p class="text-xs text-surface-400 mt-1">How long a download may wait for a free slot before it is rejected with 503. 0 rejects immediately. Empty for the default (30s).</p>
+              </div>
+              <div class="col-span-2">
+                <div class="flex items-center gap-2">
+                  <InputText v-model="uploads.download_queue_wait_secs" type="number" placeholder="30" class="w-40" />
+                  <span class="text-sm text-surface-400">seconds</span>
+                </div>
+              </div>
+            </div>
+            <div class="grid grid-cols-3 gap-6 py-5">
+              <div>
+                <label class="text-sm font-medium">Download Cache Size</label>
+                <p class="text-xs text-surface-400 mt-1">Disk budget for caching public downloads on each instance, so repeat reads skip the network. 0 disables the cache. Per-instance override: INDELIBLE_DOWNLOAD_CACHE_MAX_BYTES.</p>
+              </div>
+              <div class="col-span-2">
+                <div class="flex items-center gap-2">
+                  <InputText v-model="uploads.download_cache_gb" type="number" class="w-32" />
+                  <span class="text-sm text-surface-400">GB</span>
+                </div>
+              </div>
+            </div>
+            <div class="grid grid-cols-3 gap-6 py-5">
+              <div>
+                <label class="text-sm font-medium">Max Cached Object Size</label>
+                <p class="text-xs text-surface-400 mt-1">Files larger than this are never cached — large transfers stay in the streaming path. Empty for the default (64 MB).</p>
+              </div>
+              <div class="col-span-2">
+                <div class="flex items-center gap-2">
+                  <InputText v-model="uploads.download_cache_max_object_mb" type="number" placeholder="64" class="w-32" />
+                  <span class="text-sm text-surface-400">MB</span>
+                </div>
+              </div>
+            </div>
+            <div class="grid grid-cols-3 gap-6 py-5">
+              <div>
+                <label class="text-sm font-medium">Cache After N Requests</label>
+                <p class="text-xs text-surface-400 mt-1">How many times a file must be requested before its bytes are kept. Raising this keeps one-off downloads from displacing genuinely hot content. Empty for the default (1 = cache on first download).</p>
+              </div>
+              <div class="col-span-2">
+                <InputText v-model="uploads.download_cache_min_uses" type="number" placeholder="1" class="w-32" />
+              </div>
+            </div>
+            <div class="grid grid-cols-3 gap-6 py-5">
+              <div>
+                <label class="text-sm font-medium">Cache Inactivity Expiry</label>
+                <p class="text-xs text-surface-400 mt-1">Cached files not downloaded within this window are deleted regardless of the size budget — bounds how long cached content can linger on disk. 0 or empty disables the window. Example: 604800 = 7 days.</p>
+              </div>
+              <div class="col-span-2">
+                <div class="flex items-center gap-2">
+                  <InputText v-model="uploads.download_cache_inactive_secs" type="number" placeholder="0" class="w-40" />
+                  <span class="text-sm text-surface-400">seconds</span>
+                </div>
+              </div>
+            </div>
+            <div class="grid grid-cols-3 gap-6 py-5">
+              <div>
+                <label class="text-sm font-medium">Cache Private Files</label>
+                <p class="text-xs text-surface-400 mt-1">Serve repeat reads of private files from this deployment's disk. This keeps decrypted private content on every caching instance's disk (off by default): deleting an upload purges the deleting instance immediately and every other instance within about a minute, but treat cache volumes with the same care as the database. Turning it off also removes already-cached private files fleet-wide (within about a minute online; at next start for instances that were down). Leave off unless private read performance matters.</p>
+              </div>
+              <div class="col-span-2 flex items-center gap-3">
+                <ToggleSwitch :modelValue="uploads.download_cache_private === 'true'"
+                  @update:modelValue="uploads.download_cache_private = $event ? 'true' : 'false'" />
+                <span class="text-sm text-surface-500">{{ uploads.download_cache_private === 'true' ? 'Enabled' : 'Disabled' }}</span>
+              </div>
+            </div>
+            <div class="grid grid-cols-3 gap-6 py-5">
+              <div>
+                <label class="text-sm font-medium">Seed Cache From Uploads</label>
+                <p class="text-xs text-surface-400 mt-1">When a public upload finishes storing, keep its bytes in the download cache so the first reads skip the network. Applies where uploads are processed — the writer (or the whole instance in an all-in-one deployment); readers warm on first download. Disable for archive workloads that are rarely re-read.</p>
+              </div>
+              <div class="col-span-2 flex items-center gap-3">
+                <ToggleSwitch :modelValue="uploads.download_cache_seed_on_upload === 'true'"
+                  @update:modelValue="uploads.download_cache_seed_on_upload = $event ? 'true' : 'false'" />
+                <span class="text-sm text-surface-500">{{ uploads.download_cache_seed_on_upload === 'true' ? 'Enabled' : 'Disabled' }}</span>
               </div>
             </div>
           </div>

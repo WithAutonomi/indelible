@@ -14,6 +14,7 @@ import (
 	filter "github.com/scim2/filter-parser/v2"
 
 	"github.com/WithAutonomi/indelible/internal/database"
+	"github.com/WithAutonomi/indelible/internal/middleware"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
 
@@ -287,7 +288,7 @@ func (h *scimUserHandler) Patch(r *http.Request, id string, operations []scim.Pa
 }
 
 func (h *scimUserHandler) audit(r *http.Request, eventType, detail string) {
-	_ = h.logSvc.WriteAudit(eventType, "info", nil, detail, r.RemoteAddr, r.UserAgent(), chimw.GetReqID(r.Context()))
+	_ = h.logSvc.WriteAudit(eventType, "info", nil, detail, middleware.RequestClientIP(r), r.UserAgent(), chimw.GetReqID(r.Context()))
 }
 
 // --- Group Resource Handler ---
@@ -505,7 +506,7 @@ func (h *scimGroupHandler) groupToResource(g *services.Group) (scim.Resource, er
 }
 
 func (h *scimGroupHandler) audit(r *http.Request, eventType, detail string) {
-	_ = h.logSvc.WriteAudit(eventType, "info", nil, detail, r.RemoteAddr, r.UserAgent(), chimw.GetReqID(r.Context()))
+	_ = h.logSvc.WriteAudit(eventType, "info", nil, detail, middleware.RequestClientIP(r), r.UserAgent(), chimw.GetReqID(r.Context()))
 }
 
 // --- Helper functions ---

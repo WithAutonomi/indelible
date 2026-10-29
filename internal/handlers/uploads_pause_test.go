@@ -29,7 +29,7 @@ func TestCreateUpload_PausedByDiskPressure(t *testing.T) {
 	if _, err := services.SeedAdmin(db, cfg); err != nil {
 		t.Fatalf("seed admin: %v", err)
 	}
-	router := handlers.NewRouter(cfg, db, nil)
+	router := handlers.NewRouter(cfg, db, nil, nil)
 
 	adminToken := registerAndGetToken(t, router, seedAdminEmail, seedAdminPassword, "Admin", "User")
 	createTestWallet(t, router, adminToken)
@@ -88,7 +88,7 @@ func TestCreateUpload_FastFailsWhenAntdDown(t *testing.T) {
 	if _, err := services.SeedAdmin(db, cfg); err != nil {
 		t.Fatalf("seed admin: %v", err)
 	}
-	router := handlers.NewRouter(cfg, db, nil)
+	router := handlers.NewRouter(cfg, db, nil, nil)
 
 	adminToken := registerAndGetToken(t, router, seedAdminEmail, seedAdminPassword, "Admin", "User")
 	createTestWallet(t, router, adminToken)

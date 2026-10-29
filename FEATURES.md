@@ -488,7 +488,7 @@ server {
 **Minimal (single binary, SQLite, smallest setup):**
 ```bash
 # 1. Download
-curl -LO https://releases.autonomi.com/indelible/latest/indelible-linux-amd64
+curl -LO https://github.com/WithAutonomi/indelible/releases/latest/download/indelible-linux-amd64
 chmod +x indelible-linux-amd64
 
 # 2. Run (SQLite default, port 8080)

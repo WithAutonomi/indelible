@@ -17,6 +17,7 @@ import (
 
 	"github.com/WithAutonomi/indelible/internal/config"
 	"github.com/WithAutonomi/indelible/internal/database"
+	"github.com/WithAutonomi/indelible/internal/downloadcache"
 	"github.com/WithAutonomi/indelible/internal/evm"
 	"github.com/WithAutonomi/indelible/internal/services"
 )
@@ -117,8 +118,12 @@ type UploadWorker struct {
 	antdClient  *antd.Client
 	evmSigner   *evm.Signer // lazily initialized on first upload
 	cfg         *config.Config
-	wg          sync.WaitGroup
-	cancel      context.CancelFunc
+	// dlCache is the shared download cache store, seeded write-through from
+	// upload temp files after a successful store (V2-822). Nil disables
+	// seeding (tests, tools).
+	dlCache *downloadcache.Store
+	wg      sync.WaitGroup
+	cancel  context.CancelFunc
 
 	// S9: Per-phase circuit breakers with exponential cooldown
 	prepareFailures  int
@@ -130,8 +135,10 @@ const circuitBreakerThreshold = 5
 const circuitBreakerBaseCooldown = 30 * time.Second
 const circuitBreakerMaxCooldown = 5 * time.Minute
 
-// NewUploadWorker creates a new background upload processor.
-func NewUploadWorker(db *database.DB, cfg *config.Config) *UploadWorker {
+// NewUploadWorker creates a new background upload processor. dlCache is the
+// same store the download handler and cache sweeper use; the worker seeds it
+// from upload temp files (V2-822). Pass nil to disable seeding.
+func NewUploadWorker(db *database.DB, cfg *config.Config, dlCache *downloadcache.Store) *UploadWorker {
 	return &UploadWorker{
 		uploadSvc:       services.NewUploadService(db),
 		quotaSvc:        services.NewQuotaService(db),
@@ -141,6 +148,7 @@ func NewUploadWorker(db *database.DB, cfg *config.Config) *UploadWorker {
 		settingsSvc:     services.NewCachedSettingsService(services.NewSettingsService(db)),
 		antdClient:      antd.NewClient(cfg.AntdURL, antd.WithTimeout(0)),
 		cfg:             cfg,
+		dlCache:         dlCache,
 		circuitCooldown: circuitBreakerBaseCooldown,
 	}
 }
@@ -550,6 +558,13 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 				return fmt.Errorf("Failed to save upload record")
 			}
 		}
+		// Seed the download cache from the staged plaintext (V2-822): the
+		// publish-then-read hot path is served from local disk without any
+		// network fetch. Only now — after the network store AND the DB record
+		// both succeeded — so the cache never holds bytes the network doesn't.
+		// The already_stored dedup case seeds identically: same content, same
+		// address, bytes equally proven on the network.
+		w.seedDownloadCache(upload, result.DataMapAddress)
 	} else {
 		if alreadyStored {
 			upload.Status = "already_stored"
@@ -562,6 +577,11 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 				return fmt.Errorf("Failed to save upload record")
 			}
 		}
+		// Private seeding (V2-873) mirrors the public branch above, keyed on
+		// the local DataMap — the serve path's derivation for private rows.
+		// seedDownloadCache itself refuses unless the operator opted in via
+		// download_cache_private.
+		w.seedDownloadCache(upload, result.DataMap)
 	}
 
 	slog.Info("upload completed", "uuid", upload.UUID, "payment_type", prepared.PaymentType,
@@ -581,6 +601,70 @@ func (w *UploadWorker) recordPayment(ctx context.Context, wallet *services.Walle
 	} else {
 		slog.Warn("failed to query post-payment balance", "error", err)
 		_, _ = w.txnSvc.Record(wallet.ID, &upload.ID, "upload", paidAmount, wallet.PaymentBalance, txHash)
+	}
+}
+
+// seedDownloadCache write-through-seeds the download cache from the upload's
+// temp file (V2-822): the bytes are already staged on the cache's own volume,
+// so admission is a rename — zero extra I/O — and the deferred temp-file
+// cleanup degrades to a no-op. Callers guarantee the content is public and
+// successfully stored; eligibility here mirrors the read-through path (cache
+// enabled, per-object ceiling, byte budget) with one deliberate difference:
+// no min-uses warm-up. Publish-then-read is the hypothesis seeding bets on,
+// and the sweeper evicts wrong bets. A refused or failed seed is never an
+// upload failure.
+//
+// This runs where upload workers run — the writer — so on a role-split fleet
+// it warms only the writer's cache; readers warm by read-through (the
+// share-nothing design in V2-820). The `download_cache_seed_on_upload`
+// setting is fleet-global like all DB settings, but only the single writer
+// ever acts on it.
+func (w *UploadWorker) seedDownloadCache(upload *services.Upload, contentID string) {
+	if w.dlCache == nil || contentID == "" {
+		return
+	}
+	if !upload.TempPath.Valid || upload.TempPath.String == "" {
+		return
+	}
+	// Private plaintext enters the cache only behind the operator's explicit
+	// opt-in (V2-873); public content is cacheable unconditionally.
+	if upload.Visibility != "public" && !w.settingsSvc.GetBool("download_cache_private", false) {
+		return
+	}
+	// Default true: seeding is the point of the cache for publish-then-read
+	// workloads; the switch exists for archive-shaped instances (upload-heavy,
+	// rarely re-read) where every seed is a zero-use admission.
+	if v, err := w.settingsSvc.Get("download_cache_seed_on_upload"); err == nil && v == "false" {
+		return
+	}
+	budget := w.cfg.DownloadCacheBudget(
+		int64(w.settingsSvc.GetIntWithBounds("download_cache_max_bytes", 0, 0, 1<<50)))
+	if budget <= 0 {
+		return // cache disabled (fleet setting or per-instance override)
+	}
+	maxObject := int64(w.settingsSvc.GetIntWithBounds("download_cache_max_object_bytes", 64<<20, 1, 1<<40))
+	fi, err := os.Lstat(upload.TempPath.String)
+	if err != nil || !fi.Mode().IsRegular() || fi.Size() > maxObject {
+		return
+	}
+	switch _, err := w.dlCache.PromoteIfFits(downloadcache.KeyForIdentifier(contentID), upload.TempPath.String, budget); {
+	case err == nil:
+		w.dlCache.Metrics().PromotedSeeded.Add(1)
+		slog.Info("download cache seeded from upload", "uuid", upload.UUID, "bytes", fi.Size())
+		// Resurrection guard (V2-824): the row flipped to completed just
+		// before this seed, and deletion is allowed from that moment — so a
+		// delete may have purged between the flip and the promotion above.
+		// Re-verify the row and take the seed back out if it is gone.
+		if _, gerr := w.uploadSvc.GetByUUID(upload.UUID); errors.Is(gerr, services.ErrUploadNotFound) {
+			if derr := w.dlCache.Drop(downloadcache.KeyForIdentifier(contentID)); derr != nil {
+				slog.Error("download cache purge failed for deleted upload; cached plaintext may remain until evicted",
+					"uuid", upload.UUID, "error", derr)
+			}
+		}
+	case errors.Is(err, downloadcache.ErrOverBudget) || errors.Is(err, downloadcache.ErrNotReady):
+		// Normal refusals — the temp file just gets cleaned up as before.
+	default:
+		slog.Warn("download cache seed failed", "uuid", upload.UUID, "error", err)
 	}
 }
 

@@ -246,3 +246,59 @@ func TestApplyNetworkPreset_UnknownRejected(t *testing.T) {
 		t.Fatal("expected ApplyNetworkPreset to reject an unknown network")
 	}
 }
+
+func TestLoad_DownloadCacheMaxBytesDefaultsToNoOverride(t *testing.T) {
+	setRequiredSecrets(t)
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.DownloadCacheMaxBytes != nil {
+		t.Errorf("DownloadCacheMaxBytes = %d, want nil (no per-instance override)", *cfg.DownloadCacheMaxBytes)
+	}
+	if got := cfg.DownloadCacheBudget(1234); got != 1234 {
+		t.Errorf("DownloadCacheBudget(1234) = %d, want the DB value to rule with no override", got)
+	}
+}
+
+func TestLoad_DownloadCacheMaxBytesEnvOverrides(t *testing.T) {
+	setRequiredSecrets(t)
+	t.Setenv("INDELIBLE_DOWNLOAD_CACHE_MAX_BYTES", "5368709120")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.DownloadCacheMaxBytes == nil || *cfg.DownloadCacheMaxBytes != 5368709120 {
+		t.Errorf("DownloadCacheMaxBytes = %v, want 5368709120", cfg.DownloadCacheMaxBytes)
+	}
+	// The override beats whatever the fleet-global DB setting says — including
+	// zero, which disables the cache on this instance only.
+	if got := cfg.DownloadCacheBudget(999); got != 5368709120 {
+		t.Errorf("DownloadCacheBudget(999) = %d, want the override to rule", got)
+	}
+}
+
+func TestLoad_DownloadCacheMaxBytesEnvZeroDisables(t *testing.T) {
+	setRequiredSecrets(t)
+	t.Setenv("INDELIBLE_DOWNLOAD_CACHE_MAX_BYTES", "0")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.DownloadCacheBudget(999); got != 0 {
+		t.Errorf("DownloadCacheBudget(999) = %d, want 0 (explicit per-instance disable)", got)
+	}
+}
+
+func TestLoad_DownloadCacheMaxBytesEnvInvalid(t *testing.T) {
+	setRequiredSecrets(t)
+	for _, bad := range []string{"not-a-number", "-1", "1.5"} {
+		t.Setenv("INDELIBLE_DOWNLOAD_CACHE_MAX_BYTES", bad)
+		if _, err := Load(""); err == nil {
+			t.Errorf("Load accepted INDELIBLE_DOWNLOAD_CACHE_MAX_BYTES=%q", bad)
+		}
+	}
+}

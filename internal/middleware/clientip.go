@@ -1,10 +1,43 @@
 package middleware
 
 import (
+	"context"
 	"net"
 	"net/http"
 	"strings"
 )
+
+type clientIPKey struct{}
+
+// ResolveClientIP resolves the real client IP once per request — via ClientIP,
+// so X-Forwarded-For is honored only from a trusted proxy — and stashes it in
+// the request context for consumers like the audit and file-access logs
+// (V2-774). It deliberately does NOT rewrite r.RemoteAddr the way chi's
+// removed RealIP middleware did (GO-2026-5777): RemoteAddr stays the socket
+// peer, and anything wanting the client identity must ask for the resolved
+// value explicitly via RequestClientIP.
+func ResolveClientIP(trustedProxies []string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := context.WithValue(r.Context(), clientIPKey{}, ClientIP(r, trustedProxies))
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+// RequestClientIP returns the client IP resolved by ResolveClientIP. When the
+// middleware is not mounted (tests, bare handlers) it falls back to the bare
+// host of RemoteAddr — never the forgeable X-Forwarded-For.
+func RequestClientIP(r *http.Request) string {
+	if ip, ok := r.Context().Value(clientIPKey{}).(string); ok && ip != "" {
+		return ip
+	}
+	remoteIP, _, _ := net.SplitHostPort(r.RemoteAddr)
+	if remoteIP == "" {
+		remoteIP = r.RemoteAddr
+	}
+	return remoteIP
+}
 
 // ClientIP extracts the client IP address from a request, respecting
 // X-Forwarded-For only if the direct connection comes from a trusted proxy.

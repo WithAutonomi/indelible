@@ -36,7 +36,7 @@ func TestAdminCreateWallet_ReaderWithoutKeyReturns503(t *testing.T) {
 	if _, err := services.SeedAdmin(db, cfg); err != nil {
 		t.Fatalf("seed admin: %v", err)
 	}
-	router := handlers.NewRouter(cfg, db, nil)
+	router := handlers.NewRouter(cfg, db, nil, nil)
 	adminToken := registerAndGetToken(t, router, seedAdminEmail, seedAdminPassword, "Admin", "User")
 
 	body, _ := json.Marshal(map[string]string{

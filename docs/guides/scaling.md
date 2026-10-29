@@ -94,6 +94,18 @@ Downloaded content is **immutable and content-addressed**, so download responses
 
 Responses are marked `private` because downloads are token-gated (there is no anonymous route), so a shared public cache must not reuse a response across identities.
 
+### The built-in download cache
+
+Independent of any front cache, each instance can keep a **local disk cache of public download bytes** (`download_cache_max_bytes`, off by default). A cache hit is served straight from the instance's disk: no antd fetch, no temp copy, no admission-gate slot. Full sizing, telemetry, and privacy guidance lives in the [download-cache deployment guide](download-cache.md).
+
+Fleet notes:
+
+- The cache is **per instance** — every reader warms and evicts its own copy from its own traffic. With no load-balancer affinity, popular objects end up replicated on every reader; at typical working-set sizes (small hot objects) that is the right trade, and it is what sizing the budget per instance assumes.
+- The `download_cache_*` settings are **fleet-global values applied per instance** (readers share the writer's database). For a fleet with **different disk sizes per reader**, set the env override `INDELIBLE_DOWNLOAD_CACHE_MAX_BYTES` on the instances that differ — env beats the DB setting on that instance only, and `0` disables its cache outright.
+- The cache can never be the reason uploads pause: a background sweeper evicts it — aggressively, toward empty if necessary — as soon as the data volume approaches the disk-alert worker's critical threshold, and otherwise keeps it under budget by LRU with an optional inactivity window (`download_cache_inactive_secs`).
+- **Deletes reach every reader's cache within about a minute.** The delete appends purge keys to a shared `cache_purge_log`; each instance's sweep worker applies them on its 1-minute tick, and boot reconciliation covers instances that were down. Relevant mainly with `download_cache_private` on — a deleted *public* upload's cached bytes are unreachable immediately either way (the record is gone).
+- **Upload seeding is writer-local.** `download_cache_seed_on_upload` (default on) promotes a public upload's staged bytes into the cache when the store succeeds — but uploads only pass through the writer, so on a role-split fleet this warms the **writer's** cache, not the readers'. Readers warm by read-through: the first download per reader is still a cold fetch. The full publish-then-read win applies to all-in-one deployments, where writer and reader are the same process.
+
 ## Load balancer notes
 
 - Use `/health` for readiness/liveness probes.
@@ -109,6 +121,7 @@ Readers **can** run in different datacentres — the content they serve comes fr
 Some state is per-instance and will drift mildly across the fleet (none of it corrupts data):
 
 - **Rate limiting** is in-memory per instance — the effective limit is roughly `per-instance-limit × instance-count`. Use a shared limiter at the load balancer if you need a precise global cap.
+- The **download admission gate** (`max_concurrent_downloads`) is likewise in-memory per instance — effective fleet download concurrency is roughly `max_concurrent_downloads × instance-count`, not one global cap. That is usually what you want (the resources it protects — temp disk and the antd fetch budget — are per-instance too); size the setting for one instance's disk and bandwidth, not for the fleet.
 - The **runtime settings cache** has a short per-instance TTL, so a settings change (e.g. `maintenance_mode`, `registration_enabled`) can take effect on different instances a few seconds apart.
 - **System-monitor alerts** dedupe per instance — only the writer runs the monitor, so this is not a concern in the standard split.
 

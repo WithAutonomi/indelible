@@ -11,7 +11,7 @@
 # Setup expectations on dev1 (one-time, done in advance):
 #   - Repo cloned at $DEV1_PATH (default ~/work/indelible) with `origin`
 #     pointing at WithAutonomi/indelible.
-#   - Go 1.25+, Node 22+, Docker, curl, openssl installed and on PATH.
+#   - Go 1.26+, Node 22+, Docker, curl, openssl installed and on PATH.
 #   - SSH access reachable via $DEV1_HOST (default "dev1"; typically a Host
 #     alias in your ~/.ssh/config).
 #

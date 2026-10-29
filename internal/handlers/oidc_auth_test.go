@@ -149,7 +149,7 @@ func setupOIDCTest(t *testing.T) *oidcEnv {
 	if _, err := db.Exec(`INSERT INTO settings (key, value) VALUES ('registration_enabled', 'true')`); err != nil {
 		t.Fatalf("enable registration: %v", err)
 	}
-	router := handlers.NewRouter(cfg, db, nil)
+	router := handlers.NewRouter(cfg, db, nil, nil)
 
 	idp := startFakeIDP(t, "test-client")
 	providerSvc := services.NewOIDCProviderService(db, mustKR(t, cfg.WalletEncryptionKey))

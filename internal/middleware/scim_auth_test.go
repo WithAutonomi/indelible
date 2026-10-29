@@ -37,7 +37,7 @@ func setupSCIMAuthTest(t *testing.T) (router http.Handler, scimSecret string) {
 	if _, err := services.SeedAdmin(db, cfg); err != nil {
 		t.Fatalf("seed admin: %v", err)
 	}
-	router = handlers.NewRouter(cfg, db, nil)
+	router = handlers.NewRouter(cfg, db, nil, nil)
 
 	body, _ := json.Marshal(map[string]string{
 		"email": "admin@test.com", "password": "password123",
