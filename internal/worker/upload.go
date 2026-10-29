@@ -171,17 +171,6 @@ func shouldSalvageMerkle(err error, paidBatches int) bool {
 	return paidBatches > 0 && !errors.Is(err, evm.ErrConfirmationTimeout)
 }
 
-// logIfPartialUpload logs the chunk accounting when err carries antd's
-// PARTIAL_UPLOAD detail (some batches/chunks stored, the rest failed).
-func logIfPartialUpload(uuid string, err error) {
-	var partial *antd.PartialUploadError
-	if errors.As(err, &partial) {
-		slog.Warn("merkle finalize stored only part of the upload",
-			"uuid", uuid, "chunks_stored", partial.ChunksStored,
-			"chunks_failed", partial.ChunksFailed, "total_chunks", partial.TotalChunks)
-	}
-}
-
 // merkleAllowancePayer is the optional pre-approval seam: implemented by
 // *evm.Signer. Payers without it (e.g. a hosted-mode gateway payer) fall back
 // to PayForMerkleTree's own per-batch approval — pre-approval only saves the
@@ -611,14 +600,17 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		// Phase 3: Finalize merkle upload. A failure here means money is already
 		// spent; re-running would submit a second merkle payment (not provably
 		// zero-cost), so flag it no-retry and preserve the source for recovery.
+		// A partial store antd kept the paid attempt for is retried against
+		// the same payment first (V2-1774).
 		w.heartbeat(upload, "finalizing")
-		if len(batches) == 1 {
-			result, err = w.antdClient.FinalizeMerkleUpload(ctx, prepared.UploadID, winners[0], false)
-		} else {
-			result, err = w.antdClient.FinalizeMerkleUploadMulti(ctx, prepared.UploadID, winners, false)
-		}
+		result, err = w.finalizeWithResume(ctx, upload, prepared.UploadID, func() (*antd.FinalizeUploadResult, error) {
+			if len(batches) == 1 {
+				return w.antdClient.FinalizeMerkleUpload(ctx, prepared.UploadID, winners[0], false)
+			}
+			return w.antdClient.FinalizeMerkleUploadMulti(ctx, prepared.UploadID, winners, false)
+		})
 		if err != nil {
-			logIfPartialUpload(upload.UUID, err)
+			logIfPartialUpload(upload.UUID, prepared.UploadID, err)
 			return fmt.Errorf("Failed to finalize merkle upload: %w", errors.Join(errPaidNoRetry, err))
 		}
 
@@ -654,13 +646,18 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 			w.heartbeat(upload, "paid")
 		}
 
-		// Phase 3: Finalize wave-batch upload. A retry re-Prepares: stored chunks
-		// cost nothing (dedup), and refuseRepayment stops it paying again for
-		// any that are still unstored.
+		// Phase 3: Finalize wave-batch upload. A partial store antd kept the
+		// paid attempt for is retried against the same payment first
+		// (V2-1774). After that, a retry re-Prepares: stored chunks cost
+		// nothing (dedup), and refuseRepayment stops it paying again for any
+		// that are still unstored.
 		w.heartbeat(upload, "finalizing")
-		result, err = w.antdClient.FinalizeUpload(ctx, prepared.UploadID, txHashes, false)
+		result, err = w.finalizeWithResume(ctx, upload, prepared.UploadID, func() (*antd.FinalizeUploadResult, error) {
+			return w.antdClient.FinalizeUpload(ctx, prepared.UploadID, txHashes, false)
+		})
 		if err != nil {
-			return fmt.Errorf("Failed to finalize upload: %w", errors.Join(errFinalizeFailed, err))
+			logIfPartialUpload(upload.UUID, prepared.UploadID, err)
+			return waveFinalizeError(prepared.UploadID, err)
 		}
 	}
 
