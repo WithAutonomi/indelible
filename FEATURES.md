@@ -197,6 +197,7 @@ Three permission levels: **read**, **write**, **admin**
 - Crash recovery: on startup, any uploads left in `processing` state from a previous run are requeued immediately
 - Reconciliation worker: every minute, requeues uploads that have made no progress in `processing` for the requeue window (default 60 min). Uploads this instance is still processing are never requeued; progress heartbeats at each phase (prepare, each payment, finalize) restart the clock. Admins can change the window on the System page; the change lasts until restart
 - No automatic double payment: a requeued or retried upload that has already paid since it was queued is not paid for again. It fails as `paid_unfinalized` with its source kept, and an admin Retry authorizes a new payment
+- Partial-store recovery: when a paid finalize stores only part of an upload and antd (0.14+) keeps the paid attempt, the worker repeats the finalize against the same payment (up to 5 times over about 7 minutes) before giving up. When antd can't say whether it kept the attempt, the upload stops as `paid_unfinalized` and is never paid for again automatically
 - Queue status monitoring
 
 ### 5.4 Download
