@@ -24,16 +24,20 @@ needed.
 
 ### `paid_unfinalized` uploads: Retry is the way to pay again
 
-Indelible no longer pays automatically a second time for an upload that has already paid.
-That includes a wave-batch upload whose finalize failed, which v0.12.0 re-prepared and paid
-for again. Such an upload first resumes against the payment antd kept. If that can't finish,
-it stops as `paid_unfinalized` with its source file kept.
+Indelible no longer pays automatically a second time for an upload whose payment it has
+recorded. That includes a wave-batch upload whose finalize failed, which v0.12.0
+re-prepared and paid for again. Such an upload first resumes against the payment antd kept.
+If that can't finish, it stops as `paid_unfinalized` with its source file kept.
 
 - **Retry** (upload list or `POST /api/v2/uploads/{id}/retry`) authorizes one new payment.
   Chunks that are already stored cost nothing, so a Retry usually pays only for what is
   missing.
 - If your automation watched for uploads being retried and paid automatically, expect
   `paid_unfinalized` instead.
+- **One gap remains:** if Indelible crashes after a payment confirms on-chain but before it
+  is recorded, the guard can't see that payment. The restarted worker can then pay again for
+  chunks that aren't stored yet. After a crash during uploads, reconcile the wallet's on-chain
+  transactions against the upload ledger.
 
 ### Long uploads are no longer requeued mid-flight
 

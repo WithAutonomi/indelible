@@ -6,14 +6,16 @@ All notable changes to Indelible are documented in this file. This project adher
 
 This release tracks **antd / ant-sdk v0.17.0** (bundled daemon, Go client module, and image). Indelible now needs **Go 1.26.10** to build.
 
-### Upload payments: no double payment, multi-batch merkle, resumable finalize
+### Upload payments: multi-batch merkle, re-payment guard, resumable finalize
 
 - **Multi-batch merkle uploads work** (#162, V2-1056). Since antd v0.12.0, an upload larger than one merkle tree (256 fresh chunks, about 1 GiB) is split into several payment batches. v0.12.0 didn't read them, sent an empty payment plan, and failed without paying. Each batch is now paid with its own `payForMerkleTree` transaction and recorded before the next, and the upload finalizes once all are paid. A definitive failure partway through stores what was paid for and keeps the upload for recovery. Verified on devnets with antd v0.12.0 and v0.17.0, each with a 1.15 GiB upload paid in two batches.
-- **A live upload is never requeued or paid for twice** (#170, V2-1773). The stuck-upload sweep used to put an upload back in the queue after 60 minutes in "processing", even while a worker was still paying for or storing it, and the next poll paid for it again. Now:
+- **A live upload is never requeued, and automatic re-runs don't pay again** (#170, V2-1773). The stuck-upload sweep used to put an upload back in the queue after 60 minutes in "processing", even while a worker was still paying for or storing it, and the next poll paid for it again. Now:
   - the sweep never requeues an upload this process is working on;
   - progress heartbeats (after prepare, after each payment, before finalize) make the window measure time without progress;
   - no automatic re-run pays again for an upload that has already paid since it was created or last retried by an admin. It stops as `paid_unfinalized` with its source kept, and an admin **Retry** authorizes one new payment;
   - if the ledger write for a confirmed payment fails, the rest of that attempt can't retry or pay again.
+
+  **One gap remains.** If Indelible crashes after a payment confirms but before it is recorded, there is no ledger row for the guard to see. The restarted worker can then pay again for chunks that aren't stored yet. After such a crash, check the wallet's on-chain transactions against the upload's ledger.
 - **A partial finalize is resumed against the payment antd kept** (#171, V2-1774; antd ≥ 0.14). When antd reports that only some chunks were stored and it kept the paid attempt, the worker repeats the finalize with the same upload ID. It makes up to five repeats over about 7.5 minutes, and stops early once the failed-chunk count stops shrinking. Nothing is paid again.
 - **Uploads of content that's already on the network complete again** (#172, V2-1775). When every chunk was already stored, the finalize sent `"tx_hashes": null`, which antd rejects, so the upload failed even though its data was on the network. This also unblocks the admin Retry of an upload whose store antd finished after a crash.
 
