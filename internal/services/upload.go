@@ -3,6 +3,7 @@ package services
 import (
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -480,17 +481,42 @@ func (s *UploadService) ClearBackoff(id int64) error {
 // RequeueStuck finds uploads that have been "processing" for longer than the timeout
 // and resets them to "queued". Returns the number of requeued uploads.
 func (s *UploadService) RequeueStuck(timeoutMinutes int) (int64, error) {
-	cutoff := time.Now().UTC().Add(-time.Duration(timeoutMinutes) * time.Minute).Format("2006-01-02 15:04:05")
-	result, err := s.db.Exec(
-		`UPDATE uploads SET status = 'queued', processing_at = NULL
+	return s.RequeueStuckExcept(time.Duration(timeoutMinutes)*time.Minute, nil)
+}
+
+// RequeueStuckExcept is RequeueStuck with the window as a duration and a set of
+// upload IDs it must never touch: the uploads this process is still working on
+// (V2-1773). Requeuing one of those lets a second goroutine prepare and pay for
+// it again. processing_at is the last progress heartbeat (TouchProcessing), so
+// the window measures time without progress, not time since dequeue.
+func (s *UploadService) RequeueStuckExcept(timeout time.Duration, exclude []int64) (int64, error) {
+	cutoff := time.Now().UTC().Add(-timeout).Format("2006-01-02 15:04:05")
+	query := `UPDATE uploads SET status = 'queued', processing_at = NULL
 		 WHERE status = 'processing'
-		 AND processing_at < ?`,
-		cutoff,
-	)
+		 AND processing_at < ?`
+	args := []any{cutoff}
+	if len(exclude) > 0 {
+		query += ` AND id NOT IN (` + strings.TrimSuffix(strings.Repeat("?,", len(exclude)), ",") + `)`
+		for _, id := range exclude {
+			args = append(args, id)
+		}
+	}
+	result, err := s.db.Exec(query, args...)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+// TouchProcessing refreshes processing_at on an upload the worker is still
+// processing: the progress heartbeat the stuck-upload sweep measures from
+// (V2-1773). A row that has left "processing" is not touched.
+func (s *UploadService) TouchProcessing(id int64) error {
+	_, err := s.db.Exec(
+		`UPDATE uploads SET processing_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'processing'`,
+		id,
+	)
+	return err
 }
 
 // CountByStatus returns the number of uploads in each status.

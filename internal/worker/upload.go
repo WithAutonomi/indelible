@@ -41,8 +41,9 @@ func isPermanentAntdError(err error) bool {
 var errGasBackoff = errors.New("gas backoff")
 
 // errFinalizeFailed marks a wave-batch finalize failure. Retrying re-Prepares,
-// which returns already-stored chunks at zero cost (content-addressed dedup), so
-// re-driving finalize is safe and cannot double-charge.
+// which returns already-stored chunks at zero cost (content-addressed dedup).
+// If chunks are still unstored, the re-run would pay for them again, and
+// refuseRepayment stops it (V2-1773).
 var errFinalizeFailed = errors.New("finalize failed")
 
 // errPaidNoRetry marks a failure where a payment was made and re-running the
@@ -211,6 +212,11 @@ type UploadWorker struct {
 	prepareFailures  int
 	circuitOpenUntil time.Time
 	circuitCooldown  time.Duration
+
+	// active holds the uploads this process is working on, from dequeue until
+	// processOne returns. The stuck-upload sweep never requeues them (V2-1773).
+	activeMu sync.Mutex
+	active   map[int64]*activeUpload
 }
 
 const circuitBreakerThreshold = 5
@@ -232,6 +238,7 @@ func NewUploadWorker(db *database.DB, cfg *config.Config, dlCache *downloadcache
 		cfg:             cfg,
 		dlCache:         dlCache,
 		circuitCooldown: circuitBreakerBaseCooldown,
+		active:          make(map[int64]*activeUpload),
 	}
 }
 
@@ -255,7 +262,7 @@ func (w *UploadWorker) Start() {
 		w.processLoop(ctx)
 	}()
 
-	// Reconciliation loop (check for stuck uploads every 5 minutes)
+	// Reconciliation loop: requeue uploads stuck with no progress (every minute)
 	w.wg.Add(1)
 	go func() {
 		defer w.wg.Done()
@@ -321,10 +328,11 @@ func (w *UploadWorker) processLoop(ctx context.Context) {
 					break // nothing to process
 				}
 
+				w.markActive(upload)
 				sem <- struct{}{}
 				inFlight.Add(1)
 				go func(u *services.Upload) {
-					defer func() { <-sem; inFlight.Done() }()
+					defer func() { w.clearActive(u.ID); <-sem; inFlight.Done() }()
 					w.processOne(ctx, u)
 				}(upload)
 			}
@@ -466,6 +474,7 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 	if err != nil {
 		return fmt.Errorf("Failed to prepare upload: %w", err)
 	}
+	w.heartbeat(upload, "prepared")
 
 	// Cost ceiling — applies to wave-batch AND merkle. Wave cost is known upfront
 	// (prepared.TotalAmount); merkle cost is the most the contract could charge
@@ -561,6 +570,9 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		if verr := validateMerkleBatches(batches); verr != nil {
 			return fmt.Errorf("merkle payment data invalid: %w", verr) // nothing paid → abandon
 		}
+		if rerr := w.refuseRepayment(upload); rerr != nil {
+			return rerr
+		}
 		slog.Info("merkle payment plan", "uuid", upload.UUID, "batches", len(batches),
 			"est_max_cost", evm.MaxMerkleBatchesPayout(batches).String())
 
@@ -599,6 +611,7 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		// Phase 3: Finalize merkle upload. A failure here means money is already
 		// spent; re-running would submit a second merkle payment (not provably
 		// zero-cost), so flag it no-retry and preserve the source for recovery.
+		w.heartbeat(upload, "finalizing")
 		if len(batches) == 1 {
 			result, err = w.antdClient.FinalizeMerkleUpload(ctx, prepared.UploadID, winners[0], false)
 		} else {
@@ -616,6 +629,9 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		var txHashes map[string]string
 		paymentMade := false
 		if len(prepared.Payments) > 0 {
+			if rerr := w.refuseRepayment(upload); rerr != nil {
+				return rerr
+			}
 			txHashes, err = w.evmSigner.PayForQuotes(ctx, walletKey, prepared.Payments, tokenAddr, prepared.PaymentVaultAddress)
 			if err != nil {
 				return fmt.Errorf("EVM payment failed: %w", err)
@@ -635,10 +651,13 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		// actually happened — a dedup re-Prepare pays nothing.
 		if paymentMade {
 			w.recordPayment(ctx, wallet, upload, tokenAddr, paidAmount, txHash)
+			w.heartbeat(upload, "paid")
 		}
 
-		// Phase 3: Finalize wave-batch upload. Retrying re-Prepares at zero cost
-		// (dedup), so a finalize failure is safe to retry.
+		// Phase 3: Finalize wave-batch upload. A retry re-Prepares: stored chunks
+		// cost nothing (dedup), and refuseRepayment stops it paying again for
+		// any that are still unstored.
+		w.heartbeat(upload, "finalizing")
 		result, err = w.antdClient.FinalizeUpload(ctx, prepared.UploadID, txHashes, false)
 		if err != nil {
 			return fmt.Errorf("Failed to finalize upload: %w", errors.Join(errFinalizeFailed, err))
@@ -744,6 +763,7 @@ func (w *UploadWorker) payMerkleBatches(
 			totalPaid.Add(totalPaid, amt)
 		}
 		w.recordPayment(ctx, wallet, upload, tokenAddr, batchPaid, winnerHash)
+		w.heartbeat(upload, "merkle batch paid")
 		slog.Info("merkle batch paid", "uuid", upload.UUID,
 			"batch", i+1, "batches", len(batches), "winner_pool_hash", winnerHash,
 			"amount", batchPaid, "cumulative", totalPaid.String())
@@ -874,12 +894,7 @@ func (w *UploadWorker) reconcileLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			requeued, err := w.uploadSvc.RequeueStuck(60) // 60 min — must exceed longest realistic upload to avoid racing a live goroutine; 30 min was empirically insufficient on mainnet bootstrap
-			if err != nil {
-				slog.Error("reconciliation requeue failed", "error", err)
-			} else if requeued > 0 {
-				slog.Info("reconciliation: requeued stuck uploads", "count", requeued)
-			}
+			w.sweepStuck()
 		}
 	}
 }

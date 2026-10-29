@@ -173,6 +173,32 @@ definitions:
       used_pct:
         type: number
     type: object
+  internal_handlers.UploadRequeueWindow:
+    properties:
+      default_minutes:
+        description: built-in default, restored on restart
+        type: integer
+      max_minutes:
+        description: largest accepted override
+        type: integer
+      min_minutes:
+        description: smallest accepted override
+        type: integer
+      minutes:
+        description: window in force
+        type: integer
+      overridden:
+        description: an operator override is in force (memory only)
+        type: boolean
+      workers_enabled:
+        description: 'false on a reader instance: no upload worker to tune'
+        type: boolean
+    type: object
+  internal_handlers.UploadRequeueWindowRequest:
+    properties:
+      minutes:
+        type: integer
+    type: object
   internal_handlers.addMemberRequest:
     properties:
       user_id:
@@ -2613,6 +2639,82 @@ paths:
       summary: Cross-wallet transaction history
       tags:
       - 'Admin: Wallets'
+  /admin/upload-requeue-window:
+    delete:
+      description: Drop the operator override on this instance, restoring the default
+        window. Audited. Refused on an instance that runs no upload workers.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_handlers.UploadRequeueWindow'
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Reset the stuck-upload requeue window
+      tags:
+      - 'Admin: System'
+    get:
+      description: How long an upload may make no progress before the upload worker
+        puts it back in the queue. Uploads this instance is still processing are never
+        requeued. An override set here lives in memory only and reverts to the default
+        on restart.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_handlers.UploadRequeueWindow'
+      security:
+      - BearerAuth: []
+      summary: Get the stuck-upload requeue window
+      tags:
+      - 'Admin: System'
+    put:
+      consumes:
+      - application/json
+      description: Override the requeue window on this instance until it restarts,
+        e.g. to let a long upload through. Audited. Refused on an instance that runs
+        no upload workers.
+      parameters:
+      - description: Window in minutes
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_handlers.UploadRequeueWindowRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_handlers.UploadRequeueWindow'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Set the stuck-upload requeue window
+      tags:
+      - 'Admin: System'
   /admin/uploads/export:
     get:
       description: 'Stream the full upload catalog as NDJSON for disaster recovery

@@ -4,6 +4,8 @@ import { useHealthStore } from '../../stores/health'
 import { api } from '../../api/client'
 import Tag from 'primevue/tag'
 import Button from 'primevue/button'
+import InputNumber from 'primevue/inputnumber'
+import { useToast } from 'primevue/usetoast'
 
 const health = useHealthStore()
 const refreshing = ref(false)
@@ -84,6 +86,56 @@ const donutStyle = computed(() => {
 })
 const quotaColor = computed(() => usageColor(storage.value?.quota?.used_pct ?? 0))
 
+// V2-1773: the stuck-upload requeue window. An upload with no progress for
+// this long goes back in the queue (uploads this server is processing are never
+// requeued). The override lives in server memory and reverts on restart.
+interface RequeueWindow {
+  minutes: number
+  default_minutes: number
+  min_minutes: number
+  max_minutes: number
+  overridden: boolean
+  workers_enabled: boolean
+}
+
+const toast = useToast()
+const requeueWindow = ref<RequeueWindow | null>(null)
+const requeueMinutes = ref<number | null>(null)
+const requeueSaving = ref(false)
+
+function applyRequeueWindow(w: RequeueWindow) {
+  requeueWindow.value = w
+  requeueMinutes.value = w.minutes
+}
+
+async function fetchRequeueWindow() {
+  try {
+    applyRequeueWindow((await api.get('/api/v2/admin/upload-requeue-window')).data)
+  } catch {
+    requeueWindow.value = null
+  }
+}
+
+async function saveRequeueWindow(reset: boolean) {
+  requeueSaving.value = true
+  try {
+    const res = reset
+      ? await api.delete('/api/v2/admin/upload-requeue-window')
+      : await api.put('/api/v2/admin/upload-requeue-window', { minutes: requeueMinutes.value })
+    applyRequeueWindow(res.data)
+    toast.add({
+      severity: 'success',
+      summary: reset ? 'Reset' : 'Updated',
+      detail: `Requeue window is ${res.data.minutes} minutes until the server restarts`,
+      life: 3000,
+    })
+  } catch (e: any) {
+    toast.add({ severity: 'error', summary: 'Error', detail: e.response?.data?.error || 'Failed to update the requeue window', life: 5000 })
+  } finally {
+    requeueSaving.value = false
+  }
+}
+
 async function checkVersions() {
   checking.value = true
   try {
@@ -141,7 +193,7 @@ function formatUptime(s?: number): string {
 async function refresh() {
   refreshing.value = true
   try {
-    await Promise.all([health.refresh(), fetchStorage()])
+    await Promise.all([health.refresh(), fetchStorage(), fetchRequeueWindow()])
   } finally {
     refreshing.value = false
   }
@@ -344,6 +396,32 @@ onMounted(refresh)
 
       <p v-else class="text-sm text-surface-400">
         Disk usage is unavailable — the data directory's filesystem stats couldn't be read on this host.
+      </p>
+    </div>
+
+    <!-- Upload queue: stuck-upload requeue window (V2-1773) -->
+    <div v-if="requeueWindow" class="bg-surface-0 border border-surface-200 rounded-lg p-5 mt-5">
+      <h2 class="text-lg font-semibold mb-4">Upload queue</h2>
+      <template v-if="requeueWindow.workers_enabled">
+        <div class="flex flex-wrap items-center gap-3 text-sm">
+          <span class="text-surface-500">Requeue an upload after no progress for</span>
+          <InputNumber v-model="requeueMinutes" :min="requeueWindow.min_minutes" :max="requeueWindow.max_minutes"
+            suffix=" min" class="w-36" :disabled="requeueSaving" />
+          <Button label="Apply" size="small" :loading="requeueSaving"
+            :disabled="requeueMinutes == null || requeueMinutes === requeueWindow.minutes"
+            @click="saveRequeueWindow(false)" />
+          <Button label="Reset to default" size="small" severity="secondary" outlined
+            :disabled="requeueSaving || !requeueWindow.overridden" @click="saveRequeueWindow(true)" />
+          <Tag v-if="requeueWindow.overridden" value="Override until restart" severity="warn" />
+        </div>
+        <p class="text-xs text-surface-400 mt-3">
+          Default {{ requeueWindow.default_minutes }} minutes. Uploads this server is processing are never
+          requeued; this catches ones left behind. Raise it to let a long upload through. The change is kept
+          in memory only and reverts to the default when the server restarts.
+        </p>
+      </template>
+      <p v-else class="text-sm text-surface-400">
+        This instance runs no upload workers (reader role). Set the requeue window on the writer.
       </p>
     </div>
   </div>
