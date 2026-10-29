@@ -613,7 +613,9 @@ func (w *UploadWorker) processUpload(ctx context.Context, upload *services.Uploa
 		// Phase 2: Sign wave-batch payment. When prepare returns no quotes,
 		// every chunk is already on-network (content-addressed dedup) — there's
 		// nothing to pay, so skip signing an empty batch and finalize directly.
-		var txHashes map[string]string
+		// Never nil: a nil map goes out as "tx_hashes": null, which antd
+		// rejects; an all-stored finalize must send an empty object.
+		txHashes := map[string]string{}
 		paymentMade := false
 		if len(prepared.Payments) > 0 {
 			txHashes, err = w.evmSigner.PayForQuotes(ctx, walletKey, prepared.Payments, tokenAddr, prepared.PaymentVaultAddress)
