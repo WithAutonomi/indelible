@@ -4,6 +4,59 @@ Operator-facing notes for upgrades that need an action. Most upgrades are a
 plain `docker compose pull && docker compose up -d` (data volumes persist) and
 need nothing from this file — only the entries below call for a manual step.
 
+## v0.13.0 — 2026-10-29
+
+### Bundled antd updated to v0.17.0
+
+The bundled antd daemon (and the `antd-go` client module) move from v0.12.0 to **v0.17.0**.
+Container deployments get the new daemon automatically on `docker compose pull`. **If you
+run antd yourself**, update your antd daemon to v0.17.0 so it stays in lockstep with the
+binary Indelible was built against. The resume of partial finalizes (#171) needs antd ≥ 0.14.
+
+Building from source now needs **Go 1.26.10** or later.
+
+### Database migration 015 (automatic)
+
+It applies on first boot as usual. It adds `uploads.payment_floor_txn_id`, which marks which
+payments count against an upload's current authorization to pay. The migration fills it in
+so that each existing upload keeps the paid/not-paid answer it had before. No manual step is
+needed.
+
+### `paid_unfinalized` uploads: Retry is the way to pay again
+
+Indelible no longer pays automatically a second time for an upload that has already paid.
+That includes a wave-batch upload whose finalize failed, which v0.12.0 re-prepared and paid
+for again. Such an upload first resumes against the payment antd kept. If that can't finish,
+it stops as `paid_unfinalized` with its source file kept.
+
+- **Retry** (upload list or `POST /api/v2/uploads/{id}/retry`) authorizes one new payment.
+  Chunks that are already stored cost nothing, so a Retry usually pays only for what is
+  missing.
+- If your automation watched for uploads being retried and paid automatically, expect
+  `paid_unfinalized` instead.
+
+### Long uploads are no longer requeued mid-flight
+
+Before this release, an upload that spent more than 60 minutes in "processing" was put back
+in the queue while its worker was still running, and was then paid for again. Now an upload
+a worker is still processing is never requeued, however long a phase takes. Past the window
+it is only logged as a warning. The window (60 minutes by default) now affects only uploads
+that no worker is processing. No action is needed. To quiet the warning for routinely long
+phases, raise the window on the System page ("Upload queue") or with
+`PUT /api/v2/admin/upload-requeue-window`. The override lasts until the next restart.
+
+### Not-found downloads: 404 instead of 502
+
+A download of something that isn't on the network now returns **404 `antd_not_found`**
+(antd v0.14.0) instead of 502 `antd_error`. Update any client or monitor that treats that 502
+as "not found".
+
+### Licence files in releases and the image
+
+Release binaries now come in archives together with `LICENSE-MIT`, `LICENSE-APACHE` and
+`THIRD-PARTY-NOTICES.txt` (the bare binaries are still attached). The image carries the same
+files under `/usr/share/doc/indelible/`. If you redistribute Indelible, ship these files with it.
+
 ## v0.12.0 — 2026-08-17
 
 ### Bundled antd updated to v0.12.0
