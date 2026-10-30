@@ -2,6 +2,56 @@
 
 All notable changes to Indelible are documented in this file. This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.13.0] - 2026-10-29
+
+This release tracks **antd / ant-sdk v0.17.0** (bundled daemon, Go client module, and image). Indelible now needs **Go 1.26.10** to build.
+
+### Upload payments: multi-batch merkle, re-payment guard, resumable finalize
+
+- **Multi-batch merkle uploads work** (#162, V2-1056). Since antd v0.12.0, an upload larger than one merkle tree (256 fresh chunks, about 1 GiB) is split into several payment batches. v0.12.0 didn't read them, sent an empty payment plan, and failed without paying. Each batch is now paid with its own `payForMerkleTree` transaction and recorded before the next, and the upload finalizes once all are paid. A definitive failure partway through stores what was paid for and keeps the upload for recovery. Verified on devnets with antd v0.12.0 and v0.17.0, each with a 1.15 GiB upload paid in two batches.
+- **A live upload is never requeued, and automatic re-runs don't pay again** (#170, V2-1773). The stuck-upload sweep used to put an upload back in the queue after 60 minutes in "processing", even while a worker was still paying for or storing it, and the next poll paid for it again. Now:
+  - the sweep never requeues an upload this process is working on;
+  - progress heartbeats (after prepare, after each payment, before finalize) make the window measure time without progress;
+  - no automatic re-run pays again for an upload that has already paid since it was created or last retried by an admin. It stops as `paid_unfinalized` with its source kept, and an admin **Retry** authorizes one new payment;
+  - if the ledger write for a confirmed payment fails, the rest of that attempt can't retry or pay again.
+
+  **One gap remains.** If Indelible crashes after a payment confirms but before it is recorded, there is no ledger row for the guard to see. The restarted worker can then pay again for chunks that aren't stored yet. After such a crash, check the wallet's on-chain transactions against the upload's ledger.
+- **A partial finalize is resumed against the payment antd kept** (#171, V2-1774; antd ≥ 0.14). When antd reports that only some chunks were stored and it kept the paid attempt, the worker repeats the finalize with the same upload ID. It makes up to five repeats over about 7.5 minutes, and stops early once the failed-chunk count stops shrinking. Nothing is paid again.
+- **Uploads of content that's already on the network complete again** (#172, V2-1775). When every chunk was already stored, the finalize sent `"tx_hashes": null`, which antd rejects, so the upload failed even though its data was on the network. This also unblocks the admin Retry of an upload whose store antd finished after a crash.
+
+### Admin
+
+- **Upload requeue window** (#170): `GET`/`PUT`/`DELETE /api/v2/admin/upload-requeue-window` and an "Upload queue" card on the System page.
+  - It sets how long an upload may make no progress before the sweep requeues it. The default is 60 minutes and the range is 1 minute to 7 days.
+  - An override lasts until restart, every change is audited (`upload_requeue_window_changed`), and reader instances refuse changes with 409.
+
+### Behaviour changes
+
+- **A wave-batch finalize failure no longer pays again for its unstored chunks** (#170). It used to re-prepare and pay for them. Now it first resumes against the kept payment (#171), and if that can't finish, it ends as `paid_unfinalized` for an admin Retry.
+- **Not-found downloads return 404 `antd_not_found`** instead of 502 `antd_error` (antd v0.14.0).
+
+### Licensing
+
+- **Releases and the image ship licence texts and third-party notices** (#165). Each release binary comes in an archive with `LICENSE-MIT`, `LICENSE-APACHE` and `THIRD-PARTY-NOTICES.txt`, and the image carries them under `/usr/share/doc/indelible/`. The notices include the LGPL section for the statically linked go-ethereum packages: its exact version, where to get the source, and how to relink.
+
+### Security & dependencies
+
+- **Go 1.26.10** for GO-2026-6809 (`crypto/x509`). Go 1.26 is now required to build, because antd-go v0.15.0 needs it.
+- **Web dependencies** (#168): `npm audit fix` clears the high-severity production advisories: vue 3.5.44, axios 1.20.0, follow-redirects 1.16.1, source-map-js 1.2.2.
+- The bundled antd v0.17.0 includes the rustls-webpki emSign advisory fixes (RUSTSEC-2026-0381 to -0383).
+
+### Known issue
+
+- **After a network outage of a minute or more, antd can stay disconnected for up to about 13 minutes** (V2-1778, upstream). During that window, uploads fail before paying, while `/health` still reports `write_ready`. A partial finalize caused by the outage can't be resumed in that window either, so it ends `paid_unfinalized`. Retry it once antd reconnects, or restart antd to reconnect at once.
+
+### Internal
+
+- Bundled antd moved v0.12.0 → v0.15.0 → v0.16.0 → v0.17.0 across all three lockstep pins (`antd-go` module, `.antd-version`, Docker `ANTD_IMAGE`) (#166, #167, #169).
+- Migration 015 adds `uploads.payment_floor_txn_id`.
+- Docs: removed the stale compose comment claiming the upstream antd image can't exec its binary (#164).
+
+[0.13.0]: https://github.com/WithAutonomi/indelible/releases/tag/v0.13.0
+
 ## [0.12.0] - 2026-08-17
 
 This release tracks **antd / ant-sdk v0.12.0** (bundled daemon, Go client module, and image). The matching version numbers are a coincidence — the two projects are versioned independently.
@@ -38,6 +88,8 @@ A new per-instance, content-addressed download cache turns the read path into a 
 - Bundled antd moved v0.10.0 → v0.12.0 across all three lockstep pins (`antd-go` module, `.antd-version`, Docker `ANTD_IMAGE`).
 - CI: heavy jobs skip on documentation-only changes (required Test contexts still reported); release artifact download scoped to the binaries.
 - Docs: runtime-settings table reconciled with the actual settings surface; new download-cache deployment guide; reader-fleet scaling guide updated for cache warm-up semantics.
+
+[0.12.0]: https://github.com/WithAutonomi/indelible/releases/tag/v0.12.0
 
 ## [0.11.0] - 2026-06-18
 
